@@ -229,7 +229,7 @@ public partial class ScannerPage : ContentPage
             changePercentLabel.SetBinding(Label.TextProperty, new Binding("ChangePercent", stringFormat: "{0:+#0.00;-#0.00;0.00}%"));
             changeLabel.SetBinding(Label.TextProperty, new Binding("Change", stringFormat: "{0:+#0.00;-#0.00;0.00}"));
             lastPriceLabel.SetBinding(Label.TextProperty, new Binding("LastPrice", stringFormat: "{0:C2}"));
-            relativeVolumeLabel.SetBinding(Label.TextProperty, new Binding("RelativeVolume", stringFormat: "{0:0.0}x"));
+            relativeVolumeLabel.SetBinding(Label.TextProperty, "DisplayRV");
             volumeLabel.SetBinding(Label.TextProperty, new Binding("Volume", stringFormat: "{0:N0}"));
             averageVolumeLabel.SetBinding(Label.TextProperty, "DisplayAvgVolume");
             
@@ -253,7 +253,7 @@ public partial class ScannerPage : ContentPage
             };
             // Bind command to the page's ViewModel
             doubleTapGesture.SetBinding(TapGestureRecognizer.CommandProperty, 
-                new Binding("AddToWatchlistCommand", source: BindingContext));
+                new Binding("AddAllVisibleToQuotesCommand", source: BindingContext));
             // Bind parameter to the current row (the ScannerRowViewModel)
             doubleTapGesture.SetBinding(TapGestureRecognizer.CommandParameterProperty, ".");
             rowGrid.GestureRecognizers.Add(doubleTapGesture);

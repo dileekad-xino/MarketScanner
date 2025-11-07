@@ -143,8 +143,18 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
         
         if (MainThread.IsMainThread)
         {
-            // Already on main thread - set directly
-            LastPrice = value;
+            // Already on main thread - try direct assignment first
+            // If it fails (COMException), fall back to BeginInvokeOnMainThread
+            try
+            {
+                LastPrice = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // UI binding not ready - use BeginInvokeOnMainThread as fallback
+                // This is safe to call even from main thread (it will queue the action)
+                MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+            }
         }
         else
         {
@@ -159,7 +169,14 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
         
         if (MainThread.IsMainThread)
         {
-            Volume = value;
+            try
+            {
+                Volume = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => Volume = value);
+            }
         }
         else
         {
@@ -173,7 +190,14 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
         
         if (MainThread.IsMainThread)
         {
-            PrevClose = closePrice;
+            try
+            {
+                PrevClose = closePrice;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+            }
         }
         else
         {
@@ -190,7 +214,14 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
         
         if (MainThread.IsMainThread)
         {
-            AvgVolume = value;
+            try
+            {
+                AvgVolume = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+            }
         }
         else
         {

@@ -183,18 +183,27 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         if (_batchedTicks.Count == 0 || _disposed)
             return;
 
-        _dispatcher.OnUI(() =>
+        try
         {
-            var processed = 0;
-            while (processed < MaxBatchSize && _batchedTicks.TryDequeue(out var tick))
+            _dispatcher.OnUI(() =>
             {
-                if (_rowCache.TryGetValue(tick.Symbol, out var row))
+                var processed = 0;
+                while (processed < MaxBatchSize && _batchedTicks.TryDequeue(out var tick))
                 {
-                    tick.ApplyTo(row);  // In-place update using the TickData extension method
+                    if (_rowCache.TryGetValue(tick.Symbol, out var row))
+                    {
+                        tick.ApplyTo(row);  // In-place update using the TickData extension method
+                    }
+                    processed++;
                 }
-                processed++;
-            }
-        });
+            });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Unable to find main thread"))
+        {
+            // UI not ready yet or app shutting down - just skip this batch
+            // This can happen during app initialization or shutdown when the main thread is unavailable
+            _logger.LogDebug("Skipping tick flush - main thread not available (app may be shutting down)");
+        }
     }
 
     [RelayCommand]
@@ -457,7 +466,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
             bool confirmed = await Application.Current.MainPage.DisplayAlert(
                 "Delete Watchlist",
-                $"Delete '{watchlist.Name}'?",
+                $"Are you sure you want to delete '{watchlist.Name}'?",
                 "Delete",
                 "Cancel");
 

@@ -763,7 +763,11 @@ public partial class ScannerViewModel : ObservableObject
         try
         {
             if (_quoteViewModel == null) return;
-            var visible = ScannerItems.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+            // Preserve order from ScannerItems (ObservableCollection maintains order)
+            var visible = ScannerItems
+                .Select(r => r.Symbol)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToArray(); // Convert to array to ensure order is maintained
             await _quoteViewModel.SyncToSymbols(visible);
         }
         catch (Exception ex)
@@ -1054,6 +1058,7 @@ public partial class ScannerViewModel : ObservableObject
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
+            _watchlistService,
             Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
                 .CreateLogger<QuoteViewModel>());
 

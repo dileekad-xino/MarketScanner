@@ -36,9 +36,26 @@ public sealed record TickData(
 
     public void ApplyTo(ScannerRowViewModel row)
     {
-        if (LastPrice.HasValue) row.UpdateLastPrice(LastPrice.Value);
-        if (ClosePrice.HasValue) row.UpdateClosePrice(ClosePrice.Value);
-        if (Volume.HasValue) row.UpdateVolume(Volume.Value);
-        if (AverageVolume.HasValue) row.SetAvgVolume(AverageVolume.Value);
+        // Always use Update methods - they now check if we're on main thread
+        // This avoids nested invocations and handles threading correctly
+        if (LastPrice.HasValue)
+        {
+            row.UpdateLastPrice(LastPrice.Value);
+        }
+        
+        if (ClosePrice.HasValue)
+        {
+            row.UpdateClosePrice(ClosePrice.Value);
+        }
+        
+        if (Volume.HasValue)
+        {
+            row.UpdateVolume(Volume.Value);
+        }
+        
+        if (AverageVolume.HasValue)
+        {
+            row.SetAvgVolume(AverageVolume.Value);
+        }
     }
 }

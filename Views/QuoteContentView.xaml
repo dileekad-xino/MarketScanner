@@ -13,12 +13,22 @@
     </ContentView.Resources>
 
     <Grid x:Name="QuoteRoot"
-          RowDefinitions="Auto,*" 
+          RowDefinitions="Auto,Auto,*" 
           Padding="10"
           BackgroundColor="{StaticResource BackgroundDark}">
 
+        <!-- Watchlist Picker -->
+        <Picker Grid.Row="0"
+                ItemsSource="{Binding Watchlists}"
+                SelectedItem="{Binding SelectedWatchlist, Mode=TwoWay}"
+                ItemDisplayBinding="{Binding Name}"
+                Title="Load from watchlist..."
+                IsEnabled="{Binding HasWatchlists}"
+                Margin="0,0,0,10"
+                Style="{StaticResource FilterPickerStyle}"/>
+
         <!-- Quote Input Bar -->
-        <Border Grid.Row="0"
+        <Border Grid.Row="1"
                 StrokeThickness="1"
                 Stroke="{StaticResource BorderDark}"
                 BackgroundColor="{StaticResource BackgroundDark}"
@@ -77,7 +87,7 @@
         </Border>
 
         <!-- Quote Grid -->
-        <Grid Grid.Row="1"
+        <Grid Grid.Row="2"
               RowDefinitions="Auto,*"
               BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -165,7 +175,7 @@
         </Grid>
 
         <!-- Error Message -->
-        <Label Grid.Row="1"
+        <Label Grid.Row="2"
                Text="{Binding ErrorMessage}"
                IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
                TextColor="{StaticResource ErrorColor}"

@@ -15,7 +15,7 @@
     </ContentView.Resources>
 
     <Grid x:Name="WatchlistRoot"
-          RowDefinitions="Auto,*" 
+          RowDefinitions="Auto,Auto,*" 
           Padding="10"
           BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -112,8 +112,56 @@
                     CornerRadius="4"/>
         </Grid>
 
+        <!-- Symbol Input Bar -->
+        <Border Grid.Row="1"
+                StrokeThickness="1"
+                Stroke="{StaticResource BorderDark}"
+                BackgroundColor="{StaticResource BackgroundDark}"
+                Padding="0"
+                Margin="0,0,0,10"
+                HeightRequest="32">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="4"/>
+            </Border.StrokeShape>
+            
+            <Grid ColumnDefinitions="*,Auto"
+                  ColumnSpacing="0"
+                  VerticalOptions="Center">
+                
+                <!-- Symbol Input -->
+                <Entry Grid.Column="0"
+                       Text="{Binding NewSymbolText}"
+                       Placeholder="Enter symbol..."
+                       TextColor="{StaticResource OnSurfaceDark}"
+                       BackgroundColor="Transparent"
+                       FontSize="14"
+                       HeightRequest="32"
+                       VerticalOptions="Center"
+                       Margin="8,0,0,0"
+                       ReturnCommand="{Binding AddSymbolCommand}"
+                       IsEnabled="{Binding CanAddSymbol}"/>
+                
+                <!-- Add Symbol Button -->
+                <Button Grid.Column="1"
+                        Text="+"
+                        Command="{Binding AddSymbolCommand}"
+                        BackgroundColor="{StaticResource PrimaryDark}"
+                        TextColor="{StaticResource TextOnAccent}"
+                        FontSize="18"
+                        FontAttributes="Bold"
+                        WidthRequest="40"
+                        HeightRequest="32"
+                        VerticalOptions="Center"
+                        HorizontalOptions="Center"
+                        Padding="0"
+                        CornerRadius="0"
+                        BorderWidth="0"
+                        IsEnabled="{Binding CanAddSymbol}"/>
+            </Grid>
+        </Border>
+
         <!-- Watchlist Grid -->
-        <Grid Grid.Row="1"
+        <Grid Grid.Row="2"
               RowDefinitions="Auto,*"
               BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -234,7 +282,7 @@
                         <ActivityIndicator IsRunning="{Binding IsLoading}"
                                            IsVisible="{Binding IsLoading}"
                                            Color="{StaticResource PrimaryDark}"/>
-                        <Label Text="No symbols in watchlist. Double-click rows in scanner to add."
+                        <Label Text="No symbols in watchlist. Enter a symbol above or double-click rows in scanner to add."
                                IsVisible="{Binding IsLoading, Converter={StaticResource InvertedBoolConverter}}"
                                TextColor="{StaticResource OnSurfaceVariantDark}"
                                HorizontalOptions="Center"
@@ -245,7 +293,7 @@
         </Grid>
 
         <!-- Error Message -->
-        <Label Grid.Row="1"
+        <Label Grid.Row="2"
                Text="{Binding ErrorMessage}"
                IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
                TextColor="{StaticResource ErrorColor}"
@@ -255,7 +303,7 @@
                BackgroundColor="{StaticResource SurfaceDark}"/>
 
         <!-- Inline Watchlist Name Input Popup (Floating Overlay) -->
-        <Grid Grid.RowSpan="2"
+        <Grid Grid.RowSpan="3"
               IsVisible="{Binding IsCreatingWatchlist}"
               BackgroundColor="#80000000"
               InputTransparent="False"
@@ -322,7 +370,7 @@
         </Grid>
         
         <!-- Inline Watchlist Rename Input Popup (Floating Overlay) -->
-        <Grid Grid.RowSpan="2"
+        <Grid Grid.RowSpan="3"
               IsVisible="{Binding IsRenamingWatchlist}"
               BackgroundColor="#80000000"
               InputTransparent="False"

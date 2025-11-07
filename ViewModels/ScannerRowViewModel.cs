@@ -141,21 +141,68 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         if (_lastPrice == value) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+        if (MainThread.IsMainThread)
+        {
+            // Already on main thread - try direct assignment first
+            // If it fails (COMException), fall back to BeginInvokeOnMainThread
+            try
+            {
+                LastPrice = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // UI binding not ready - use BeginInvokeOnMainThread as fallback
+                // This is safe to call even from main thread (it will queue the action)
+                MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+            }
+        }
+        else
+        {
+            // Not on main thread - invoke on main thread
+            MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+        }
     }
 
     public void UpdateVolume(long value)
     {
         if (_volume == value) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => Volume = value);
+        if (MainThread.IsMainThread)
+        {
+            try
+            {
+                Volume = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => Volume = value);
+            }
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => Volume = value);
+        }
     }
 
     public void UpdateClosePrice(double closePrice)
     {
         if (_prevClose == closePrice) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+        if (MainThread.IsMainThread)
+        {
+            try
+            {
+                PrevClose = closePrice;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+            }
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+        }
     }
 
 
@@ -164,7 +211,22 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         // Don't skip if current value is 0 - we want to update from 0 to actual value
         if (_avgVolume == value && _avgVolume != 0) return;
-        MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+        
+        if (MainThread.IsMainThread)
+        {
+            try
+            {
+                AvgVolume = value;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+            }
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+        }
     }
 
     // Removed SetFloatShares and SetFiftyTwoWeekHigh methods as requested

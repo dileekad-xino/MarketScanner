@@ -364,7 +364,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var target = new HashSet<string>(symbols.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim().ToUpperInvariant()), StringComparer.OrdinalIgnoreCase);
+            // Preserve order by converting to list first
+            var orderedSymbols = symbols
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim().ToUpperInvariant())
+                .ToList();
+            
+            var target = new HashSet<string>(orderedSymbols, StringComparer.OrdinalIgnoreCase);
 
             // Try to get latest snapshots from fallback if available
             var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
@@ -381,8 +387,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 }
             }
 
-            // Add new or update existing
-            foreach (var s in target)
+            // Add new or update existing (preserve order)
+            foreach (var s in orderedSymbols)
             {
                 if (_rowCache.TryGetValue(s, out var existingVm))
                 {
@@ -413,11 +419,27 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                             vm.UpdateClosePrice((double)tick.PreviousClose.Value);
                     }
                     _rowCache[s] = vm;
-                    QuoteItems.Add(vm);
                 }
             }
 
-            _logger.LogInformation("Synced quotes to {Count} symbols", target.Count);
+            // Reorder QuoteItems to match scanner order
+            var orderedItems = new List<ScannerRowViewModel>();
+            foreach (var s in orderedSymbols)
+            {
+                if (_rowCache.TryGetValue(s, out var vm))
+                {
+                    orderedItems.Add(vm);
+                }
+            }
+
+            // Clear and rebuild QuoteItems in correct order
+            QuoteItems.Clear();
+            foreach (var item in orderedItems)
+            {
+                QuoteItems.Add(item);
+            }
+
+            _logger.LogInformation("Synced quotes to {Count} symbols in scanner order", orderedSymbols.Count);
         }
         catch (Exception ex)
         {

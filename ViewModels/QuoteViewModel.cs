@@ -23,6 +23,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
+    private Watchlist? _previousWatchlist; // Track previous selection to detect Scanner -> Watchlist transitions
 
     // Computed property to enable/disable watchlist picker
     public bool HasWatchlists => Watchlists.Count > 0;
@@ -34,6 +35,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private IDisposable? _playbackSubscription;
     private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
     private bool _disposed = false;
+
+    // Snapshot for restoring quotes when switching back from watchlist
+    private List<ScannerRowViewModel>? _savedQuoteItems;
+    private Dictionary<string, ScannerRowViewModel>? _savedRowCache;
 
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
@@ -93,6 +98,17 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var watchlists = await _watchlistService.GetAllWatchlistsAsync();
 
             Watchlists.Clear();
+            
+            // Add "Scanner" placeholder as first option to restore saved quotes
+            var scannerWatchlist = new Watchlist
+            {
+                Id = -1,
+                Name = "Scanner",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            Watchlists.Add(scannerWatchlist);
+            
             foreach (var w in watchlists)
             {
                 Watchlists.Add(w);
@@ -101,7 +117,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             // Notify that HasWatchlists changed
             OnPropertyChanged(nameof(HasWatchlists));
 
-            _logger.LogInformation("Loaded {Count} watchlists for quote view", Watchlists.Count);
+            _logger.LogInformation("Loaded {Count} watchlists for quote view (including Scanner option)", Watchlists.Count);
         }
         catch (Exception ex)
         {
@@ -112,18 +128,122 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedWatchlistChanged(Watchlist? value)
     {
-        if (value != null)
+        if (value == null)
         {
-            _ = LoadQuotesFromWatchlistAsync(value.Id);
+            _previousWatchlist = null;
+            return;
+        }
+
+        // Handle "Scanner" option (Id = -1) - restore saved snapshot
+        if (value.Id == -1)
+        {
+            _previousWatchlist = value;
+            RestoreSavedQuotes();
+            return;
+        }
+
+        // Only save snapshot when switching FROM "Scanner" (Id=-1 or null) TO a watchlist
+        // This preserves the original scanner quotes when switching back
+        var wasOnScanner = _previousWatchlist == null || _previousWatchlist.Id == -1;
+        var shouldSaveSnapshot = wasOnScanner && QuoteItems.Count > 0 && _savedQuoteItems == null;
+
+        // Load watchlist (will save snapshot if coming from Scanner and no snapshot exists yet)
+        _ = LoadQuotesFromWatchlistAsync(value.Id, shouldSaveSnapshot);
+        
+        _previousWatchlist = value;
+    }
+
+    private void RestoreSavedQuotes()
+    {
+        try
+        {
+            if (_savedQuoteItems == null || _savedRowCache == null)
+            {
+                _logger.LogDebug("No saved quotes to restore");
+                return;
+            }
+
+            // Get symbols to re-subscribe
+            var symbolsToSubscribe = _savedQuoteItems.Select(q => q.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+
+            // Clear current quotes
+            QuoteItems.Clear();
+            _rowCache.Clear();
+
+            // Restore saved quotes
+            foreach (var item in _savedQuoteItems)
+            {
+                QuoteItems.Add(item);
+                _rowCache[item.Symbol] = item;
+            }
+
+            // Restore row cache (in case there are additional entries)
+            foreach (var kvp in _savedRowCache)
+            {
+                if (!_rowCache.ContainsKey(kvp.Key))
+                {
+                    _rowCache[kvp.Key] = kvp.Value;
+                }
+            }
+
+            // Re-subscribe to market data for restored symbols
+            if (symbolsToSubscribe.Count > 0)
+            {
+                try
+                {
+                    _ibkrService.SubscribeToSymbols(symbolsToSubscribe);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Could not re-subscribe to IBKR market data for restored quotes, will use fallback if available");
+                }
+
+                // Update fallback playback with symbols if active
+                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+                if (fallback != null && fallback.IsActive)
+                {
+                    var currentSymbols = fallback.CurrentSymbols.ToList();
+                    foreach (var symbol in symbolsToSubscribe)
+                    {
+                        if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
+                        {
+                            currentSymbols.Add(symbol);
+                        }
+                    }
+                    fallback.UpdateSymbols(currentSymbols);
+                }
+            }
+
+            _logger.LogInformation("Restored {Count} saved quotes", _savedQuoteItems.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to restore saved quotes");
+            ErrorMessage = $"Failed to restore quotes: {ex.Message}";
         }
     }
 
-    private async Task LoadQuotesFromWatchlistAsync(int watchlistId)
+    private async Task LoadQuotesFromWatchlistAsync(int watchlistId, bool saveSnapshot = false)
     {
         try
         {
             IsLoading = true;
             ErrorMessage = string.Empty;
+
+            // Only save snapshot when switching FROM "Scanner" TO a watchlist
+            // This preserves the original scanner quotes when switching back
+            if (saveSnapshot && QuoteItems.Count > 0)
+            {
+                _savedQuoteItems = new List<ScannerRowViewModel>(QuoteItems);
+                _savedRowCache = new Dictionary<string, ScannerRowViewModel>(_rowCache);
+                _logger.LogDebug("Saved {Count} quotes to snapshot before loading watchlist (switching from Scanner)", _savedQuoteItems.Count);
+            }
+            else if (_savedQuoteItems == null && QuoteItems.Count == 0)
+            {
+                // No current quotes and no saved snapshot - initialize empty snapshot
+                _savedQuoteItems = new List<ScannerRowViewModel>();
+                _savedRowCache = new Dictionary<string, ScannerRowViewModel>();
+            }
 
             // Get watchlist items
             var items = await _watchlistService.GetWatchlistItemsAsync(watchlistId);

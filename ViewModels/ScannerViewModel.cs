@@ -1054,6 +1054,7 @@ public partial class ScannerViewModel : ObservableObject
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
+            _watchlistService,
             Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
                 .CreateLogger<QuoteViewModel>());
 

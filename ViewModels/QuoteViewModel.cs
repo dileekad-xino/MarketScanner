@@ -14,12 +14,18 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 {
     private readonly IbkrGatewayService _ibkrService;
     private readonly IDispatcherService _dispatcher;
+    private readonly IWatchlistService _watchlistService;
     private readonly ILogger<QuoteViewModel> _logger;
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _quoteItems = new();
     [ObservableProperty] private string _newSymbolText = "";
     [ObservableProperty] private string _errorMessage = string.Empty;
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
+    [ObservableProperty] private Watchlist? _selectedWatchlist;
+
+    // Computed property to enable/disable watchlist picker
+    public bool HasWatchlists => Watchlists.Count > 0;
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
@@ -35,10 +41,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     public QuoteViewModel(
         IbkrGatewayService ibkrService,
         IDispatcherService dispatcher,
+        IWatchlistService watchlistService,
         ILogger<QuoteViewModel> logger)
     {
         _ibkrService = ibkrService;
         _dispatcher = dispatcher;
+        _watchlistService = watchlistService;
         _logger = logger;
 
         // Setup batch timer for smooth updates (60 FPS)
@@ -71,10 +79,122 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         }
     }
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         _logger.LogInformation("Quote panel initialized");
-        return Task.CompletedTask;
+        await LoadWatchlistsAsync();
+    }
+
+    private async Task LoadWatchlistsAsync()
+    {
+        try
+        {
+            await _watchlistService.InitializeAsync();
+            var watchlists = await _watchlistService.GetAllWatchlistsAsync();
+
+            Watchlists.Clear();
+            foreach (var w in watchlists)
+            {
+                Watchlists.Add(w);
+            }
+
+            // Notify that HasWatchlists changed
+            OnPropertyChanged(nameof(HasWatchlists));
+
+            _logger.LogInformation("Loaded {Count} watchlists for quote view", Watchlists.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load watchlists");
+            ErrorMessage = $"Failed to load watchlists: {ex.Message}";
+        }
+    }
+
+    partial void OnSelectedWatchlistChanged(Watchlist? value)
+    {
+        if (value != null)
+        {
+            _ = LoadQuotesFromWatchlistAsync(value.Id);
+        }
+    }
+
+    private async Task LoadQuotesFromWatchlistAsync(int watchlistId)
+    {
+        try
+        {
+            IsLoading = true;
+            ErrorMessage = string.Empty;
+
+            // Get watchlist items
+            var items = await _watchlistService.GetWatchlistItemsAsync(watchlistId);
+            _logger.LogInformation("Loading {Count} symbols from watchlist {WatchlistId} into quotes", items.Count, watchlistId);
+
+            // Get symbols to subscribe
+            var symbolsToSubscribe = new List<string>();
+
+            // Clear existing quotes and add watchlist symbols
+            QuoteItems.Clear();
+            _rowCache.Clear();
+
+            foreach (var item in items)
+            {
+                var symbol = item.Symbol?.Trim().ToUpperInvariant();
+                if (string.IsNullOrWhiteSpace(symbol)) continue;
+
+                // Create ViewModel for this symbol
+                var rowVm = new ScannerRowViewModel(_logger)
+                {
+                    Symbol = symbol,
+                    Company = item.Company ?? symbol,
+                    Region = "United States",
+                    Product = "Stocks",
+                    Exchange = "us stocks"
+                };
+
+                _rowCache[symbol] = rowVm;
+                QuoteItems.Add(rowVm);
+                symbolsToSubscribe.Add(symbol);
+            }
+
+            // Subscribe to market data for all symbols
+            if (symbolsToSubscribe.Count > 0)
+            {
+                try
+                {
+                    _ibkrService.SubscribeToSymbols(symbolsToSubscribe);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Could not subscribe to IBKR market data, will use fallback if available");
+                }
+
+                // Update fallback playback with symbols if active
+                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+                if (fallback != null && fallback.IsActive)
+                {
+                    var currentSymbols = fallback.CurrentSymbols.ToList();
+                    foreach (var symbol in symbolsToSubscribe)
+                    {
+                        if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
+                        {
+                            currentSymbols.Add(symbol);
+                        }
+                    }
+                    fallback.UpdateSymbols(currentSymbols);
+                }
+            }
+
+            _logger.LogInformation("Loaded {Count} symbols from watchlist into quotes", QuoteItems.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load quotes from watchlist");
+            ErrorMessage = $"Failed to load watchlist: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     public async Task AddQuotesFromScannerAsync(IEnumerable<ScannerRowViewModel> rows)

@@ -34,11 +34,16 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int? _renamingWatchlistId = null;
     [ObservableProperty] private string _renamingWatchlistName = "";
     [ObservableProperty] private string _renamingWatchlistError = "";
+    
+    // Add symbol input
+    [ObservableProperty] private string _newSymbolText = "";
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
     private readonly System.Timers.Timer _batchTimer;
     private IDisposable? _tickSubscription;
+    private IDisposable? _playbackSubscription;
+    private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
     private bool _disposed = false;
 
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
@@ -61,11 +66,28 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         _batchTimer.AutoReset = true;
         _batchTimer.Start();
 
-        // Subscribe to tick updates
+        // Subscribe to tick updates (IBKR)
         _tickSubscription = _ibkrService.TickStream.Subscribe(tick =>
         {
             _batchedTicks.Enqueue(tick);
         });
+
+        // Fallback playback stream (NDJSON or synthetic via controller)
+        var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+        if (fb != null && fb.IsActive)
+        {
+            _playbackSubscription = fb.TickStream.Subscribe(t => _batchedTicks.Enqueue(t));
+        }
+        else
+        {
+            // Legacy NDJSON env-based attach (best-effort)
+            _playbackSource = MarketScanner.Services.Impl.DelayedNdjsonTickSource.CreateFromEnv();
+            if (_playbackSource != null)
+            {
+                _playbackSource.Start();
+                _playbackSubscription = _playbackSource.Stream.Subscribe(tick => _batchedTicks.Enqueue(tick));
+            }
+        }
     }
 
     public async Task InitializeAsync()
@@ -109,7 +131,12 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         {
             _ = LoadWatchlistItemsAsync(value.Id);
         }
+        // Notify that CanAddSymbol changed
+        OnPropertyChanged(nameof(CanAddSymbol));
     }
+
+    // Computed property to enable/disable add symbol button
+    public bool CanAddSymbol => SelectedWatchlist != null;
 
     private async Task LoadWatchlistItemsAsync(int watchlistId)
     {
@@ -131,7 +158,8 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 // Create ViewModel for this symbol
                 var rowVm = new ScannerRowViewModel(_logger)
                 {
-                    Symbol = item.Symbol
+                    Symbol = item.Symbol,
+                    Company = item.Company ?? item.Symbol
                 };
                 _rowCache[item.Symbol] = rowVm;
                 WatchlistItems.Add(rowVm);
@@ -409,6 +437,12 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         RenamingWatchlistError = "";
     }
 
+    partial void OnNewSymbolTextChanged(string value)
+    {
+        // Clear error when user starts typing
+        ErrorMessage = "";
+    }
+
     [RelayCommand]
     private async Task DeleteWatchlistAsync(Watchlist watchlist)
     {
@@ -471,6 +505,84 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand]
+    private async Task AddSymbolAsync()
+    {
+        try
+        {
+            // Validate that a watchlist is selected (button will be disabled if null)
+            if (SelectedWatchlist == null)
+            {
+                return;
+            }
+
+            var symbol = NewSymbolText?.Trim().ToUpperInvariant() ?? "";
+
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                ErrorMessage = "Please enter a symbol";
+                return;
+            }
+
+            // Check if symbol already exists in watchlist (silently skip if duplicate)
+            if (_rowCache.ContainsKey(symbol))
+            {
+                NewSymbolText = "";
+                _logger.LogDebug("Symbol {Symbol} already exists in watchlist, skipping", symbol);
+                return;
+            }
+
+            ErrorMessage = "";
+
+            // Add symbol to watchlist service (use symbol as company name)
+            await _watchlistService.AddItemsAsync(SelectedWatchlist.Id, new List<(string Symbol, string Company)> { (symbol, symbol) });
+
+            // Subscribe to market data for this symbol (ensures live updates work)
+            // Only subscribe via IBKR if connected, otherwise rely on fallback playback
+            try
+            {
+                _ibkrService.SubscribeToSymbols(new[] { symbol });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not subscribe to IBKR market data for {Symbol}, will use fallback if available", symbol);
+            }
+
+            // Update fallback playback with new symbol if active
+            var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+            if (fallback != null && fallback.IsActive)
+            {
+                // Get current symbols and add the new one
+                var currentSymbols = fallback.CurrentSymbols.ToList();
+                if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
+                {
+                    currentSymbols.Add(symbol);
+                    fallback.UpdateSymbols(currentSymbols);
+                }
+            }
+
+            // Create ViewModel for this symbol
+            var rowVm = new ScannerRowViewModel(_logger)
+            {
+                Symbol = symbol,
+                Company = symbol
+            };
+
+            _rowCache[symbol] = rowVm;
+            WatchlistItems.Add(rowVm);
+
+            NewSymbolText = "";
+            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data", symbol, SelectedWatchlist.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to add symbol to watchlist");
+            ErrorMessage = $"Failed to add symbol: {ex.Message}";
+        }
+
+        await Task.CompletedTask;
+    }
+
     public void Dispose()
     {
         _disposed = true;
@@ -479,6 +591,8 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         _batchTimer?.Dispose();
 
         _tickSubscription?.Dispose();
+        _playbackSubscription?.Dispose();
+        _playbackSource?.Dispose();
 
         _rowCache.Clear();
     }

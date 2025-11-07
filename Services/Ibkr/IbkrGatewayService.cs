@@ -380,8 +380,24 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     #region Market Data Subscription
 
+    /// <summary>
+    /// Public method to subscribe to market data for symbols.
+    /// Used when symbols are manually added to watchlists or quotes.
+    /// </summary>
+    public void SubscribeToSymbols(IEnumerable<string> symbols)
+    {
+        SubscribeToMarketData(symbols);
+    }
+
     private void SubscribeToMarketData(IEnumerable<string> symbols)
     {
+        // Only subscribe if connected
+        if (!_connected || _client == null || !_client.IsConnected())
+        {
+            _logger.LogDebug("Skipping market data subscription - IBKR not connected");
+            return;
+        }
+
         var tickerId = 10000; // Start from high ID like Node.js
 
         foreach (var symbol in symbols)

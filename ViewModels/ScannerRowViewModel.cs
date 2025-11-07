@@ -141,21 +141,44 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         if (_lastPrice == value) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+        if (MainThread.IsMainThread)
+        {
+            // Already on main thread - set directly
+            LastPrice = value;
+        }
+        else
+        {
+            // Not on main thread - invoke on main thread
+            MainThread.BeginInvokeOnMainThread(() => LastPrice = value);
+        }
     }
 
     public void UpdateVolume(long value)
     {
         if (_volume == value) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => Volume = value);
+        if (MainThread.IsMainThread)
+        {
+            Volume = value;
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => Volume = value);
+        }
     }
 
     public void UpdateClosePrice(double closePrice)
     {
         if (_prevClose == closePrice) return; // Skip if no change
         
-        MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+        if (MainThread.IsMainThread)
+        {
+            PrevClose = closePrice;
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => PrevClose = closePrice);
+        }
     }
 
 
@@ -164,7 +187,15 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         // Don't skip if current value is 0 - we want to update from 0 to actual value
         if (_avgVolume == value && _avgVolume != 0) return;
-        MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+        
+        if (MainThread.IsMainThread)
+        {
+            AvgVolume = value;
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => AvgVolume = value);
+        }
     }
 
     // Removed SetFloatShares and SetFiftyTwoWeekHigh methods as requested

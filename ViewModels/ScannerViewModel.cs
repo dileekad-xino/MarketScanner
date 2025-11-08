@@ -1054,13 +1054,17 @@ public partial class ScannerViewModel : ObservableObject
 
         _logger.LogDebug("Creating QuoteViewModel on UI thread");
 
+        // Get service provider for algo runner
+        var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+
         // Create ViewModel synchronously on UI thread (ready for binding)
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
             _watchlistService,
             Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
-                .CreateLogger<QuoteViewModel>());
+                .CreateLogger<QuoteViewModel>(),
+            serviceProvider);
 
         _logger.LogDebug("QuoteViewModel created, notifying property change");
         OnPropertyChanged(nameof(QuoteViewModel));

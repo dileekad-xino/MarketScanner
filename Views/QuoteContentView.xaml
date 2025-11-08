@@ -119,6 +119,9 @@
                             <!-- Right-click context menu -->
                             <FlyoutBase.ContextFlyout>
                                 <MenuFlyout>
+                                    <MenuFlyoutItem Text="Run Algo"
+                                                    Command="{Binding BindingContext.RunAlgoCommand, Source={x:Reference QuoteRoot}}"
+                                                    CommandParameter="{Binding .}" />
                                     <MenuFlyoutItem Text="Remove from Quotes"
                                                     Command="{Binding BindingContext.RemoveQuoteCommand, Source={x:Reference QuoteRoot}}"
                                                     CommandParameter="{Binding .}" />

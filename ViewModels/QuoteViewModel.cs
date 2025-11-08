@@ -7,6 +7,7 @@ using MarketScanner.Services;
 using MarketScanner.Services.Ibkr;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MarketScanner.ViewModels;
 
@@ -43,16 +44,20 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
 
+    private readonly IServiceProvider? _serviceProvider;
+
     public QuoteViewModel(
         IbkrGatewayService ibkrService,
         IDispatcherService dispatcher,
         IWatchlistService watchlistService,
-        ILogger<QuoteViewModel> logger)
+        ILogger<QuoteViewModel> logger,
+        IServiceProvider? serviceProvider = null)
     {
         _ibkrService = ibkrService;
         _dispatcher = dispatcher;
         _watchlistService = watchlistService;
         _logger = logger;
+        _serviceProvider = serviceProvider;
 
         // Setup batch timer for smooth updates (60 FPS)
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -550,6 +555,52 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             _logger.LogError(ex, "Failed to clear quotes");
             ErrorMessage = $"Failed to clear quotes: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task RunAlgoAsync(ScannerRowViewModel row)
+    {
+        try
+        {
+            if (_serviceProvider == null)
+            {
+                _logger.LogError("ServiceProvider is not available - cannot open algo runner");
+                ErrorMessage = "Algo runner is not available";
+                return;
+            }
+
+            // Get the current page to navigate from
+            var currentPage = Application.Current?.MainPage;
+            if (currentPage == null)
+            {
+                _logger.LogError("MainPage is not available - cannot open algo runner");
+                ErrorMessage = "Cannot open algo runner - main page not available";
+                return;
+            }
+
+            // Create algo runner view model
+            var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
+            var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
+            var algoRunnerViewModel = new AlgoRunnerViewModel(
+                algorithm,
+                loggerFactory.CreateLogger<AlgoRunnerViewModel>());
+
+            // Initialize with selected symbol
+            await algoRunnerViewModel.InitializeAsync(row);
+
+            // Create and show algo runner page
+            var algoRunnerPage = new Views.AlgoRunnerPage(algoRunnerViewModel);
+            
+            // Navigate to algo runner page
+            await currentPage.Navigation.PushModalAsync(algoRunnerPage);
+
+            _logger.LogInformation("Opened algo runner for symbol {Symbol}", row.Symbol);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open algo runner");
+            ErrorMessage = $"Failed to open algo runner: {ex.Message}";
         }
     }
 

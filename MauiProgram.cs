@@ -82,6 +82,9 @@ namespace MarketScanner
             builder.Services.AddSingleton<IConnectivity>(provider => 
                 Microsoft.Maui.Networking.Connectivity.Current);
 
+            // Algorithm Services
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.PlaceholderAlgoStrategy>();
+
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>();
             // WatchlistViewModel is created on-demand by ScannerViewModel

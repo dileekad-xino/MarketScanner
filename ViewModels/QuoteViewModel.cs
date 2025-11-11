@@ -147,12 +147,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             return;
         }
 
-        // Only save snapshot when switching FROM "Scanner" (Id=-1 or null) TO a watchlist
-        // This preserves the original scanner quotes when switching back
+        // Always save snapshot when switching FROM "Scanner" (Id=-1 or null) TO a watchlist
+        // This preserves the current scanner quotes (including newly added ones) when switching back
         var wasOnScanner = _previousWatchlist == null || _previousWatchlist.Id == -1;
-        var shouldSaveSnapshot = wasOnScanner && QuoteItems.Count > 0 && _savedQuoteItems == null;
+        var shouldSaveSnapshot = wasOnScanner && QuoteItems.Count > 0;
 
-        // Load watchlist (will save snapshot if coming from Scanner and no snapshot exists yet)
+        // Load watchlist (will save snapshot if coming from Scanner)
         _ = LoadQuotesFromWatchlistAsync(value.Id, shouldSaveSnapshot);
         
         _previousWatchlist = value;
@@ -382,6 +382,19 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         try
         {
+            // Ensure we're on the Scanner option, not a watchlist
+            if (SelectedWatchlist == null || SelectedWatchlist.Id != -1)
+            {
+                // Find and select the "Scanner" option
+                var scannerOption = Watchlists.FirstOrDefault(w => w.Id == -1);
+                if (scannerOption != null)
+                {
+                    SelectedWatchlist = scannerOption;
+                    // Wait a moment for the watchlist change to process
+                    await Task.Delay(50);
+                }
+            }
+
             // Preserve order by converting to list first
             var orderedSymbols = symbols
                 .Where(s => !string.IsNullOrWhiteSpace(s))

@@ -25,6 +25,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
     private Watchlist? _previousWatchlist; // Track previous selection to detect Scanner -> Watchlist transitions
+    private bool _isSyncing = false; // Flag to prevent restore when syncing from scanner refresh
 
     // Computed property to enable/disable watchlist picker
     public bool HasWatchlists => Watchlists.Count > 0;
@@ -143,7 +144,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         if (value.Id == -1)
         {
             _previousWatchlist = value;
-            RestoreSavedQuotes();
+            // Skip restore if we're syncing from scanner refresh (to prevent duplicates)
+            if (!_isSyncing)
+            {
+                RestoreSavedQuotes();
+            }
             return;
         }
 
@@ -164,7 +169,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             if (_savedQuoteItems == null || _savedRowCache == null)
             {
-                _logger.LogDebug("No saved quotes to restore");
                 return;
             }
 
@@ -218,8 +222,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                     fallback.UpdateSymbols(currentSymbols);
                 }
             }
-
-            _logger.LogInformation("Restored {Count} saved quotes", _savedQuoteItems.Count);
         }
         catch (Exception ex)
         {
@@ -380,6 +382,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     public async Task SyncToSymbols(IEnumerable<string> symbols)
     {
+        // Always set syncing flag to prevent restore during sync operations
+        _isSyncing = true;
         try
         {
             // Ensure we're on the Scanner option, not a watchlist
@@ -463,19 +467,27 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 }
             }
 
-            // Clear and rebuild QuoteItems in correct order
-            QuoteItems.Clear();
-            foreach (var item in orderedItems)
+            // Clear and rebuild QuoteItems in correct order (must be on UI thread)
+            await _dispatcher.OnUIAsync(() =>
             {
-                QuoteItems.Add(item);
-            }
-
-            _logger.LogInformation("Synced quotes to {Count} symbols in scanner order", orderedSymbols.Count);
+                // Clear all items first to prevent duplicates
+                QuoteItems.Clear();
+                
+                // Add items in correct order
+                foreach (var item in orderedItems)
+                {
+                    QuoteItems.Add(item);
+                }
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to sync quotes to symbols");
             ErrorMessage = $"Failed to sync quotes: {ex.Message}";
+        }
+        finally
+        {
+            _isSyncing = false;
         }
         await Task.CompletedTask;
     }
@@ -517,6 +529,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             if (string.IsNullOrWhiteSpace(symbol))
             {
                 ErrorMessage = "Please enter a symbol";
+                return;
+            }
+
+            // Don't allow adding items during sync to prevent duplicates
+            if (_isSyncing)
+            {
+                ErrorMessage = "Please wait for sync to complete";
                 return;
             }
 

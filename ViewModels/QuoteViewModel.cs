@@ -328,6 +328,19 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             if (rows == null) return;
 
+            // Ensure we're on the Scanner option, not a watchlist
+            if (SelectedWatchlist == null || SelectedWatchlist.Id != -1)
+            {
+                // Find and select the "Scanner" option
+                var scannerOption = Watchlists.FirstOrDefault(w => w.Id == -1);
+                if (scannerOption != null)
+                {
+                    SelectedWatchlist = scannerOption;
+                    // Wait a moment for the watchlist change to process
+                    await Task.Delay(50);
+                }
+            }
+
             // Build list to add (skip duplicates)
             foreach (var r in rows)
             {

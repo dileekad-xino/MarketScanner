@@ -28,6 +28,7 @@ public partial class ScannerViewModel : ObservableObject
     private bool _disposed = false;
     private bool _isOffline = false;
     private bool _linkedQuotes = false;
+    private SemaphoreSlim _syncQuotesSemaphore = new SemaphoreSlim(1, 1);
     
     // Store page title for dynamic watchlist naming and view title (set from code-behind and when switching views)
     [ObservableProperty] private string _pageTitle = "Market Scanner"; // fallback default
@@ -760,19 +761,34 @@ public partial class ScannerViewModel : ObservableObject
 
     private async Task SyncQuotesToVisibleAsync()
     {
+        // Prevent concurrent execution to avoid race conditions
+        if (!await _syncQuotesSemaphore.WaitAsync(0))
+        {
+            return;
+        }
+
         try
         {
-            if (_quoteViewModel == null) return;
+            if (_quoteViewModel == null)
+            {
+                return;
+            }
+            
             // Preserve order from ScannerItems (ObservableCollection maintains order)
             var visible = ScannerItems
                 .Select(r => r.Symbol)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToArray(); // Convert to array to ensure order is maintained
+            
             await _quoteViewModel.SyncToSymbols(visible);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed syncing quotes to visible symbols");
+        }
+        finally
+        {
+            _syncQuotesSemaphore.Release();
         }
     }
 
@@ -1054,13 +1070,21 @@ public partial class ScannerViewModel : ObservableObject
 
         _logger.LogDebug("Creating QuoteViewModel on UI thread");
 
+        // Get service provider for algo runner
+        var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+
         // Create ViewModel synchronously on UI thread (ready for binding)
+        // Get logger from service provider to use the main app's logging configuration
+        var loggerFactory = serviceProvider?.GetService<ILoggerFactory>();
+        var quoteLogger = loggerFactory?.CreateLogger<QuoteViewModel>() 
+            ?? Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<QuoteViewModel>();
+        
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
             _watchlistService,
-            Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
-                .CreateLogger<QuoteViewModel>());
+            quoteLogger,
+            serviceProvider);
 
         _logger.LogDebug("QuoteViewModel created, notifying property change");
         OnPropertyChanged(nameof(QuoteViewModel));
@@ -1238,6 +1262,12 @@ public partial class ScannerViewModel : ObservableObject
         try
         {
             _priceDebouncer.Dispose();
+        }
+        catch (ObjectDisposedException) { }
+
+        try
+        {
+            _syncQuotesSemaphore?.Dispose();
         }
         catch (ObjectDisposedException) { }
 

@@ -83,7 +83,7 @@ namespace MarketScanner
                 Microsoft.Maui.Networking.Connectivity.Current);
 
             // Algorithm Services
-            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.PlaceholderAlgoStrategy>();
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.AlgoStrategy>();
 
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>();

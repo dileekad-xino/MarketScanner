@@ -3,23 +3,17 @@ using MarketScanner.ViewModels;
 
 namespace MarketScanner.Services.Impl;
 
-/// <summary>
-/// Placeholder algorithm implementation for testing.
-/// This can be replaced with real trading algorithms later.
-/// </summary>
-public class PlaceholderAlgoStrategy : IAlgoStrategy
+public class AlgoStrategy : IAlgoStrategy
 {
-    public string Name => "Placeholder Algorithm";
-    public string Description => "A simple placeholder algorithm that demonstrates the algo runner interface.";
+    public string Name => "Algorithm";
+    public string Description => "A simple algorithm that demonstrates the algo runner interface.";
 
     public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default)
     {
-        // Simulate some processing time
         await Task.Delay(500, ct);
 
-        // Simple logic: Buy if price is positive and change is positive, otherwise Hold
-        var action = symbol.LastPrice > 0 && symbol.ChangePercent > 0 
-            ? AlgoAction.Buy 
+        var action = symbol.LastPrice > 0 && symbol.ChangePercent > 0
+            ? AlgoAction.Buy
             : AlgoAction.Hold;
 
         var reason = action == AlgoAction.Buy

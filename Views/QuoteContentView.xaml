@@ -9,6 +9,8 @@
             <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
             <converters:StringToBoolConverter x:Key="StringToBoolConverter"/>
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
+            <converters:BoolToOpacityConverter x:Key="BoolToOpacityConverter" TrueValue="0.5" FalseValue="1.0"/>
+            <converters:BoolToColorConverter x:Key="BoolToColorConverter" TrueColor="#0f0f0f" FalseColor="#1a1a1a"/>
         </ResourceDictionary>
     </ContentView.Resources>
 
@@ -112,9 +114,10 @@
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Grid ColumnDefinitions="100,100,80"
-                              BackgroundColor="#1a1a1a"
                               HeightRequest="32"
-                              Padding="5,0">
+                              Padding="5,0"
+                              Opacity="{Binding IsDropped, Converter={StaticResource BoolToOpacityConverter}}"
+                              BackgroundColor="{Binding IsDropped, Converter={StaticResource BoolToColorConverter}}">
 
                             <!-- Right-click context menu -->
                             <FlyoutBase.ContextFlyout>

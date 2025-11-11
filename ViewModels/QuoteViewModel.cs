@@ -275,7 +275,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                     Company = item.Company ?? symbol,
                     Region = "United States",
                     Product = "Stocks",
-                    Exchange = "us stocks"
+                    Exchange = "us stocks",
+                    IsDropped = false
                 };
 
                 _rowCache[symbol] = rowVm;
@@ -356,7 +357,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                     Company = r.Company,
                     Region = r.Region,
                     Product = r.Product,
-                    Exchange = r.Exchange
+                    Exchange = r.Exchange,
+                    IsDropped = false
                 };
 
                 // Seed with current values so UI shows something immediately; live ticks will update
@@ -411,14 +413,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
             var latest = fb != null ? fb.GetLatestSnapshots(target) : new Dictionary<string, TickData>();
 
-            // Remove missing
-            var toRemove = _rowCache.Keys.Where(k => !target.Contains(k)).ToList();
-            foreach (var k in toRemove)
+            // Mark symbols not in target as dropped (instead of removing them)
+            var toMarkAsDropped = _rowCache.Keys.Where(k => !target.Contains(k)).ToList();
+            foreach (var k in toMarkAsDropped)
             {
                 if (_rowCache.TryGetValue(k, out var vm))
                 {
-                    QuoteItems.Remove(vm);
-                    _rowCache.Remove(k);
+                    vm.IsDropped = true;
                 }
             }
 
@@ -427,6 +428,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             {
                 if (_rowCache.TryGetValue(s, out var existingVm))
                 {
+                    // Mark as not dropped (in case it was previously dropped)
+                    existingVm.IsDropped = false;
+                    
                     // Update existing item with latest tick data if available
                     if (latest.TryGetValue(s, out var tick))
                     {
@@ -444,7 +448,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                         Company = s,
                         Region = "United States",
                         Product = "Stocks",
-                        Exchange = "us stocks"
+                        Exchange = "us stocks",
+                        IsDropped = false
                     };
                     // Seed with latest tick data if available
                     if (latest.TryGetValue(s, out var tick))
@@ -457,24 +462,35 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 }
             }
 
-            // Reorder QuoteItems to match scanner order
-            var orderedItems = new List<ScannerRowViewModel>();
+            // Build ordered list: active symbols first (in scanner order), then dropped symbols
+            var activeItems = new List<ScannerRowViewModel>();
             foreach (var s in orderedSymbols)
             {
-                if (_rowCache.TryGetValue(s, out var vm))
+                if (_rowCache.TryGetValue(s, out var vm) && !vm.IsDropped)
                 {
-                    orderedItems.Add(vm);
+                    activeItems.Add(vm);
                 }
             }
 
-            // Clear and rebuild QuoteItems in correct order (must be on UI thread)
+            var droppedItems = _rowCache.Values
+                .Where(vm => vm.IsDropped)
+                .OrderBy(vm => vm.Symbol)
+                .ToList();
+
+            // Clear and rebuild QuoteItems: active first, then dropped (must be on UI thread)
             await _dispatcher.OnUIAsync(() =>
             {
                 // Clear all items first to prevent duplicates
                 QuoteItems.Clear();
                 
-                // Add items in correct order
-                foreach (var item in orderedItems)
+                // Add active items first (in scanner order)
+                foreach (var item in activeItems)
+                {
+                    QuoteItems.Add(item);
+                }
+                
+                // Add dropped items below active ones
+                foreach (var item in droppedItems)
                 {
                     QuoteItems.Add(item);
                 }
@@ -551,7 +567,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             // Create ViewModel for this symbol
             var rowVm = new ScannerRowViewModel(_logger)
             {
-                Symbol = symbol
+                Symbol = symbol,
+                IsDropped = false
             };
 
             _rowCache[symbol] = rowVm;

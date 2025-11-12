@@ -126,7 +126,7 @@
             
             <Grid ColumnDefinitions="*,Auto"
                   ColumnSpacing="0"
-                  VerticalOptions="Center">
+                  VerticalOptions="Start">
                 
                 <!-- Symbol Input with Search Results -->
                 <Grid Grid.Column="0" 
@@ -205,7 +205,7 @@
                         FontAttributes="Bold"
                         WidthRequest="40"
                         HeightRequest="32"
-                        VerticalOptions="Center"
+                        VerticalOptions="Start"
                         HorizontalOptions="Center"
                         Padding="0"
                         CornerRadius="0"

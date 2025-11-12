@@ -61,5 +61,30 @@ public partial class WatchlistContentView : ContentView
             throw;
         }
     }
+
+    private void OnSymbolTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        // Update ViewModel property to trigger OnNewSymbolTextChanged
+        System.Diagnostics.Debug.WriteLine($"WatchlistContentView.OnSymbolTextChanged: NewTextValue='{e.NewTextValue}'");
+        if (BindingContext is WatchlistViewModel viewModel)
+        {
+            var oldValue = viewModel.NewSymbolText;
+            viewModel.NewSymbolText = e.NewTextValue ?? "";
+            System.Diagnostics.Debug.WriteLine($"WatchlistContentView.OnSymbolTextChanged: Updated ViewModel property from '{oldValue}' to '{viewModel.NewSymbolText}'");
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine($"WatchlistContentView.OnSymbolTextChanged: BindingContext is not WatchlistViewModel (type: {BindingContext?.GetType().Name ?? "null"})");
+        }
+    }
+
+    private void OnSymbolEntryUnfocused(object? sender, FocusEventArgs e)
+    {
+        // Hide search results when entry loses focus
+        if (BindingContext is WatchlistViewModel viewModel)
+        {
+            viewModel.ShowSearchResults = false;
+        }
+    }
 }
 

@@ -17,6 +17,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     private readonly IbkrGatewayService _ibkrService;
     private readonly IDispatcherService _dispatcher;
     private readonly ILogger<WatchlistViewModel> _logger;
+    private readonly ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
@@ -37,6 +38,9 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     
     // Add symbol input
     [ObservableProperty] private string _newSymbolText = "";
+    [ObservableProperty] private ObservableCollection<SymbolSearchResult> _searchResults = new();
+    [ObservableProperty] private bool _showSearchResults = false;
+    [ObservableProperty] private bool _isSearching = false;
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
@@ -48,17 +52,21 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
+    private readonly TimeSpan _searchDebounceDelay = TimeSpan.FromMilliseconds(300);
+    private CancellationTokenSource? _searchCts;
 
     public WatchlistViewModel(
         IWatchlistService watchlistService,
         IbkrGatewayService ibkrService,
         IDispatcherService dispatcher,
-        ILogger<WatchlistViewModel> logger)
+        ILogger<WatchlistViewModel> logger,
+        ISymbolSearchService? symbolSearchService = null)
     {
         _watchlistService = watchlistService;
         _ibkrService = ibkrService;
         _dispatcher = dispatcher;
         _logger = logger;
+        _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -448,8 +456,116 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
     partial void OnNewSymbolTextChanged(string value)
     {
+        _logger.LogInformation("WatchlistViewModel.OnNewSymbolTextChanged called with value: '{Value}' (length: {Length})", value ?? "(null)", value?.Length ?? 0);
+        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel.OnNewSymbolTextChanged: value='{value}', length={value?.Length ?? 0}");
+        
         // Clear error when user starts typing
         ErrorMessage = "";
+        
+        // Trigger search if 2+ characters
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
+        {
+            _logger.LogDebug("WatchlistViewModel: Search not triggered - value too short or empty");
+            ShowSearchResults = false;
+            SearchResults.Clear();
+            return;
+        }
+        
+        _logger.LogInformation("WatchlistViewModel: Triggering search for query: '{Query}'", value);
+        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Starting PerformSearchAsync for '{value}'");
+        _ = PerformSearchAsync(value);
+    }
+    
+    private async Task PerformSearchAsync(string query)
+    {
+        _logger.LogInformation("WatchlistViewModel.PerformSearchAsync started for query: '{Query}'", query);
+        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel.PerformSearchAsync: Started for query '{query}'");
+        
+        // Cancel previous search
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        
+        try
+        {
+            // Debounce
+            _logger.LogDebug("WatchlistViewModel: Waiting for debounce delay: {Delay}ms", _searchDebounceDelay.TotalMilliseconds);
+            await Task.Delay(_searchDebounceDelay, _searchCts.Token);
+            
+            if (_symbolSearchService == null)
+            {
+                _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
+                System.Diagnostics.Debug.WriteLine("WatchlistViewModel: _symbolSearchService is NULL!");
+                return;
+            }
+            
+            _logger.LogInformation("WatchlistViewModel: _symbolSearchService is not null, proceeding with search");
+            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: _symbolSearchService is available, type: {_symbolSearchService.GetType().Name}");
+            
+            if (_searchCts.Token.IsCancellationRequested)
+            {
+                _logger.LogDebug("WatchlistViewModel: Search was cancelled during debounce");
+                return;
+            }
+                
+            _logger.LogInformation("WatchlistViewModel: Executing search for query: '{Query}'", query);
+            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Calling _symbolSearchService.SearchSymbolsAsync('{query}')");
+            IsSearching = true;
+            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            
+            _logger.LogInformation("WatchlistViewModel: Search completed - received {Count} results for query: '{Query}'", results.Count, query);
+            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Search returned {results.Count} results");
+            
+            if (!_searchCts.Token.IsCancellationRequested)
+            {
+                _logger.LogInformation("WatchlistViewModel: Updating UI on UI thread with {Count} results", results.Count);
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    _logger.LogInformation("WatchlistViewModel: On UI thread - clearing and adding {Count} results", results.Count);
+                    SearchResults.Clear();
+                    foreach (var result in results)
+                    {
+                        SearchResults.Add(result);
+                        _logger.LogDebug("WatchlistViewModel: Added result: {Symbol}", result.Symbol);
+                    }
+                    ShowSearchResults = results.Count > 0;
+                    _logger.LogInformation("WatchlistViewModel: Updated UI - SearchResults.Count={Count}, ShowSearchResults={Show}", SearchResults.Count, ShowSearchResults);
+                    System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: UI updated - SearchResults.Count={SearchResults.Count}, ShowSearchResults={ShowSearchResults}");
+                });
+            }
+            else
+            {
+                _logger.LogDebug("WatchlistViewModel: Search was cancelled before UI update");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("WatchlistViewModel: Search was cancelled (expected when user types again)");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WatchlistViewModel: Symbol search failed for query: '{Query}'", query);
+            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Exception in PerformSearchAsync: {ex.Message}");
+        }
+        finally
+        {
+            IsSearching = false;
+            _logger.LogDebug("WatchlistViewModel: PerformSearchAsync completed for query: '{Query}'", query);
+        }
+    }
+    
+    partial void OnShowSearchResultsChanged(bool value)
+    {
+        _logger.LogInformation("WatchlistViewModel: ShowSearchResults changed to: {Value}", value);
+        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: ShowSearchResults changed to {value}");
+    }
+
+    [RelayCommand]
+    private void SelectSearchResult(SymbolSearchResult result)
+    {
+        NewSymbolText = result.Symbol;
+        ShowSearchResults = false;
+        SearchResults.Clear();
     }
 
     [RelayCommand]
@@ -595,6 +711,13 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _disposed = true;
+
+        try
+        {
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+        }
+        catch { }
 
         _batchTimer?.Stop();
         _batchTimer?.Dispose();

@@ -1007,13 +1007,18 @@ public partial class ScannerViewModel : ObservableObject
 
         _logger.LogDebug("Creating WatchlistViewModel on UI thread");
 
+        // Get service provider for symbol search service
+        var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+        var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
+
         // ✅ Create ViewModel synchronously on UI thread (ready for binding)
         _watchlistViewModel = new WatchlistViewModel(
             _watchlistService,
             (IbkrGatewayService)_scanner,
             _dispatcher,
             Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
-                .CreateLogger<WatchlistViewModel>());
+                .CreateLogger<WatchlistViewModel>(),
+            symbolSearchService);
 
         _logger.LogDebug("WatchlistViewModel created, notifying property change");
         OnPropertyChanged(nameof(WatchlistViewModel));
@@ -1079,12 +1084,15 @@ public partial class ScannerViewModel : ObservableObject
         var quoteLogger = loggerFactory?.CreateLogger<QuoteViewModel>() 
             ?? Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<QuoteViewModel>();
         
+        var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
+        
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
             _watchlistService,
             quoteLogger,
-            serviceProvider);
+            serviceProvider,
+            symbolSearchService);
 
         _logger.LogDebug("QuoteViewModel created, notifying property change");
         OnPropertyChanged(nameof(QuoteViewModel));

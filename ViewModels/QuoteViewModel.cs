@@ -17,6 +17,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private readonly IDispatcherService _dispatcher;
     private readonly IWatchlistService _watchlistService;
     private readonly ILogger<QuoteViewModel> _logger;
+    private readonly ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _quoteItems = new();
     [ObservableProperty] private string _newSymbolText = "";
@@ -24,6 +25,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
+    [ObservableProperty] private ObservableCollection<SymbolSearchResult> _searchResults = new();
+    [ObservableProperty] private bool _showSearchResults = false;
+    [ObservableProperty] private bool _isSearching = false;
     private Watchlist? _previousWatchlist; // Track previous selection to detect Scanner -> Watchlist transitions
     private bool _isSyncing = false; // Flag to prevent restore when syncing from scanner refresh
 
@@ -44,21 +48,25 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
+    private readonly TimeSpan _searchDebounceDelay = TimeSpan.FromMilliseconds(300);
 
     private readonly IServiceProvider? _serviceProvider;
+    private CancellationTokenSource? _searchCts;
 
     public QuoteViewModel(
         IbkrGatewayService ibkrService,
         IDispatcherService dispatcher,
         IWatchlistService watchlistService,
         ILogger<QuoteViewModel> logger,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        ISymbolSearchService? symbolSearchService = null)
     {
         _ibkrService = ibkrService;
         _dispatcher = dispatcher;
         _watchlistService = watchlistService;
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -668,14 +676,129 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     partial void OnNewSymbolTextChanged(string value)
     {
+        _logger.LogInformation("QuoteViewModel.OnNewSymbolTextChanged called with value: '{Value}' (length: {Length})", value ?? "(null)", value?.Length ?? 0);
+        System.Diagnostics.Debug.WriteLine($"QuoteViewModel.OnNewSymbolTextChanged: value='{value}', length={value?.Length ?? 0}");
+        
         // Clear error when user starts typing
         ErrorMessage = "";
+        
+        // Trigger search if 2+ characters
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
+        {
+            _logger.LogDebug("QuoteViewModel: Search not triggered - value too short or empty");
+            ShowSearchResults = false;
+            SearchResults.Clear();
+            return;
+        }
+        
+        _logger.LogInformation("QuoteViewModel: Triggering search for query: '{Query}'", value);
+        System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Starting PerformSearchAsync for '{value}'");
+        _ = PerformSearchAsync(value);
+    }
+    
+    private async Task PerformSearchAsync(string query)
+    {
+        _logger.LogInformation("QuoteViewModel.PerformSearchAsync started for query: '{Query}'", query);
+        System.Diagnostics.Debug.WriteLine($"QuoteViewModel.PerformSearchAsync: Started for query '{query}'");
+        
+        // Cancel previous search
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        
+        try
+        {
+            // Debounce
+            _logger.LogDebug("QuoteViewModel: Waiting for debounce delay: {Delay}ms", _searchDebounceDelay.TotalMilliseconds);
+            await Task.Delay(_searchDebounceDelay, _searchCts.Token);
+            
+            if (_symbolSearchService == null)
+            {
+                _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
+                System.Diagnostics.Debug.WriteLine("QuoteViewModel: _symbolSearchService is NULL!");
+                return;
+            }
+            
+            _logger.LogInformation("QuoteViewModel: _symbolSearchService is not null, proceeding with search");
+            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: _symbolSearchService is available, type: {_symbolSearchService.GetType().Name}");
+            
+            if (_searchCts.Token.IsCancellationRequested)
+            {
+                _logger.LogDebug("QuoteViewModel: Search was cancelled during debounce");
+                return;
+            }
+                
+            _logger.LogInformation("QuoteViewModel: Executing search for query: '{Query}'", query);
+            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Calling _symbolSearchService.SearchSymbolsAsync('{query}')");
+            IsSearching = true;
+            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            
+            _logger.LogInformation("QuoteViewModel: Search completed - received {Count} results for query: '{Query}'", results.Count, query);
+            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Search returned {results.Count} results");
+            
+            if (!_searchCts.Token.IsCancellationRequested)
+            {
+                _logger.LogInformation("QuoteViewModel: Updating UI on UI thread with {Count} results", results.Count);
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    _logger.LogInformation("QuoteViewModel: On UI thread - clearing and adding {Count} results", results.Count);
+                    SearchResults.Clear();
+                    foreach (var result in results)
+                    {
+                        SearchResults.Add(result);
+                        _logger.LogDebug("QuoteViewModel: Added result: {Symbol}", result.Symbol);
+                    }
+                    ShowSearchResults = results.Count > 0;
+                    _logger.LogInformation("QuoteViewModel: Updated UI - SearchResults.Count={Count}, ShowSearchResults={Show}", SearchResults.Count, ShowSearchResults);
+                    System.Diagnostics.Debug.WriteLine($"QuoteViewModel: UI updated - SearchResults.Count={SearchResults.Count}, ShowSearchResults={ShowSearchResults}");
+                });
+            }
+            else
+            {
+                _logger.LogDebug("QuoteViewModel: Search was cancelled before UI update");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("QuoteViewModel: Search was cancelled (expected when user types again)");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "QuoteViewModel: Symbol search failed for query: '{Query}'", query);
+            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Exception in PerformSearchAsync: {ex.Message}");
+        }
+        finally
+        {
+            IsSearching = false;
+            _logger.LogDebug("QuoteViewModel: PerformSearchAsync completed for query: '{Query}'", query);
+        }
+    }
+    
+    partial void OnShowSearchResultsChanged(bool value)
+    {
+        _logger.LogInformation("QuoteViewModel: ShowSearchResults changed to: {Value}", value);
+        System.Diagnostics.Debug.WriteLine($"QuoteViewModel: ShowSearchResults changed to {value}");
+    }
+
+    [RelayCommand]
+    private void SelectSearchResult(SymbolSearchResult result)
+    {
+        NewSymbolText = result.Symbol;
+        ShowSearchResults = false;
+        SearchResults.Clear();
     }
 
     public void Dispose()
     {
         _disposed = true;
         
+        try
+        {
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+        }
+        catch { }
+
         try
         {
             _batchTimer?.Stop();

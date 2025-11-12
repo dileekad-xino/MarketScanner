@@ -275,7 +275,18 @@ public partial class ScannerPage : ContentPage
             // Load refresh preferences on first appearance
             vm.LoadRefreshPrefs();
             
-            if (vm.ScannerItems.Count == 0) await vm.RefreshAsync();
+            if (vm.ScannerItems.Count == 0)
+            {
+                await vm.RefreshAsync();
+                
+                // Initialize symbol search service after connection attempt
+                var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+                var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
+                if (symbolSearchService != null)
+                {
+                    _ = symbolSearchService.InitializeAsync(); // Fire and forget
+                }
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 using IBApi;
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Services;
 using MarketScanner.Utilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private int _nextValidId;
     private int _nextReqId = 1;
     private bool _disposed;
+    
+    /// <summary>
+    /// Gets whether the service is connected to IBKR gateway.
+    /// Returns true only if connection was successfully established (nextValidId > 0).
+    /// </summary>
+    public bool IsConnected => _connected && _nextValidId > 0 && _client != null && _client.IsConnected();
 
     // Scanner state
     private readonly ConcurrentDictionary<int, List<ScannerRow>> _scannerBuffers = new();
@@ -57,6 +64,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     // Historical data tracking
     private readonly ConcurrentDictionary<int, string> _histReqToSymbol = new();
     private readonly ConcurrentDictionary<int, List<long>> _histVolumes = new();
+
+    // Symbol search state
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<SymbolSearchResult>>> _symbolSearchWaiters = new();
+    private readonly Dictionary<int, List<SymbolSearchResult>> _symbolSearchBuffers = new();
+    private int _nextSearchReqId = 20000; // Start from high ID to avoid conflicts
 
     // Tick stream for live updates
     private readonly Subject<TickData> _tickSubject = new();
@@ -112,8 +124,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }, ct);
 
         // Wait for nextValidId callback (confirms connection)
-        await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
-        _connected = true;
+        var connected = await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
+        _connected = connected && _nextValidId > 0;
 
         // CRITICAL: Set to DELAYED immediately after connection
         _client.reqMarketDataType(3); // 3 = DELAYED
@@ -122,13 +134,14 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // Scanner parameters not needed - we use hardcoded region/product mappings
     }
 
-    private async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout, CancellationToken ct)
+    private async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout, CancellationToken ct)
     {
         var start = DateTime.UtcNow;
         while (!condition() && DateTime.UtcNow - start < timeout && !ct.IsCancellationRequested)
         {
             await Task.Delay(50, ct);
         }
+        return condition();
     }
 
     private int GetNextReqId() => Interlocked.Increment(ref _nextReqId);
@@ -436,6 +449,75 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     #endregion
 
+    #region Symbol Search
+
+    /// <summary>
+    /// Searches for symbols matching the pattern using IBKR reqMatchingSymbols API.
+    /// </summary>
+    public async Task<IReadOnlyList<SymbolSearchResult>> SearchSymbolsAsync(string pattern, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pattern) || pattern.Length < 2)
+            return Array.Empty<SymbolSearchResult>();
+
+        await EnsureConnectedAsync(ct);
+
+        var reqId = Interlocked.Increment(ref _nextSearchReqId);
+        var tcs = new TaskCompletionSource<List<SymbolSearchResult>>();
+        _symbolSearchWaiters[reqId] = tcs;
+        _symbolSearchBuffers[reqId] = new List<SymbolSearchResult>();
+
+        try
+        {
+            _client.reqMatchingSymbols(reqId, pattern);
+            _logger.LogDebug("Requested symbol search for pattern: {Pattern}, reqId: {ReqId}", pattern, reqId);
+
+            // Register cancellation
+            ct.Register(() =>
+            {
+                if (_symbolSearchWaiters.TryRemove(reqId, out var cancelledTcs))
+                {
+                    cancelledTcs.TrySetCanceled();
+                    _symbolSearchBuffers.Remove(reqId);
+                }
+            });
+
+            // Wait for results with timeout
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            try
+            {
+                var results = await tcs.Task.WaitAsync(linkedCts.Token);
+                _logger.LogDebug("Symbol search completed for pattern: {Pattern}, found {Count} results", pattern, results.Count);
+                return results;
+            }
+            catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
+            {
+                _logger.LogWarning("Symbol search timed out for pattern: {Pattern}", pattern);
+                if (_symbolSearchWaiters.TryRemove(reqId, out var timeoutTcs))
+                {
+                    timeoutTcs.TrySetResult(new List<SymbolSearchResult>());
+                }
+                return Array.Empty<SymbolSearchResult>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during symbol search for pattern: {Pattern}", pattern);
+            if (_symbolSearchWaiters.TryRemove(reqId, out var errorTcs))
+            {
+                errorTcs.TrySetResult(new List<SymbolSearchResult>());
+            }
+            return Array.Empty<SymbolSearchResult>();
+        }
+        finally
+        {
+            _symbolSearchBuffers.Remove(reqId);
+        }
+    }
+
+    #endregion
+
     #region EWrapper Callbacks
 
     public void nextValidId(int orderId)
@@ -721,7 +803,38 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void securityDefinitionOptionParameterEnd(int reqId) { }
     public void softDollarTiers(int reqId, SoftDollarTier[] tiers) { }
     public void familyCodes(FamilyCode[] familyCodes) { }
-    public void symbolSamples(int reqId, ContractDescription[] contractDescriptions) { }
+    public void symbolSamples(int reqId, ContractDescription[] contractDescriptions)
+    {
+        try
+        {
+            if (_symbolSearchWaiters.TryGetValue(reqId, out var tcs))
+            {
+                var results = contractDescriptions
+                    .Select(cd => new SymbolSearchResult
+                    {
+                        Symbol = cd.Contract.Symbol,
+                        Company = cd.DerivativeSecTypes?.FirstOrDefault() ?? cd.Contract.Symbol, // Use symbol as fallback
+                        Exchange = cd.Contract.Exchange ?? "SMART",
+                        SecType = cd.Contract.SecType ?? "STK"
+                    })
+                    .DistinctBy(r => r.Symbol, StringComparer.OrdinalIgnoreCase)
+                    .Take(10) // Limit to 10 results
+                    .ToList();
+
+                _symbolSearchBuffers[reqId].AddRange(results);
+                tcs.TrySetResult(_symbolSearchBuffers[reqId]);
+                _logger.LogDebug("Received {Count} symbol search results for reqId: {ReqId}", results.Count, reqId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing symbol samples for reqId: {ReqId}", reqId);
+            if (_symbolSearchWaiters.TryGetValue(reqId, out var errorTcs))
+            {
+                errorTcs.TrySetResult(new List<SymbolSearchResult>());
+            }
+        }
+    }
     public void mktDepthExchanges(DepthMktDataDescription[] depthMktDataDescriptions) { }
     public void tickNews(int tickerId, long timeStamp, string providerCode, string articleId, string headline, string extraData) { }
     public void smartComponents(int reqId, Dictionary<int, KeyValuePair<string, char>> theMap) { }

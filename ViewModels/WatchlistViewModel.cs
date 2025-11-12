@@ -41,6 +41,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     [ObservableProperty] private ObservableCollection<SymbolSearchResult> _searchResults = new();
     [ObservableProperty] private bool _showSearchResults = false;
     [ObservableProperty] private bool _isSearching = false;
+    [ObservableProperty] private int _selectedSearchResultIndex = -1;
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
@@ -529,6 +530,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                         _logger.LogDebug("WatchlistViewModel: Added result: {Symbol}", result.Symbol);
                     }
                     ShowSearchResults = results.Count > 0;
+                    SelectedSearchResultIndex = results.Count > 0 ? 0 : -1; // Auto-select first item
                     _logger.LogInformation("WatchlistViewModel: Updated UI - SearchResults.Count={Count}, ShowSearchResults={Show}", SearchResults.Count, ShowSearchResults);
                     System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: UI updated - SearchResults.Count={SearchResults.Count}, ShowSearchResults={ShowSearchResults}");
                 });
@@ -566,6 +568,23 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         NewSymbolText = result.Symbol;
         ShowSearchResults = false;
         SearchResults.Clear();
+        SelectedSearchResultIndex = -1;
+    }
+
+    [RelayCommand]
+    private void NavigateSearchResultsUp()
+    {
+        if (SearchResults.Count == 0) return;
+        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0 
+            ? SearchResults.Count - 1 
+            : SelectedSearchResultIndex - 1;
+    }
+
+    [RelayCommand]
+    private void NavigateSearchResultsDown()
+    {
+        if (SearchResults.Count == 0) return;
+        SelectedSearchResultIndex = (SelectedSearchResultIndex + 1) % SearchResults.Count;
     }
 
     [RelayCommand]
@@ -639,6 +658,14 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             if (SelectedWatchlist == null)
             {
                 return;
+            }
+
+            // If a search result is highlighted, use that instead of raw text
+            if (ShowSearchResults && SelectedSearchResultIndex >= 0 && SelectedSearchResultIndex < SearchResults.Count)
+            {
+                var selectedResult = SearchResults[SelectedSearchResultIndex];
+                SelectSearchResult(selectedResult);
+                // Continue to add the symbol (SelectSearchResult sets NewSymbolText)
             }
 
             var symbol = NewSymbolText?.Trim().ToUpperInvariant() ?? "";

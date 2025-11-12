@@ -19,6 +19,8 @@
       <converters:DecimalNullableConverter x:Key="DecimalNullableConverter" />
       <converters:NullableDecimalConverter x:Key="NullableDecimal" />
       <converters:EqualityConverter x:Key="EqInt" />
+      <converters:IsSelectedItemConverter x:Key="IsSelectedItemConverter" />
+      <converters:SelectedItemBackgroundConverter x:Key="SelectedItemBackgroundConverter" />
     </ResourceDictionary>
   </Application.Resources>
 </Application>

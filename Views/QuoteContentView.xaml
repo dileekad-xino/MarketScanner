@@ -49,7 +49,7 @@
                 <Grid Grid.Column="0" 
                       RowDefinitions="Auto,Auto"
                       Margin="8,0,0,0">
-                    <Entry Grid.Row="0"
+                    <Entry x:Name="SymbolEntry"
                            Text="{Binding NewSymbolText, Mode=TwoWay}"
                            Placeholder="Enter symbol..."
                            TextChanged="OnSymbolTextChanged"
@@ -82,6 +82,13 @@
                                 <DataTemplate>
                                     <Grid Padding="8,6"
                                           ColumnDefinitions="80,*">
+                                        <Grid.BackgroundColor>
+                                            <MultiBinding Converter="{StaticResource SelectedItemBackgroundConverter}">
+                                                <Binding Path="." />
+                                                <Binding Path="BindingContext.SearchResults" Source="{x:Reference QuoteRoot}" />
+                                                <Binding Path="BindingContext.SelectedSearchResultIndex" Source="{x:Reference QuoteRoot}" />
+                                            </MultiBinding>
+                                        </Grid.BackgroundColor>
                                         <Label Grid.Column="0"
                                                Text="{Binding Symbol}"
                                                FontSize="13"

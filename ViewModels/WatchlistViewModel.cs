@@ -134,6 +134,35 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// Resumes subscriptions to all symbols in WatchlistItems when switching back to Watchlist view.
+    /// This ensures live updates continue after scanner cancels subscriptions.
+    /// </summary>
+    public async Task ResumeSubscriptionsAsync()
+    {
+        if (WatchlistItems.Count == 0)
+        {
+            _logger.LogDebug("WatchlistViewModel: No symbols to resume subscriptions for");
+            return;
+        }
+
+        var symbols = WatchlistItems.Select(item => item.Symbol).ToList();
+        _logger.LogInformation("WatchlistViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+            symbols.Count, string.Join(", ", symbols));
+
+        try
+        {
+            _ibkrService.SubscribeToSymbols(symbols);
+            _logger.LogInformation("WatchlistViewModel: Successfully resumed subscriptions for {Count} symbols", symbols.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WatchlistViewModel: Failed to resume subscriptions for symbols");
+        }
+
+        await Task.CompletedTask;
+    }
+
     partial void OnSelectedWatchlistChanged(Watchlist? value)
     {
         if (value != null)
@@ -457,31 +486,22 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
     partial void OnNewSymbolTextChanged(string value)
     {
-        _logger.LogInformation("WatchlistViewModel.OnNewSymbolTextChanged called with value: '{Value}' (length: {Length})", value ?? "(null)", value?.Length ?? 0);
-        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel.OnNewSymbolTextChanged: value='{value}', length={value?.Length ?? 0}");
-        
         // Clear error when user starts typing
         ErrorMessage = "";
         
         // Trigger search if 2+ characters
         if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
         {
-            _logger.LogDebug("WatchlistViewModel: Search not triggered - value too short or empty");
             ShowSearchResults = false;
             SearchResults.Clear();
             return;
         }
         
-        _logger.LogInformation("WatchlistViewModel: Triggering search for query: '{Query}'", value);
-        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Starting PerformSearchAsync for '{value}'");
         _ = PerformSearchAsync(value);
     }
     
     private async Task PerformSearchAsync(string query)
     {
-        _logger.LogInformation("WatchlistViewModel.PerformSearchAsync started for query: '{Query}'", query);
-        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel.PerformSearchAsync: Started for query '{query}'");
-        
         // Cancel previous search
         _searchCts?.Cancel();
         _searchCts?.Dispose();
@@ -490,76 +510,52 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         try
         {
             // Debounce
-            _logger.LogDebug("WatchlistViewModel: Waiting for debounce delay: {Delay}ms", _searchDebounceDelay.TotalMilliseconds);
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
             
             if (_symbolSearchService == null)
             {
                 _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
-                System.Diagnostics.Debug.WriteLine("WatchlistViewModel: _symbolSearchService is NULL!");
                 return;
             }
-            
-            _logger.LogInformation("WatchlistViewModel: _symbolSearchService is not null, proceeding with search");
-            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: _symbolSearchService is available, type: {_symbolSearchService.GetType().Name}");
             
             if (_searchCts.Token.IsCancellationRequested)
             {
-                _logger.LogDebug("WatchlistViewModel: Search was cancelled during debounce");
                 return;
             }
                 
-            _logger.LogInformation("WatchlistViewModel: Executing search for query: '{Query}'", query);
-            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Calling _symbolSearchService.SearchSymbolsAsync('{query}')");
             IsSearching = true;
             var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
             
-            _logger.LogInformation("WatchlistViewModel: Search completed - received {Count} results for query: '{Query}'", results.Count, query);
-            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Search returned {results.Count} results");
-            
             if (!_searchCts.Token.IsCancellationRequested)
             {
-                _logger.LogInformation("WatchlistViewModel: Updating UI on UI thread with {Count} results", results.Count);
                 await _dispatcher.OnUIAsync(() =>
                 {
-                    _logger.LogInformation("WatchlistViewModel: On UI thread - clearing and adding {Count} results", results.Count);
                     SearchResults.Clear();
                     foreach (var result in results)
                     {
                         SearchResults.Add(result);
-                        _logger.LogDebug("WatchlistViewModel: Added result: {Symbol}", result.Symbol);
                     }
                     ShowSearchResults = results.Count > 0;
                     SelectedSearchResultIndex = results.Count > 0 ? 0 : -1; // Auto-select first item
-                    _logger.LogInformation("WatchlistViewModel: Updated UI - SearchResults.Count={Count}, ShowSearchResults={Show}", SearchResults.Count, ShowSearchResults);
-                    System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: UI updated - SearchResults.Count={SearchResults.Count}, ShowSearchResults={ShowSearchResults}");
                 });
-            }
-            else
-            {
-                _logger.LogDebug("WatchlistViewModel: Search was cancelled before UI update");
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogDebug("WatchlistViewModel: Search was cancelled (expected when user types again)");
+            // Expected when user types again
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "WatchlistViewModel: Symbol search failed for query: '{Query}'", query);
-            System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: Exception in PerformSearchAsync: {ex.Message}");
         }
         finally
         {
             IsSearching = false;
-            _logger.LogDebug("WatchlistViewModel: PerformSearchAsync completed for query: '{Query}'", query);
         }
     }
     
     partial void OnShowSearchResultsChanged(bool value)
     {
-        _logger.LogInformation("WatchlistViewModel: ShowSearchResults changed to: {Value}", value);
-        System.Diagnostics.Debug.WriteLine($"WatchlistViewModel: ShowSearchResults changed to {value}");
     }
 
     [RelayCommand]
@@ -720,11 +716,40 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 Company = symbol
             };
 
+            // Try to get latest snapshot from fallback to seed initial data (including PrevClose for Change/Change%)
+            if (fallback != null && fallback.IsActive)
+            {
+                _logger.LogInformation("WatchlistViewModel: Attempting to get snapshot for {Symbol} from fallback", symbol);
+                var latest = fallback.GetLatestSnapshots(new[] { symbol });
+                if (latest.TryGetValue(symbol, out var tick))
+                {
+                    _logger.LogInformation("WatchlistViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                        symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
+                    tick.ApplyTo(rowVm);
+                    if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
+                    {
+                        _logger.LogInformation("WatchlistViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
+                        rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
+                    }
+                    _logger.LogInformation("WatchlistViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                        rowVm.PrevClose, rowVm.LastPrice, symbol);
+                }
+                else
+                {
+                    _logger.LogWarning("WatchlistViewModel: No snapshot data found in fallback for {Symbol}", symbol);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("WatchlistViewModel: Fallback not active or not available for {Symbol}", symbol);
+            }
+
             _rowCache[symbol] = rowVm;
             WatchlistItems.Add(rowVm);
 
             NewSymbolText = "";
-            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data", symbol, SelectedWatchlist.Name);
+            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data (PrevClose={PrevClose}, LastPrice={LastPrice})", 
+                symbol, SelectedWatchlist.Name, rowVm.PrevClose, rowVm.LastPrice);
         }
         catch (Exception ex)
         {

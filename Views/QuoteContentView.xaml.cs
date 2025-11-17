@@ -64,16 +64,9 @@ public partial class QuoteContentView : ContentView
     private void OnSymbolTextChanged(object? sender, TextChangedEventArgs e)
     {
         // Update ViewModel property to trigger OnNewSymbolTextChanged
-        System.Diagnostics.Debug.WriteLine($"QuoteContentView.OnSymbolTextChanged: NewTextValue='{e.NewTextValue}'");
         if (BindingContext is ViewModels.QuoteViewModel viewModel)
         {
-            var oldValue = viewModel.NewSymbolText;
             viewModel.NewSymbolText = e.NewTextValue ?? "";
-            System.Diagnostics.Debug.WriteLine($"QuoteContentView.OnSymbolTextChanged: Updated ViewModel property from '{oldValue}' to '{viewModel.NewSymbolText}'");
-        }
-        else
-        {
-            System.Diagnostics.Debug.WriteLine($"QuoteContentView.OnSymbolTextChanged: BindingContext is not QuoteViewModel (type: {BindingContext?.GetType().Name ?? "null"})");
         }
     }
 

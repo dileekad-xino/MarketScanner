@@ -969,7 +969,7 @@ public partial class ScannerViewModel : ObservableObject
     /// Switches to the watchlist view.
     /// </summary>
     [RelayCommand]
-    private void SwitchToWatchlist()
+    private async void SwitchToWatchlist()
     {
         _logger.LogDebug("SwitchToWatchlist called, _watchlistViewModel is null: {IsNull}", _watchlistViewModel == null);
         
@@ -996,6 +996,19 @@ public partial class ScannerViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
         _logger.LogInformation("Switched to Watchlist view");
+
+        // Resume subscriptions to ensure live updates continue
+        if (_watchlistViewModel != null)
+        {
+            try
+            {
+                await _watchlistViewModel.ResumeSubscriptionsAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resume subscriptions when switching to Watchlist view");
+            }
+        }
     }
 
     /// <summary>
@@ -1043,7 +1056,7 @@ public partial class ScannerViewModel : ObservableObject
     /// Switches to the quote view.
     /// </summary>
     [RelayCommand]
-    private void SwitchToQuote()
+    private async void SwitchToQuote()
     {
         _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
         
@@ -1064,6 +1077,19 @@ public partial class ScannerViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
         _logger.LogInformation("Switched to Quote view");
+
+        // Resume subscriptions to ensure live updates continue
+        if (_quoteViewModel != null)
+        {
+            try
+            {
+                await _quoteViewModel.ResumeSubscriptionsAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resume subscriptions when switching to Quote view");
+            }
+        }
     }
 
     /// <summary>

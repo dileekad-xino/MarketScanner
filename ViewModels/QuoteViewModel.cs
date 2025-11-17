@@ -105,6 +105,35 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         await LoadWatchlistsAsync();
     }
 
+    /// <summary>
+    /// Resumes subscriptions to all symbols in QuoteItems when switching back to Quote view.
+    /// This ensures live updates continue after scanner cancels subscriptions.
+    /// </summary>
+    public async Task ResumeSubscriptionsAsync()
+    {
+        if (QuoteItems.Count == 0)
+        {
+            _logger.LogDebug("QuoteViewModel: No symbols to resume subscriptions for");
+            return;
+        }
+
+        var symbols = QuoteItems.Select(item => item.Symbol).ToList();
+        _logger.LogInformation("QuoteViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+            symbols.Count, string.Join(", ", symbols));
+
+        try
+        {
+            _ibkrService.SubscribeToSymbols(symbols);
+            _logger.LogInformation("QuoteViewModel: Successfully resumed subscriptions for {Count} symbols", symbols.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "QuoteViewModel: Failed to resume subscriptions for symbols");
+        }
+
+        await Task.CompletedTask;
+    }
+
     private async Task LoadWatchlistsAsync()
     {
         try
@@ -591,8 +620,57 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             _rowCache[symbol] = rowVm;
             QuoteItems.Add(rowVm);
 
+            // Subscribe to market data for this symbol (ensures live updates work)
+            // Only subscribe via IBKR if connected, otherwise rely on fallback playback
+            try
+            {
+                _ibkrService.SubscribeToSymbols(new[] { symbol });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not subscribe to IBKR market data for {Symbol}, will use fallback if available", symbol);
+            }
+
+            // Update fallback playback with new symbol if active
+            var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+            if (fallback != null && fallback.IsActive)
+            {
+                // Get current symbols and add the new one
+                var currentSymbols = fallback.CurrentSymbols.ToList();
+                if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
+                {
+                    currentSymbols.Add(symbol);
+                    fallback.UpdateSymbols(currentSymbols);
+                }
+
+                // Try to get latest snapshot from fallback to seed initial data (including PrevClose for Change/Change%)
+                _logger.LogInformation("QuoteViewModel: Attempting to get snapshot for {Symbol} from fallback", symbol);
+                var latest = fallback.GetLatestSnapshots(new[] { symbol });
+                if (latest.TryGetValue(symbol, out var tick))
+                {
+                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                        symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
+                    tick.ApplyTo(rowVm);
+                    if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
+                    {
+                        _logger.LogInformation("QuoteViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
+                        rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
+                    }
+                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                        rowVm.PrevClose, rowVm.LastPrice, symbol);
+                }
+                else
+                {
+                    _logger.LogWarning("QuoteViewModel: No snapshot data found in fallback for {Symbol}", symbol);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("QuoteViewModel: Fallback not active or not available for {Symbol}", symbol);
+            }
+
             NewSymbolText = "";
-            _logger.LogInformation("Added symbol {Symbol} to quotes", symbol);
+            _logger.LogInformation("Added symbol {Symbol} to quotes (PrevClose={PrevClose}, LastPrice={LastPrice})", symbol, rowVm.PrevClose, rowVm.LastPrice);
         }
         catch (Exception ex)
         {
@@ -685,31 +763,22 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     partial void OnNewSymbolTextChanged(string value)
     {
-        _logger.LogInformation("QuoteViewModel.OnNewSymbolTextChanged called with value: '{Value}' (length: {Length})", value ?? "(null)", value?.Length ?? 0);
-        System.Diagnostics.Debug.WriteLine($"QuoteViewModel.OnNewSymbolTextChanged: value='{value}', length={value?.Length ?? 0}");
-        
         // Clear error when user starts typing
         ErrorMessage = "";
         
         // Trigger search if 2+ characters
         if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
         {
-            _logger.LogDebug("QuoteViewModel: Search not triggered - value too short or empty");
             ShowSearchResults = false;
             SearchResults.Clear();
             return;
         }
         
-        _logger.LogInformation("QuoteViewModel: Triggering search for query: '{Query}'", value);
-        System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Starting PerformSearchAsync for '{value}'");
         _ = PerformSearchAsync(value);
     }
     
     private async Task PerformSearchAsync(string query)
     {
-        _logger.LogInformation("QuoteViewModel.PerformSearchAsync started for query: '{Query}'", query);
-        System.Diagnostics.Debug.WriteLine($"QuoteViewModel.PerformSearchAsync: Started for query '{query}'");
-        
         // Cancel previous search
         _searchCts?.Cancel();
         _searchCts?.Dispose();
@@ -718,76 +787,52 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         try
         {
             // Debounce
-            _logger.LogDebug("QuoteViewModel: Waiting for debounce delay: {Delay}ms", _searchDebounceDelay.TotalMilliseconds);
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
             
             if (_symbolSearchService == null)
             {
                 _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
-                System.Diagnostics.Debug.WriteLine("QuoteViewModel: _symbolSearchService is NULL!");
                 return;
             }
-            
-            _logger.LogInformation("QuoteViewModel: _symbolSearchService is not null, proceeding with search");
-            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: _symbolSearchService is available, type: {_symbolSearchService.GetType().Name}");
             
             if (_searchCts.Token.IsCancellationRequested)
             {
-                _logger.LogDebug("QuoteViewModel: Search was cancelled during debounce");
                 return;
             }
                 
-            _logger.LogInformation("QuoteViewModel: Executing search for query: '{Query}'", query);
-            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Calling _symbolSearchService.SearchSymbolsAsync('{query}')");
             IsSearching = true;
             var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
             
-            _logger.LogInformation("QuoteViewModel: Search completed - received {Count} results for query: '{Query}'", results.Count, query);
-            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Search returned {results.Count} results");
-            
             if (!_searchCts.Token.IsCancellationRequested)
             {
-                _logger.LogInformation("QuoteViewModel: Updating UI on UI thread with {Count} results", results.Count);
                 await _dispatcher.OnUIAsync(() =>
                 {
-                    _logger.LogInformation("QuoteViewModel: On UI thread - clearing and adding {Count} results", results.Count);
                     SearchResults.Clear();
                     foreach (var result in results)
                     {
                         SearchResults.Add(result);
-                        _logger.LogDebug("QuoteViewModel: Added result: {Symbol}", result.Symbol);
                     }
                     ShowSearchResults = results.Count > 0;
                     SelectedSearchResultIndex = results.Count > 0 ? 0 : -1; // Auto-select first item
-                    _logger.LogInformation("QuoteViewModel: Updated UI - SearchResults.Count={Count}, ShowSearchResults={Show}", SearchResults.Count, ShowSearchResults);
-                    System.Diagnostics.Debug.WriteLine($"QuoteViewModel: UI updated - SearchResults.Count={SearchResults.Count}, ShowSearchResults={ShowSearchResults}");
                 });
-            }
-            else
-            {
-                _logger.LogDebug("QuoteViewModel: Search was cancelled before UI update");
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogDebug("QuoteViewModel: Search was cancelled (expected when user types again)");
+            // Expected when user types again
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "QuoteViewModel: Symbol search failed for query: '{Query}'", query);
-            System.Diagnostics.Debug.WriteLine($"QuoteViewModel: Exception in PerformSearchAsync: {ex.Message}");
         }
         finally
         {
             IsSearching = false;
-            _logger.LogDebug("QuoteViewModel: PerformSearchAsync completed for query: '{Query}'", query);
         }
     }
     
     partial void OnShowSearchResultsChanged(bool value)
     {
-        _logger.LogInformation("QuoteViewModel: ShowSearchResults changed to: {Value}", value);
-        System.Diagnostics.Debug.WriteLine($"QuoteViewModel: ShowSearchResults changed to {value}");
     }
 
     [RelayCommand]

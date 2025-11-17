@@ -1,6 +1,7 @@
 using IBApi;
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Services;
 using MarketScanner.Utilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private int _nextValidId;
     private int _nextReqId = 1;
     private bool _disposed;
+    
+    /// <summary>
+    /// Gets whether the service is connected to IBKR gateway.
+    /// Returns true only if connection was successfully established (nextValidId > 0).
+    /// </summary>
+    public bool IsConnected => _connected && _nextValidId > 0 && _client != null && _client.IsConnected();
 
     // Scanner state
     private readonly ConcurrentDictionary<int, List<ScannerRow>> _scannerBuffers = new();
@@ -53,10 +60,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<string, MarketState> _marketState = new();
     private readonly ConcurrentDictionary<string, SnapshotRow> _snapshots = new();
     private readonly ConcurrentDictionary<string, long> _averageVolumes = new();
+    private int _nextManualTickerId = 20000; // Separate counter for manually added symbols (scanner uses 10000-19999)
 
     // Historical data tracking
     private readonly ConcurrentDictionary<int, string> _histReqToSymbol = new();
     private readonly ConcurrentDictionary<int, List<long>> _histVolumes = new();
+    private readonly ConcurrentDictionary<int, double?> _histClosePrices = new(); // Track most recent close from historical data
+
+    // Symbol search state
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<SymbolSearchResult>>> _symbolSearchWaiters = new();
+    private readonly Dictionary<int, List<SymbolSearchResult>> _symbolSearchBuffers = new();
+    private int _nextSearchReqId = 20000; // Start from high ID to avoid conflicts
 
     // Tick stream for live updates
     private readonly Subject<TickData> _tickSubject = new();
@@ -112,8 +126,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }, ct);
 
         // Wait for nextValidId callback (confirms connection)
-        await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
-        _connected = true;
+        var connected = await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
+        _connected = connected && _nextValidId > 0;
 
         // CRITICAL: Set to DELAYED immediately after connection
         _client.reqMarketDataType(3); // 3 = DELAYED
@@ -122,13 +136,14 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // Scanner parameters not needed - we use hardcoded region/product mappings
     }
 
-    private async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout, CancellationToken ct)
+    private async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout, CancellationToken ct)
     {
         var start = DateTime.UtcNow;
         while (!condition() && DateTime.UtcNow - start < timeout && !ct.IsCancellationRequested)
         {
             await Task.Delay(50, ct);
         }
+        return condition();
     }
 
     private int GetNextReqId() => Interlocked.Increment(ref _nextReqId);
@@ -248,10 +263,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             }
             _histReqToSymbol.Clear();
             _histVolumes.Clear();
+            _histClosePrices.Clear();
 
             // Subscribe to market data for all scanner results
             var symbols = rows.Select(r => r.Symbol).ToList();
-            SubscribeToMarketData(symbols);
+            SubscribeToMarketData(symbols, isFromScanner: true);
 
             return rows;
         }
@@ -298,7 +314,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         var rows = await ScanAsync(cancellationToken);
 
         // Subscribe to market data for live updates
-        SubscribeToMarketData(rows.Select(r => r.Symbol));
+        SubscribeToMarketData(rows.Select(r => r.Symbol), isFromScanner: true);
 
         var scannerItems = rows.Select(row => new ScannerItem
         {
@@ -349,7 +365,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         var rows = await ScanAsync(ct);
 
         // Subscribe to market data
-        SubscribeToMarketData(rows.Select(r => r.Symbol));
+        SubscribeToMarketData(rows.Select(r => r.Symbol), isFromScanner: true);
 
         // Wait a bit for ticks to arrive
         await Task.Delay(2000, ct);
@@ -389,7 +405,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         SubscribeToMarketData(symbols);
     }
 
-    private void SubscribeToMarketData(IEnumerable<string> symbols)
+    private void SubscribeToMarketData(IEnumerable<string> symbols, bool isFromScanner = false)
     {
         // Only subscribe if connected
         if (!_connected || _client == null || !_client.IsConnected())
@@ -398,11 +414,29 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             return;
         }
 
-        var tickerId = 10000; // Start from high ID like Node.js
+        // Use different ticker ID ranges: scanner uses 10000-19999, manual subscriptions use 20000+
+        var tickerId = isFromScanner ? 10000 : _nextManualTickerId;
+        var symbolList = symbols.ToList();
+        _logger.LogInformation("SubscribeToMarketData: Subscribing to {Count} symbols: {Symbols} (isFromScanner={IsFromScanner}, startingTickerId={TickerId})", 
+            symbolList.Count, string.Join(", ", symbolList), isFromScanner, tickerId);
 
-        foreach (var symbol in symbols)
+        foreach (var symbol in symbolList)
         {
-            if (_idToSymbol.ContainsValue(symbol)) continue; // Already subscribed
+            if (_idToSymbol.ContainsValue(symbol))
+            {
+                _logger.LogDebug("SubscribeToMarketData: {Symbol} already subscribed, skipping", symbol);
+                continue; // Already subscribed
+            }
+
+            // Check if tickerId is already in use and find next available
+            while (_idToSymbol.ContainsKey(tickerId))
+            {
+                tickerId++;
+                if (!isFromScanner && tickerId >= 20000)
+                {
+                    _nextManualTickerId = tickerId; // Update counter for next time
+                }
+            }
 
             _idToSymbol[tickerId] = symbol;
             _marketState[symbol] = new MarketState();
@@ -415,12 +449,26 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 Currency = "USD"
             };
 
-            _client.reqMktData(tickerId, contract, "", false, false, null);
+            // Request streaming market data
+            // Note: Close price will come from historical data (most recent bar's close) and from streaming ticks
+            try
+            {
+                _client.reqMktData(tickerId, contract, "", false, false, null);
+                _logger.LogInformation("SubscribeToMarketData: Requested streaming market data for {Symbol} (tickerId={TickerId})", symbol, tickerId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SubscribeToMarketData: Failed to request market data for {Symbol} (tickerId={TickerId})", symbol, tickerId);
+            }
 
-            // Request historical data for average volume
+            // Request historical data for average volume and previous close
             RequestHistoricalData(symbol, contract);
 
             tickerId++;
+            if (!isFromScanner && tickerId > _nextManualTickerId)
+            {
+                _nextManualTickerId = tickerId; // Update counter for next time
+            }
         }
     }
 
@@ -429,9 +477,91 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         var reqId = GetNextReqId();
         _histReqToSymbol[reqId] = symbol;
         _histVolumes[reqId] = new List<long>();
+        _histClosePrices[reqId] = null; // Initialize close price tracking
 
-        _client.reqHistoricalData(
-            reqId, contract, "", "30 D", "1 day", "TRADES", 1, 1, false, null);
+        try
+        {
+            _client.reqHistoricalData(
+                reqId, contract, "", "30 D", "1 day", "TRADES", 1, 1, false, null);
+            _logger.LogInformation("RequestHistoricalData: Requested historical data for {Symbol} (reqId={ReqId}) to get average volume and previous close", symbol, reqId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "RequestHistoricalData: Failed to request historical data for {Symbol} (reqId={ReqId})", symbol, reqId);
+            // Clean up on failure
+            _histReqToSymbol.TryRemove(reqId, out _);
+            _histVolumes.TryRemove(reqId, out _);
+            _histClosePrices.TryRemove(reqId, out _);
+        }
+    }
+
+    #endregion
+
+    #region Symbol Search
+
+    /// <summary>
+    /// Searches for symbols matching the pattern using IBKR reqMatchingSymbols API.
+    /// </summary>
+    public async Task<IReadOnlyList<SymbolSearchResult>> SearchSymbolsAsync(string pattern, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pattern) || pattern.Length < 2)
+            return Array.Empty<SymbolSearchResult>();
+
+        await EnsureConnectedAsync(ct);
+
+        var reqId = Interlocked.Increment(ref _nextSearchReqId);
+        var tcs = new TaskCompletionSource<List<SymbolSearchResult>>();
+        _symbolSearchWaiters[reqId] = tcs;
+        _symbolSearchBuffers[reqId] = new List<SymbolSearchResult>();
+
+        try
+        {
+            _client.reqMatchingSymbols(reqId, pattern);
+            _logger.LogDebug("Requested symbol search for pattern: {Pattern}, reqId: {ReqId}", pattern, reqId);
+
+            // Register cancellation
+            ct.Register(() =>
+            {
+                if (_symbolSearchWaiters.TryRemove(reqId, out var cancelledTcs))
+                {
+                    cancelledTcs.TrySetCanceled();
+                    _symbolSearchBuffers.Remove(reqId);
+                }
+            });
+
+            // Wait for results with timeout
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            try
+            {
+                var results = await tcs.Task.WaitAsync(linkedCts.Token);
+                _logger.LogDebug("Symbol search completed for pattern: {Pattern}, found {Count} results", pattern, results.Count);
+                return results;
+            }
+            catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
+            {
+                _logger.LogWarning("Symbol search timed out for pattern: {Pattern}", pattern);
+                if (_symbolSearchWaiters.TryRemove(reqId, out var timeoutTcs))
+                {
+                    timeoutTcs.TrySetResult(new List<SymbolSearchResult>());
+                }
+                return Array.Empty<SymbolSearchResult>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during symbol search for pattern: {Pattern}", pattern);
+            if (_symbolSearchWaiters.TryRemove(reqId, out var errorTcs))
+            {
+                errorTcs.TrySetResult(new List<SymbolSearchResult>());
+            }
+            return Array.Empty<SymbolSearchResult>();
+        }
+        finally
+        {
+            _symbolSearchBuffers.Remove(reqId);
+        }
     }
 
     #endregion
@@ -558,16 +688,44 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void historicalData(int reqId, Bar bar)
     {
+        if (!_histReqToSymbol.TryGetValue(reqId, out var symbol))
+        {
+            _logger.LogWarning("historicalData: Received bar for unknown reqId={ReqId}", reqId);
+            return;
+        }
+
         if (_histVolumes.TryGetValue(reqId, out var volumes) && bar.Volume > 0)
         {
             volumes.Add(bar.Volume);
+        }
+        
+        // Track the most recent close price (historical data comes in reverse chronological order, so first bar is most recent)
+        if (_histClosePrices.TryGetValue(reqId, out var currentClose) && !currentClose.HasValue)
+        {
+            // Store the first (most recent) bar's close price as previous close
+            _histClosePrices[reqId] = bar.Close;
+            _logger.LogInformation("historicalData: {Symbol} (reqId={ReqId}) - Stored close price {Close} from historical bar (Time={Time}, Open={Open}, High={High}, Low={Low}, Close={Close}, Volume={Volume})", 
+                symbol, reqId, bar.Close, bar.Time, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume);
+        }
+        else
+        {
+            _logger.LogDebug("historicalData: {Symbol} (reqId={ReqId}) - Received additional bar (Time={Time}, Close={Close}, Volume={Volume})", 
+                symbol, reqId, bar.Time, bar.Close, bar.Volume);
         }
     }
 
     public void historicalDataEnd(int reqId, string startDate, string endDate)
     {
-        if (_histReqToSymbol.TryGetValue(reqId, out var symbol) &&
-            _histVolumes.TryGetValue(reqId, out var volumes))
+        if (!_histReqToSymbol.TryGetValue(reqId, out var symbol))
+        {
+            _logger.LogWarning("historicalDataEnd: Received end for unknown reqId={ReqId}", reqId);
+            return;
+        }
+
+        _logger.LogInformation("historicalDataEnd: {Symbol} (reqId={ReqId}) - Historical data request completed (startDate={StartDate}, endDate={EndDate})", 
+            symbol, reqId, startDate, endDate);
+
+        if (_histVolumes.TryGetValue(reqId, out var volumes))
         {
             if (volumes.Count > 0)
             {
@@ -577,15 +735,40 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 if (_marketState.TryGetValue(symbol, out var state))
                 {
                     state.AverageVolume = avgVolume;
+                    
+                    // Set previous close from historical data if available
+                    if (_histClosePrices.TryGetValue(reqId, out var closePrice) && closePrice.HasValue)
+                    {
+                        state.PrevClose = (decimal)closePrice.Value;
+                        _logger.LogInformation("historicalDataEnd: {Symbol} - Setting PrevClose={PrevClose} from historical data, avgVolume={AvgVolume:N0} (received {BarCount} bars)", 
+                            symbol, closePrice.Value, avgVolume, volumes.Count);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("historicalDataEnd: {Symbol} - No close price in historical data (received {BarCount} bars, avgVolume={AvgVolume:N0})", 
+                            symbol, volumes.Count, avgVolume);
+                    }
+                    
                     EmitTickUpdate(symbol, state);
                 }
-
-                _logger.LogDebug("Historical data: {Symbol} avgVolume={AvgVolume:N0}", symbol, avgVolume);
+                else
+                {
+                    _logger.LogWarning("historicalDataEnd: {Symbol} - Completed but no market state found (symbol may have been removed)", symbol);
+                }
             }
-
-            _histReqToSymbol.TryRemove(reqId, out _);
-            _histVolumes.TryRemove(reqId, out _);
+            else
+            {
+                _logger.LogWarning("historicalDataEnd: {Symbol} - Completed but no volume data received (no bars returned)", symbol);
+            }
         }
+        else
+        {
+            _logger.LogWarning("historicalDataEnd: {Symbol} - Completed but no volume tracking found for reqId={ReqId}", symbol, reqId);
+        }
+
+        _histReqToSymbol.TryRemove(reqId, out _);
+        _histVolumes.TryRemove(reqId, out _);
+        _histClosePrices.TryRemove(reqId, out _);
     }
 
     private void EmitTickUpdate(string symbol, MarketState state)
@@ -721,7 +904,38 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void securityDefinitionOptionParameterEnd(int reqId) { }
     public void softDollarTiers(int reqId, SoftDollarTier[] tiers) { }
     public void familyCodes(FamilyCode[] familyCodes) { }
-    public void symbolSamples(int reqId, ContractDescription[] contractDescriptions) { }
+    public void symbolSamples(int reqId, ContractDescription[] contractDescriptions)
+    {
+        try
+        {
+            if (_symbolSearchWaiters.TryGetValue(reqId, out var tcs))
+            {
+                var results = contractDescriptions
+                    .Select(cd => new SymbolSearchResult
+                    {
+                        Symbol = cd.Contract.Symbol,
+                        Company = cd.DerivativeSecTypes?.FirstOrDefault() ?? cd.Contract.Symbol, // Use symbol as fallback
+                        Exchange = cd.Contract.Exchange ?? "SMART",
+                        SecType = cd.Contract.SecType ?? "STK"
+                    })
+                    .DistinctBy(r => r.Symbol, StringComparer.OrdinalIgnoreCase)
+                    .Take(10) // Limit to 10 results
+                    .ToList();
+
+                _symbolSearchBuffers[reqId].AddRange(results);
+                tcs.TrySetResult(_symbolSearchBuffers[reqId]);
+                _logger.LogDebug("Received {Count} symbol search results for reqId: {ReqId}", results.Count, reqId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing symbol samples for reqId: {ReqId}", reqId);
+            if (_symbolSearchWaiters.TryGetValue(reqId, out var errorTcs))
+            {
+                errorTcs.TrySetResult(new List<SymbolSearchResult>());
+            }
+        }
+    }
     public void mktDepthExchanges(DepthMktDataDescription[] depthMktDataDescriptions) { }
     public void tickNews(int tickerId, long timeStamp, string providerCode, string articleId, string headline, string extraData) { }
     public void smartComponents(int reqId, Dictionary<int, KeyValuePair<string, char>> theMap) { }

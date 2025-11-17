@@ -43,9 +43,13 @@ public sealed record TickData(
             row.UpdateLastPrice(LastPrice.Value);
         }
         
-        if (ClosePrice.HasValue)
+        if (ClosePrice.HasValue && ClosePrice.Value > 0)
         {
             row.UpdateClosePrice(ClosePrice.Value);
+        }
+        else if (PreviousClose.HasValue && PreviousClose.Value > 0)
+        {
+            row.UpdateClosePrice(PreviousClose.Value);
         }
         
         if (Volume.HasValue)

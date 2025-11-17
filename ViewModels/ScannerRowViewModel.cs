@@ -16,6 +16,7 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     private RowStatus _status;
     private FundamentalsStatus _fundamentalsStatus;
     private bool _hasMarketData;
+    private bool _isDropped;
     
     private readonly ILogger? _logger;
 
@@ -133,6 +134,12 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         get => _hasMarketData;
         set { _hasMarketData = value; OnPropertyChanged(); }
+    }
+
+    public bool IsDropped
+    {
+        get => _isDropped;
+        set { SetProperty(ref _isDropped, value); }
     }
 
 

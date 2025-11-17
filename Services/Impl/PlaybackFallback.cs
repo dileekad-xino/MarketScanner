@@ -119,7 +119,7 @@ public sealed class PlaybackFallback : IDisposable
         _stream.OnNext(t);
     }
 
-    private static IEnumerable<string> DefaultSymbols()
+    internal static IEnumerable<string> DefaultSymbols()
     {
         // Seed list + generated to reach ~200 symbols
         var seeds = new[] { "AAPL","MSFT","NVDA","AMD","TSLA","META","AMZN","GOOGL","SPY","QQQ","NFLX","UBER","SHOP","INTC","BABA","BAC","JPM","KO","PEP","DIS","SIRI","F","NIO","SNAP","PLUG","SOFI","RIOT","CHPT","CCL","NOK" };

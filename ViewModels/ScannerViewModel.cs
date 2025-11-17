@@ -969,7 +969,7 @@ public partial class ScannerViewModel : ObservableObject
     /// Switches to the watchlist view.
     /// </summary>
     [RelayCommand]
-    private void SwitchToWatchlist()
+    private async void SwitchToWatchlist()
     {
         _logger.LogDebug("SwitchToWatchlist called, _watchlistViewModel is null: {IsNull}", _watchlistViewModel == null);
         
@@ -996,6 +996,19 @@ public partial class ScannerViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
         _logger.LogInformation("Switched to Watchlist view");
+
+        // Resume subscriptions to ensure live updates continue
+        if (_watchlistViewModel != null)
+        {
+            try
+            {
+                await _watchlistViewModel.ResumeSubscriptionsAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resume subscriptions when switching to Watchlist view");
+            }
+        }
     }
 
     /// <summary>
@@ -1007,13 +1020,18 @@ public partial class ScannerViewModel : ObservableObject
 
         _logger.LogDebug("Creating WatchlistViewModel on UI thread");
 
+        // Get service provider for symbol search service
+        var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+        var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
+
         // ✅ Create ViewModel synchronously on UI thread (ready for binding)
         _watchlistViewModel = new WatchlistViewModel(
             _watchlistService,
             (IbkrGatewayService)_scanner,
             _dispatcher,
             Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole())
-                .CreateLogger<WatchlistViewModel>());
+                .CreateLogger<WatchlistViewModel>(),
+            symbolSearchService);
 
         _logger.LogDebug("WatchlistViewModel created, notifying property change");
         OnPropertyChanged(nameof(WatchlistViewModel));
@@ -1038,7 +1056,7 @@ public partial class ScannerViewModel : ObservableObject
     /// Switches to the quote view.
     /// </summary>
     [RelayCommand]
-    private void SwitchToQuote()
+    private async void SwitchToQuote()
     {
         _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
         
@@ -1059,6 +1077,19 @@ public partial class ScannerViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
         _logger.LogInformation("Switched to Quote view");
+
+        // Resume subscriptions to ensure live updates continue
+        if (_quoteViewModel != null)
+        {
+            try
+            {
+                await _quoteViewModel.ResumeSubscriptionsAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resume subscriptions when switching to Quote view");
+            }
+        }
     }
 
     /// <summary>
@@ -1079,12 +1110,15 @@ public partial class ScannerViewModel : ObservableObject
         var quoteLogger = loggerFactory?.CreateLogger<QuoteViewModel>() 
             ?? Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<QuoteViewModel>();
         
+        var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
+        
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
             _watchlistService,
             quoteLogger,
-            serviceProvider);
+            serviceProvider,
+            symbolSearchService);
 
         _logger.LogDebug("QuoteViewModel created, notifying property change");
         OnPropertyChanged(nameof(QuoteViewModel));

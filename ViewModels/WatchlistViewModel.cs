@@ -17,6 +17,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     private readonly IbkrGatewayService _ibkrService;
     private readonly IDispatcherService _dispatcher;
     private readonly ILogger<WatchlistViewModel> _logger;
+    private readonly ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
@@ -37,6 +38,10 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     
     // Add symbol input
     [ObservableProperty] private string _newSymbolText = "";
+    [ObservableProperty] private ObservableCollection<SymbolSearchResult> _searchResults = new();
+    [ObservableProperty] private bool _showSearchResults = false;
+    [ObservableProperty] private bool _isSearching = false;
+    [ObservableProperty] private int _selectedSearchResultIndex = -1;
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
@@ -48,17 +53,21 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
+    private readonly TimeSpan _searchDebounceDelay = TimeSpan.FromMilliseconds(300);
+    private CancellationTokenSource? _searchCts;
 
     public WatchlistViewModel(
         IWatchlistService watchlistService,
         IbkrGatewayService ibkrService,
         IDispatcherService dispatcher,
-        ILogger<WatchlistViewModel> logger)
+        ILogger<WatchlistViewModel> logger,
+        ISymbolSearchService? symbolSearchService = null)
     {
         _watchlistService = watchlistService;
         _ibkrService = ibkrService;
         _dispatcher = dispatcher;
         _logger = logger;
+        _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -123,6 +132,35 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Resumes subscriptions to all symbols in WatchlistItems when switching back to Watchlist view.
+    /// This ensures live updates continue after scanner cancels subscriptions.
+    /// </summary>
+    public async Task ResumeSubscriptionsAsync()
+    {
+        if (WatchlistItems.Count == 0)
+        {
+            _logger.LogDebug("WatchlistViewModel: No symbols to resume subscriptions for");
+            return;
+        }
+
+        var symbols = WatchlistItems.Select(item => item.Symbol).ToList();
+        _logger.LogInformation("WatchlistViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+            symbols.Count, string.Join(", ", symbols));
+
+        try
+        {
+            _ibkrService.SubscribeToSymbols(symbols);
+            _logger.LogInformation("WatchlistViewModel: Successfully resumed subscriptions for {Count} symbols", symbols.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WatchlistViewModel: Failed to resume subscriptions for symbols");
+        }
+
+        await Task.CompletedTask;
     }
 
     partial void OnSelectedWatchlistChanged(Watchlist? value)
@@ -450,6 +488,99 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     {
         // Clear error when user starts typing
         ErrorMessage = "";
+        
+        // Trigger search if 2+ characters
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
+        {
+            ShowSearchResults = false;
+            SearchResults.Clear();
+            return;
+        }
+        
+        _ = PerformSearchAsync(value);
+    }
+    
+    private async Task PerformSearchAsync(string query)
+    {
+        // Cancel previous search
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        
+        try
+        {
+            // Debounce
+            await Task.Delay(_searchDebounceDelay, _searchCts.Token);
+            
+            if (_symbolSearchService == null)
+            {
+                _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
+                return;
+            }
+            
+            if (_searchCts.Token.IsCancellationRequested)
+            {
+                return;
+            }
+                
+            IsSearching = true;
+            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            
+            if (!_searchCts.Token.IsCancellationRequested)
+            {
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    SearchResults.Clear();
+                    foreach (var result in results)
+                    {
+                        SearchResults.Add(result);
+                    }
+                    ShowSearchResults = results.Count > 0;
+                    SelectedSearchResultIndex = results.Count > 0 ? 0 : -1; // Auto-select first item
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when user types again
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WatchlistViewModel: Symbol search failed for query: '{Query}'", query);
+        }
+        finally
+        {
+            IsSearching = false;
+        }
+    }
+    
+    partial void OnShowSearchResultsChanged(bool value)
+    {
+    }
+
+    [RelayCommand]
+    private void SelectSearchResult(SymbolSearchResult result)
+    {
+        NewSymbolText = result.Symbol;
+        ShowSearchResults = false;
+        SearchResults.Clear();
+        SelectedSearchResultIndex = -1;
+    }
+
+    [RelayCommand]
+    private void NavigateSearchResultsUp()
+    {
+        if (SearchResults.Count == 0) return;
+        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0 
+            ? SearchResults.Count - 1 
+            : SelectedSearchResultIndex - 1;
+    }
+
+    [RelayCommand]
+    private void NavigateSearchResultsDown()
+    {
+        if (SearchResults.Count == 0) return;
+        SelectedSearchResultIndex = (SelectedSearchResultIndex + 1) % SearchResults.Count;
     }
 
     [RelayCommand]
@@ -525,6 +656,14 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            // If a search result is highlighted, use that instead of raw text
+            if (ShowSearchResults && SelectedSearchResultIndex >= 0 && SelectedSearchResultIndex < SearchResults.Count)
+            {
+                var selectedResult = SearchResults[SelectedSearchResultIndex];
+                SelectSearchResult(selectedResult);
+                // Continue to add the symbol (SelectSearchResult sets NewSymbolText)
+            }
+
             var symbol = NewSymbolText?.Trim().ToUpperInvariant() ?? "";
 
             if (string.IsNullOrWhiteSpace(symbol))
@@ -577,11 +716,40 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 Company = symbol
             };
 
+            // Try to get latest snapshot from fallback to seed initial data (including PrevClose for Change/Change%)
+            if (fallback != null && fallback.IsActive)
+            {
+                _logger.LogInformation("WatchlistViewModel: Attempting to get snapshot for {Symbol} from fallback", symbol);
+                var latest = fallback.GetLatestSnapshots(new[] { symbol });
+                if (latest.TryGetValue(symbol, out var tick))
+                {
+                    _logger.LogInformation("WatchlistViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                        symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
+                    tick.ApplyTo(rowVm);
+                    if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
+                    {
+                        _logger.LogInformation("WatchlistViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
+                        rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
+                    }
+                    _logger.LogInformation("WatchlistViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                        rowVm.PrevClose, rowVm.LastPrice, symbol);
+                }
+                else
+                {
+                    _logger.LogWarning("WatchlistViewModel: No snapshot data found in fallback for {Symbol}", symbol);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("WatchlistViewModel: Fallback not active or not available for {Symbol}", symbol);
+            }
+
             _rowCache[symbol] = rowVm;
             WatchlistItems.Add(rowVm);
 
             NewSymbolText = "";
-            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data", symbol, SelectedWatchlist.Name);
+            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data (PrevClose={PrevClose}, LastPrice={LastPrice})", 
+                symbol, SelectedWatchlist.Name, rowVm.PrevClose, rowVm.LastPrice);
         }
         catch (Exception ex)
         {
@@ -595,6 +763,13 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _disposed = true;
+
+        try
+        {
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+        }
+        catch { }
 
         _batchTimer?.Stop();
         _batchTimer?.Dispose();

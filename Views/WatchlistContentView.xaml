@@ -119,27 +119,81 @@
                 BackgroundColor="{StaticResource BackgroundDark}"
                 Padding="0"
                 Margin="0,0,0,10"
-                HeightRequest="32">
+                MinimumHeightRequest="32">
             <Border.StrokeShape>
                 <RoundRectangle CornerRadius="4"/>
             </Border.StrokeShape>
             
             <Grid ColumnDefinitions="*,Auto"
                   ColumnSpacing="0"
-                  VerticalOptions="Center">
+                  VerticalOptions="Start">
                 
-                <!-- Symbol Input -->
-                <Entry Grid.Column="0"
-                       Text="{Binding NewSymbolText}"
-                       Placeholder="Enter symbol..."
-                       TextColor="{StaticResource OnSurfaceDark}"
-                       BackgroundColor="Transparent"
-                       FontSize="14"
-                       HeightRequest="32"
-                       VerticalOptions="Center"
-                       Margin="8,0,0,0"
-                       ReturnCommand="{Binding AddSymbolCommand}"
-                       IsEnabled="{Binding CanAddSymbol}"/>
+                <!-- Symbol Input with Search Results -->
+                <Grid Grid.Column="0" 
+                      RowDefinitions="Auto,Auto"
+                      Margin="8,0,0,0">
+                    <Entry x:Name="SymbolEntry"
+                           Text="{Binding NewSymbolText, Mode=TwoWay}"
+                           Placeholder="Enter symbol..."
+                           TextChanged="OnSymbolTextChanged"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           BackgroundColor="Transparent"
+                           FontSize="14"
+                           HeightRequest="32"
+                           VerticalOptions="Center"
+                           ReturnCommand="{Binding AddSymbolCommand}"
+                           IsEnabled="{Binding CanAddSymbol}"
+                           Unfocused="OnSymbolEntryUnfocused"/>
+                    
+                    <!-- Search Results Dropdown -->
+                    <Border Grid.Row="1"
+                            IsVisible="{Binding ShowSearchResults}"
+                            BackgroundColor="{StaticResource SurfaceDark}"
+                            Stroke="{StaticResource BorderDark}"
+                            StrokeThickness="1"
+                            MaximumHeightRequest="200"
+                            VerticalOptions="Start"
+                            Margin="0,2,0,0"
+                            ZIndex="1000">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="4"/>
+                        </Border.StrokeShape>
+                        
+                        <CollectionView ItemsSource="{Binding SearchResults}"
+                                        SelectionMode="None"
+                                        BackgroundColor="Transparent">
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8,6"
+                                          ColumnDefinitions="80,*">
+                                        <Grid.BackgroundColor>
+                                            <MultiBinding Converter="{StaticResource SelectedItemBackgroundConverter}">
+                                                <Binding Path="." />
+                                                <Binding Path="BindingContext.SearchResults" Source="{x:Reference WatchlistRoot}" />
+                                                <Binding Path="BindingContext.SelectedSearchResultIndex" Source="{x:Reference WatchlistRoot}" />
+                                            </MultiBinding>
+                                        </Grid.BackgroundColor>
+                                        <Label Grid.Column="0"
+                                               Text="{Binding Symbol}"
+                                               FontSize="13"
+                                               FontAttributes="Bold"
+                                               TextColor="{StaticResource OnSurfaceDark}"/>
+                                        <Label Grid.Column="1"
+                                               Text="{Binding Company}"
+                                               FontSize="12"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               LineBreakMode="TailTruncation"/>
+                                        <Grid.GestureRecognizers>
+                                            <TapGestureRecognizer 
+                                                Command="{Binding BindingContext.SelectSearchResultCommand, Source={x:Reference WatchlistRoot}}"
+                                                CommandParameter="{Binding .}"/>
+                                        </Grid.GestureRecognizers>
+                                    </Grid>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+                    </Border>
+                </Grid>
                 
                 <!-- Add Symbol Button -->
                 <Button Grid.Column="1"
@@ -151,7 +205,7 @@
                         FontAttributes="Bold"
                         WidthRequest="40"
                         HeightRequest="32"
-                        VerticalOptions="Center"
+                        VerticalOptions="Start"
                         HorizontalOptions="Center"
                         Padding="0"
                         CornerRadius="0"

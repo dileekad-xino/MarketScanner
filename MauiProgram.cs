@@ -74,6 +74,14 @@ namespace MarketScanner
             builder.Services.AddSingleton<IScanner>(sp => sp.GetRequiredService<IbkrGatewayService>());
             builder.Services.AddSingleton<IMarketDataService>(sp => sp.GetRequiredService<IbkrGatewayService>());
             builder.Services.AddSingleton<IInstrumentMetadataProvider, IbkrInstrumentMetadataProvider>();
+            
+            // Symbol Search Service
+            builder.Services.AddSingleton<ISymbolSearchService>(sp =>
+            {
+                var ibkrService = sp.GetService<IbkrGatewayService>();
+                var logger = sp.GetRequiredService<ILogger<SymbolSearchService>>();
+                return new SymbolSearchService(ibkrService, logger);
+            });
 
             // Fallback playback services (for offline testing)
             builder.Services.AddSingleton<PlaybackFallback>();

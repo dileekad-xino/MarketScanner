@@ -60,6 +60,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             // Execute algorithm
             Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            if (Result != null && SelectedSymbol != null)
+            {
+                SelectedSymbol.RsiValue = Result.RsiValue;
+                SelectedSymbol.RsiSignal = Result.RsiSignal;
+            }
 
             _logger.LogInformation("Algorithm completed: {Action} for {Symbol} at {Price}", 
                 Result.Action, Result.Symbol, Result.Price);

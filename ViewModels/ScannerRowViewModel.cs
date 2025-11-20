@@ -19,6 +19,8 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     private bool _isDropped;
     
     private readonly ILogger? _logger;
+    private double? _rsiValue;
+    private string? _rsiSignal;
 
     private string _symbol = string.Empty;
     private string _company = string.Empty;
@@ -115,6 +117,8 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     public string DisplayVolume => Volume.ToString("N0");
     public string DisplayAvgVolume => AvgVolume.ToString("N0");
     public string DisplayRV => $"{RelativeVolume:0.00}×";
+    public string DisplayRsi => _rsiValue.HasValue ? $"{_rsiValue.Value:0.0}" : "–";
+    public string DisplayRsiSignal => string.IsNullOrWhiteSpace(_rsiSignal) ? "–" : _rsiSignal;
 
     // Removed FloatShares and FiftyTwoWeekHigh properties as requested
 
@@ -140,6 +144,30 @@ public sealed class ScannerRowViewModel : ObservableObject, IDisposable
     {
         get => _isDropped;
         set { SetProperty(ref _isDropped, value); }
+    }
+
+    public double? RsiValue
+    {
+        get => _rsiValue;
+        set
+        {
+            if (SetProperty(ref _rsiValue, value))
+            {
+                OnPropertyChanged(nameof(DisplayRsi));
+            }
+        }
+    }
+
+    public string? RsiSignal
+    {
+        get => _rsiSignal;
+        set
+        {
+            if (SetProperty(ref _rsiSignal, value))
+            {
+                OnPropertyChanged(nameof(DisplayRsiSignal));
+            }
+        }
     }
 
 

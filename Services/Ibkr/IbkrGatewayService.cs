@@ -964,12 +964,21 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             _logger.LogWarning("IBKR Error 165 (Session Conflict): {Message}. Scanner will return empty results. This is expected if another TWS/Gateway instance is running.", errorMsg);
         }
+        else if (errorCode == 2176)
+        {
+            // Error 2176 is a warning about fractional share size rules - not a fatal error
+            // This is just informational and shouldn't stop historical data requests
+            _logger.LogWarning("IBKR Warning {Code} for reqId {Id}: {Message}. This is informational and does not affect data retrieval.", errorCode, id, errorMsg);
+            // Don't treat this as a fatal error - let the request continue
+            return;
+        }
         else
         {
             _logger.LogError("IBKR Error {Code} for reqId {Id}: {Message}", errorCode, id, errorMsg);
         }
 
         // Handle historical data request errors (for RSI/technical indicators)
+        // Only fail on actual errors, not warnings like 2176
         if (_histBarWaiters.TryRemove(id, out var histBarTcs))
         {
             var symbol = _histReqToSymbol.GetValueOrDefault(id, "unknown");

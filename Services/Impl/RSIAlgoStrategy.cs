@@ -50,7 +50,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 bars = await _ibkrService.GetHistoricalBarsForRSIAsync(
                     symbol.Symbol,
                     days: settings.HistoricalDays,
-                    barSize: "1 min",
+                    barSize: settings.BarSize,
                     ct: ct);
 
                 if (bars == null || bars.Count == 0)
@@ -207,6 +207,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
     {
         string priceInfo = $"Price ${symbol.LastPrice:F2} vs EMA{TrendEmaPeriod} {ema:F2}";
 
+        // STRONG BUY: RSI rebounded above oversold (momentum reversal)
         if (prevRsi <= settings.Oversold && currentRsi > settings.Oversold)
         {
             return (AlgoAction.Buy,
@@ -214,6 +215,15 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 $"RSI rebounded above oversold ({settings.Oversold}) -> STRONG BUY. {priceInfo}");
         }
 
+        // STRONG BUY: RSI is deeply oversold (absolute level trigger)
+        if (currentRsi <= settings.Oversold)
+        {
+            return (AlgoAction.Buy,
+                "STRONG BUY",
+                $"RSI {currentRsi:F1} is deeply oversold (below {settings.Oversold}) -> STRONG BUY. {priceInfo}");
+        }
+
+        // BUY: RSI crossed above 50 with uptrend (momentum confirmation)
         if (prevRsi < 50 && currentRsi >= 50 && uptrend)
         {
             return (AlgoAction.Buy,
@@ -221,6 +231,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 $"RSI crossed above 50 with price above EMA -> BUY. {priceInfo}");
         }
 
+        // STRONG SELL: RSI rejected from overbought (momentum reversal)
         if (prevRsi >= settings.Overbought && currentRsi < settings.Overbought)
         {
             return (AlgoAction.Sell,
@@ -228,6 +239,15 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 $"RSI rejected overbought ({settings.Overbought}) -> STRONG SELL. {priceInfo}");
         }
 
+        // STRONG SELL: RSI is deeply overbought (absolute level trigger)
+        if (currentRsi >= settings.Overbought)
+        {
+            return (AlgoAction.Sell,
+                "STRONG SELL",
+                $"RSI {currentRsi:F1} is deeply overbought (above {settings.Overbought}) -> STRONG SELL. {priceInfo}");
+        }
+
+        // SELL: RSI crossed below 50 with downtrend (momentum confirmation)
         if (prevRsi > 50 && currentRsi <= 50 && downtrend)
         {
             return (AlgoAction.Sell,

@@ -17,7 +17,7 @@
         </Border.StrokeShape>
         <Grid RowDefinitions="Auto,Auto,Auto,Auto"
               RowSpacing="16"
-              MinimumHeightRequest="350">
+              MinimumHeightRequest="400">
             <Label Text="RSI Settings"
                    FontSize="20"
                    FontAttributes="Bold"
@@ -31,9 +31,9 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="6"/>
                 </Border.StrokeShape>
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="220">
+                      MinimumHeightRequest="280">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Length"
                                TextColor="{StaticResource OnSurfaceDark}"
@@ -72,6 +72,25 @@
                                Grid.Column="1"
                                Keyboard="Numeric"
                                Style="{StaticResource FilterEntryStyle}"/>
+                    </Grid>
+
+                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                        <Label Text="Bar Size"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               VerticalOptions="Center"/>
+                        <Picker x:Name="BarSizePicker"
+                                Grid.Column="1"
+                                Title="Select interval"
+                                TextColor="{StaticResource OnSurfaceDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}">
+                            <Picker.ItemsSource>
+                                <x:Array Type="{x:Type x:String}">
+                                    <x:String>15 secs</x:String>
+                                    <x:String>30 secs</x:String>
+                                    <x:String>1 min</x:String>
+                                </x:Array>
+                            </Picker.ItemsSource>
+                        </Picker>
                     </Grid>
                 </Grid>
             </Border>

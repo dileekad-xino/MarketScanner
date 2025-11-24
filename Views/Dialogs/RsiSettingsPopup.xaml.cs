@@ -21,6 +21,20 @@ public partial class RsiSettingsPopup : Popup
         OversoldEntry.Text = settings.Oversold.ToString("0.##");
         OverboughtEntry.Text = settings.Overbought.ToString("0.##");
         DaysEntry.Text = settings.HistoricalDays.ToString();
+        
+        // Set bar size picker
+        var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
+        var barSizeIndex = Array.IndexOf(validBarSizes, settings.BarSize);
+        if (barSizeIndex >= 0)
+        {
+            BarSizePicker.SelectedIndex = barSizeIndex;
+        }
+        else
+        {
+            // Default to "1 min" if not found
+            BarSizePicker.SelectedIndex = 2;
+        }
+        
         ErrorLabel.IsVisible = false;
     }
 
@@ -76,10 +90,20 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
+        if (BarSizePicker.SelectedIndex < 0)
+        {
+            error = "Please select a bar size interval.";
+            return false;
+        }
+
+        var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
+        var barSize = validBarSizes[BarSizePicker.SelectedIndex];
+
         settings.Period = period;
         settings.Oversold = oversold;
         settings.Overbought = overbought;
         settings.HistoricalDays = days;
+        settings.BarSize = barSize;
         return true;
     }
 }

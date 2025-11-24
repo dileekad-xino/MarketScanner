@@ -11,6 +11,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 {
     private readonly IAlgoStrategy _algorithm;
     private readonly ILogger<AlgoRunnerViewModel> _logger;
+    private readonly ICandlestickBuilder? _candlestickBuilder;
     private CancellationTokenSource? _cancellationTokenSource;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
@@ -20,10 +21,12 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     public AlgoRunnerViewModel(
         IAlgoStrategy algorithm,
-        ILogger<AlgoRunnerViewModel> logger)
+        ILogger<AlgoRunnerViewModel> logger,
+        ICandlestickBuilder? candlestickBuilder = null)
     {
         _algorithm = algorithm;
         _logger = logger;
+        _candlestickBuilder = candlestickBuilder;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -93,6 +96,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // Cancel any running algorithm
         _cancellationTokenSource?.Cancel();
         
+        // Unsubscribe from candlestick builder when closing to free up resources
+        UnsubscribeFromCandlestickBuilder();
+        
         // Close the page
         if (Application.Current?.MainPage != null)
         {
@@ -100,8 +106,27 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    private void UnsubscribeFromCandlestickBuilder()
+    {
+        if (_candlestickBuilder != null && SelectedSymbol != null)
+        {
+            try
+            {
+                _candlestickBuilder.UnsubscribeSymbol(SelectedSymbol.Symbol);
+                _logger.LogInformation("Unsubscribed {Symbol} from candlestick builder", SelectedSymbol.Symbol);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to unsubscribe {Symbol} from candlestick builder", SelectedSymbol.Symbol);
+            }
+        }
+    }
+
     public void Dispose()
     {
+        // Unsubscribe from candlestick builder on disposal to ensure cleanup
+        UnsubscribeFromCandlestickBuilder();
+        
         _cancellationTokenSource?.Cancel();
         _cancellationTokenSource?.Dispose();
     }

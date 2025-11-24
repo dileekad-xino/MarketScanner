@@ -51,6 +51,11 @@ namespace MarketScanner
             builder.Services.AddSingleton<IbkrConfig>(provider => 
                 provider.GetRequiredService<IOptions<IbkrConfig>>().Value);
             
+            // Register Candlestick configuration
+            builder.Services.Configure<CandlestickConfig>(builder.Configuration.GetSection("Candlestick"));
+            builder.Services.AddSingleton<CandlestickConfig>(provider => 
+                provider.GetRequiredService<IOptions<CandlestickConfig>>().Value);
+            
             builder.Services.AddSingleton<AppSettings>(provider =>
             {
                 var config = provider.GetRequiredService<IConfiguration>();
@@ -90,8 +95,36 @@ namespace MarketScanner
             builder.Services.AddSingleton<IConnectivity>(provider => 
                 Microsoft.Maui.Networking.Connectivity.Current);
 
-            // Algorithm Services
-            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.AlgoStrategy>();
+            // Candlestick Services
+            builder.Services.AddSingleton<ICandlestickStorage, CandlestickStorage>();
+            builder.Services.AddSingleton<ICandlestickBuilder>(sp =>
+            {
+                var builder = new CandlestickBuilder(
+                    sp.GetRequiredService<IbkrGatewayService>(),
+                    sp.GetRequiredService<CandlestickConfig>(),
+                    sp.GetRequiredService<ILogger<CandlestickBuilder>>());
+                
+                // Subscribe storage to candlestick stream
+                var storage = sp.GetRequiredService<ICandlestickStorage>();
+                builder.CandlestickStream.Subscribe(candlestick => storage.AddCandlestick(candlestick));
+                
+                return builder;
+            });
+
+            // Individual Strategy Services (not registered as IAlgoStrategy)
+            builder.Services.AddSingleton<MacdStrategy>();
+
+            // Composite Algorithm Service - combines all strategies
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
+            {
+                var strategies = new List<MarketScanner.Services.IAlgoStrategy>
+                {
+                    sp.GetRequiredService<MacdStrategy>()
+                };
+                
+                var logger = sp.GetRequiredService<ILogger<AlgoStrategy>>();
+                return new AlgoStrategy(strategies, logger);
+            });
 
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>();

@@ -523,6 +523,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     {
         await EnsureConnectedAsync(ct);
 
+        if (!IsConnected || _client == null || !_client.IsConnected())
+        {
+            throw new InvalidOperationException($"Cannot request historical data: IBKR gateway is not connected");
+        }
+
         var reqId = GetNextReqId();
         var tcs = new TaskCompletionSource<List<Bar>>();
         var bars = new List<Bar>();
@@ -874,13 +879,22 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogWarning("historicalDataEnd: {Symbol} - Completed but no volume tracking found for reqId={ReqId}", symbol, reqId);
         }
 
-        // Complete bar waiters if any
-        if (_histBarWaiters.TryRemove(reqId, out var barTcs) && _histBars.TryRemove(reqId, out var completedBars))
+        // Complete bar waiters if any (for RSI/technical indicator requests)
+        if (_histBarWaiters.TryRemove(reqId, out var barTcs))
         {
-            // Historical data comes in reverse chronological order (newest first), reverse to get chronological order
-            completedBars.Reverse();
-            barTcs.TrySetResult(completedBars);
-            _logger.LogInformation("historicalDataEnd: Completed bar request for reqId={ReqId}, returned {Count} bars", reqId, completedBars.Count);
+            if (_histBars.TryRemove(reqId, out var completedBars))
+            {
+                // Historical data comes in reverse chronological order (newest first), reverse to get chronological order
+                completedBars.Reverse();
+                barTcs.TrySetResult(completedBars);
+                _logger.LogInformation("historicalDataEnd: Completed bar request for reqId={ReqId}, returned {Count} bars", reqId, completedBars.Count);
+            }
+            else
+            {
+                // No bars were collected (empty result or error), complete with empty list
+                _logger.LogWarning("historicalDataEnd: No bars collected for reqId={ReqId}, completing with empty list", reqId);
+                barTcs.TrySetResult(new List<Bar>());
+            }
         }
 
         _histReqToSymbol.TryRemove(reqId, out _);
@@ -955,6 +969,23 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogError("IBKR Error {Code} for reqId {Id}: {Message}", errorCode, id, errorMsg);
         }
 
+        // Handle historical data request errors (for RSI/technical indicators)
+        if (_histBarWaiters.TryRemove(id, out var histBarTcs))
+        {
+            var symbol = _histReqToSymbol.GetValueOrDefault(id, "unknown");
+            _logger.LogWarning("Historical data request failed for {Symbol} (reqId={ReqId}, errorCode={ErrorCode}): {ErrorMsg}", 
+                symbol, id, errorCode, errorMsg);
+            
+            // Clean up tracking dictionaries
+            _histBars.TryRemove(id, out _);
+            _histReqToSymbol.TryRemove(id, out _);
+            _histVolumes.TryRemove(id, out _);
+            _histClosePrices.TryRemove(id, out _);
+            
+            // Complete with exception so the caller knows the request failed
+            histBarTcs.TrySetException(new Exception($"IBKR Error {errorCode}: {errorMsg}"));
+        }
+        
         // Handle scanner-specific errors
         if (_scannerWaiters.TryGetValue(id, out var tcs))
         {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Collections.ObjectModel;
+using CommunityToolkit.Maui.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MarketScanner.Core;
@@ -11,6 +12,8 @@ using MarketScanner.Utilities;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
+using Microsoft.Maui.Controls;
+using MarketScanner.Views.Dialogs;
 
 namespace MarketScanner.ViewModels;
 
@@ -20,6 +23,8 @@ public partial class ScannerViewModel : ObservableObject
     private readonly IDispatcherService _dispatcher;
     private readonly ILogger<ScannerViewModel> _logger;
     private readonly IWatchlistService _watchlistService;
+    private readonly IRsiSettingsService _rsiSettingsService;
+    private readonly IAlgoStrategy _algoStrategy;
     private WatchlistViewModel? _watchlistViewModel;
     private QuoteViewModel? _quoteViewModel;
     private CancellationTokenSource? _cts;
@@ -155,12 +160,20 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-    public ScannerViewModel(IScanner scanner, IDispatcherService dispatcher, ILogger<ScannerViewModel> logger, IWatchlistService watchlistService)
+    public ScannerViewModel(
+        IScanner scanner,
+        IDispatcherService dispatcher,
+        ILogger<ScannerViewModel> logger,
+        IWatchlistService watchlistService,
+        IRsiSettingsService rsiSettingsService,
+        IAlgoStrategy algoStrategy)
     {
         _scanner = scanner;
         _dispatcher = dispatcher;
         _logger = logger;
         _watchlistService = watchlistService;
+        _rsiSettingsService = rsiSettingsService;
+        _algoStrategy = algoStrategy;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -1235,6 +1248,36 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private async Task ShowRsiSettingsAsync(ScannerRowViewModel? row)
+    {
+        try
+        {
+            var page = Application.Current?.MainPage;
+            if (page == null)
+            {
+                _logger.LogWarning("Cannot show RSI settings - MainPage is null");
+                return;
+            }
+
+            var current = await _rsiSettingsService.GetAsync();
+            var popup = new RsiSettingsPopup(current);
+            var result = await page.ShowPopupAsync(popup);
+            if (result is RsiSettings updated)
+            {
+                await _rsiSettingsService.SaveAsync(updated);
+                if (row != null)
+                {
+                    await AnalyzeSelectedRowAsync(row);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to present RSI settings dialog");
+        }
+    }
+
         public void Dispose()
     {
         _disposed = true;
@@ -1307,5 +1350,22 @@ public partial class ScannerViewModel : ObservableObject
 
         // Stop scanner
         _ = Task.Run(async () => await _scanner.StopAsync());
+    }
+
+    private async Task AnalyzeSelectedRowAsync(ScannerRowViewModel row)
+    {
+        try
+        {
+            var result = await _algoStrategy.ExecuteAsync(row);
+            if (result != null)
+            {
+                row.RsiValue = result.RsiValue;
+                row.RsiSignal = result.RsiSignal;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update RSI for symbol {Symbol}", row.Symbol);
+        }
     }
 }

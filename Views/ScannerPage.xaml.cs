@@ -2,6 +2,7 @@ using MarketScanner.ViewModels;
 using MarketScanner.Services;
 using MarketScanner.Utilities;
 using MarketScanner.Behaviors;
+using Microsoft.Maui.Controls;
 
 namespace MarketScanner.Views;
 
@@ -49,7 +50,7 @@ public partial class ScannerPage : ContentPage
         // Assign properties to resize behaviors
         var grips = new[] { 
             GetGrip(0), GetGrip(1), GetGrip(2), GetGrip(3), GetGrip(4),
-            GetGrip(5), GetGrip(6), GetGrip(7)
+            GetGrip(5), GetGrip(6), GetGrip(7), GetGrip(8), GetGrip(9)
         };
         
         for (int i = 0; i < grips.Length; i++)
@@ -69,7 +70,7 @@ public partial class ScannerPage : ContentPage
         // Assign properties to auto-size behaviors
         var headers = new[] {
             GetHeader(0), GetHeader(1), GetHeader(2), GetHeader(3), GetHeader(4),
-            GetHeader(5), GetHeader(6), GetHeader(7)
+            GetHeader(5), GetHeader(6), GetHeader(7), GetHeader(8), GetHeader(9)
         };
         
         for (int i = 0; i < headers.Length; i++)
@@ -212,7 +213,6 @@ public partial class ScannerPage : ContentPage
                 FontFamily = "Cascadia Mono, Consolas, Menlo",
                 HorizontalTextAlignment = TextAlignment.End
             };
-            
             // Set Grid.Column properties
             Grid.SetColumn(symbolLabel, 0);
             Grid.SetColumn(companyLabel, 1);

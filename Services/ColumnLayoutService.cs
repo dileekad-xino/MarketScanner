@@ -6,12 +6,12 @@ namespace MarketScanner.Services;
 
 public sealed class ColumnLayoutService
 {
-    public const int ColumnCount = 10;
+    public const int ColumnCount = 8;
     public const double MinWidth = 80;
     public const double MaxWidth = 420;
     
-    // Compact defaults: Symbol, Company, Chg%, Chg, Last, RV, Vol, AvgVol, Float, 52W
-    private static readonly double[] Defaults = { 110, 220, 110, 110, 120, 90, 140, 140, 110, 120 };
+    // Compact defaults: Symbol, Company, Chg%, Chg, Last, RV, Vol, AvgVol
+    private static readonly double[] Defaults = { 110, 220, 110, 110, 120, 90, 140, 140 };
     
     private const string PrefKey = "Scanner.ColWidths";
     

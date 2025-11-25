@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using CommunityToolkit.Maui.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MarketScanner.Models;
@@ -8,6 +9,7 @@ using MarketScanner.Services.Ibkr;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 using Microsoft.Extensions.DependencyInjection;
+using MarketScanner.Views.Dialogs;
 
 namespace MarketScanner.ViewModels;
 
@@ -712,6 +714,43 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             _logger.LogError(ex, "Failed to clear quotes");
             ErrorMessage = $"Failed to clear quotes: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ShowRsiSettingsAsync(ScannerRowViewModel row)
+    {
+        try
+        {
+            var page = Application.Current?.MainPage;
+            if (page == null)
+            {
+                _logger.LogWarning("Cannot show RSI settings - MainPage is null");
+                return;
+            }
+
+            var rsiSettingsService = _serviceProvider?.GetService<IRsiSettingsService>();
+            if (rsiSettingsService == null)
+            {
+                _logger.LogError("IRsiSettingsService is not available");
+                ErrorMessage = "RSI Settings service is not available";
+                return;
+            }
+
+            var current = await rsiSettingsService.GetAsync();
+            var popup = new Views.Dialogs.RsiSettingsPopup(current);
+            var result = await page.ShowPopupAsync(popup);
+            if (result is RsiSettings updated)
+            {
+                await rsiSettingsService.SaveAsync(updated);
+                // Re-run algorithm on the selected symbol with new settings
+                await RunAlgoAsync(row);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to present RSI settings dialog");
+            ErrorMessage = $"Failed to show RSI settings: {ex.Message}";
         }
     }
 

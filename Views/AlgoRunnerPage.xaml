@@ -13,6 +13,8 @@
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
             <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
             <converters:AlgoActionToColorConverter x:Key="AlgoActionToColorConverter"/>
+            <converters:RsiSignalToColorConverter x:Key="RsiSignalToColorConverter"/>
+            <converters:NullableDoubleToBoolConverter x:Key="NullableDoubleToBoolConverter"/>
         </ResourceDictionary>
     </ContentPage.Resources>
 
@@ -133,6 +135,40 @@
                            TextColor="{StaticResource OnSurfaceDark}"
                            FontSize="16"
                            FontFamily="Cascadia Mono, Consolas, Menlo"
+                           VerticalOptions="Center"/>
+                </Grid>
+
+                <!-- RSI Value -->
+                <Grid ColumnDefinitions="Auto,*"
+                      IsVisible="{Binding Result.RsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}">
+                    <Label Grid.Column="0"
+                           Text="RSI:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="14"
+                           VerticalOptions="Center"
+                           Margin="0,0,10,0"/>
+                    <Label Grid.Column="1"
+                           Text="{Binding Result.RsiValue, StringFormat='{0:F2}'}"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="16"
+                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                           VerticalOptions="Center"/>
+                </Grid>
+
+                <!-- Signal -->
+                <Grid ColumnDefinitions="Auto,*"
+                      IsVisible="{Binding Result.RsiSignal, Converter={StaticResource StringToBoolConverter}}">
+                    <Label Grid.Column="0"
+                           Text="Signal:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="14"
+                           VerticalOptions="Center"
+                           Margin="0,0,10,0"/>
+                    <Label Grid.Column="1"
+                           Text="{Binding Result.RsiSignal}"
+                           TextColor="{Binding Result.RsiSignal, Converter={StaticResource RsiSignalToColorConverter}}"
+                           FontSize="16"
+                           FontAttributes="Bold"
                            VerticalOptions="Center"/>
                 </Grid>
 

@@ -179,6 +179,9 @@
                                     <MenuFlyoutItem Text="Run Algo"
                                                     Command="{Binding BindingContext.RunAlgoCommand, Source={x:Reference QuoteRoot}}"
                                                     CommandParameter="{Binding .}" />
+                                    <MenuFlyoutItem Text="RSI Settings"
+                                                    Command="{Binding BindingContext.ShowRsiSettingsCommand, Source={x:Reference QuoteRoot}}"
+                                                    CommandParameter="{Binding .}" />
                                     <MenuFlyoutItem Text="Remove from Quotes"
                                                     Command="{Binding BindingContext.RemoveQuoteCommand, Source={x:Reference QuoteRoot}}"
                                                     CommandParameter="{Binding .}" />

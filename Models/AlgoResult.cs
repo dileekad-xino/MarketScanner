@@ -18,6 +18,8 @@ public sealed record AlgoResult(
     AlgoAction Action,
     double? Price,
     string? Reason,
-    DateTime Timestamp
+    DateTime Timestamp,
+    double? RsiValue = null,
+    string? RsiSignal = null
 );
 

@@ -43,6 +43,7 @@ namespace MarketScanner
 
             // Services
             builder.Services.AddSingleton<SettingsService>();
+            builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
             builder.Services.AddSingleton<IWatchlistService, WatchlistService>();
             
@@ -91,7 +92,12 @@ namespace MarketScanner
                 Microsoft.Maui.Networking.Connectivity.Current);
 
             // Algorithm Services
-            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.AlgoStrategy>();
+            // Register RSI Strategy as the default algorithm
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            
+            // Alternative: Register multiple algorithms and select at runtime
+            // builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            // builder.Services.AddSingleton<MarketScanner.Services.Impl.AlgoStrategy>();
 
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>();

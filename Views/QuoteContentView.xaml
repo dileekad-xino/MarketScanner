@@ -15,7 +15,7 @@
     </ContentView.Resources>
 
     <Grid x:Name="QuoteRoot"
-          ColumnDefinitions="3*,2*"
+          ColumnDefinitions="*,320"
           ColumnSpacing="18"
           Padding="10"
           BackgroundColor="{StaticResource BackgroundDark}">

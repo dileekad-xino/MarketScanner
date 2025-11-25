@@ -171,6 +171,14 @@ dotnet build -f net8.0-android
 4. **Sorting**: Click column headers to sort data
 5. **Filter Changes**: Filters automatically trigger new scans with debouncing
 
+## Lightweight Charts Integration
+
+- The Quotes page now embeds [TradingView Lightweight Charts](https://tradingview.github.io/lightweight-charts/docs) on the left side of the screen.
+- The HTML/JS bundle lives in `Resources/Raw/quotes_chart.html` and is loaded into a MAUI `WebView` (`Views/QuoteContentView.xaml`). No additional build tooling is required—MAUI copies the asset automatically.
+- `QuoteViewModel` computes OHLC candles plus a 20-period simple moving average and exposes a `ChartSnapshot` object. The view listens for this property and forwards the serialized payload to `window.marketScannerChart.setData(...)` inside the WebView.
+- Selecting a symbol in the Quotes list immediately refreshes the chart. If IBKR historical data is unavailable, the viewmodel generates a clearly-labeled synthetic series so the chart remains interactive.
+- To add new indicators, extend `ChartSnapshot` (e.g., add another series list) and update the JS bridge in `quotes_chart.html` to plot the additional data. No native code changes are required beyond updating the payload.
+
 ## Dependencies
 
 - **CommunityToolkit.MVVM**: MVVM framework with source generators

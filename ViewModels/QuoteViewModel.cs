@@ -4,12 +4,15 @@ using CommunityToolkit.Maui.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MarketScanner.Models;
+using MarketScanner.Config;
 using MarketScanner.Services;
 using MarketScanner.Services.Ibkr;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using MarketScanner.Views.Dialogs;
+using System.Globalization;
+using IBApi;
 
 namespace MarketScanner.ViewModels;
 
@@ -31,6 +34,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _showSearchResults = false;
     [ObservableProperty] private bool _isSearching = false;
     [ObservableProperty] private int _selectedSearchResultIndex = -1;
+    [ObservableProperty] private ScannerRowViewModel? _selectedQuote;
+    [ObservableProperty] private ChartSnapshot? _chartSnapshot;
+    [ObservableProperty] private bool _isChartLoading;
+    [ObservableProperty] private string _chartStatusMessage = "Select a symbol to view the chart.";
     private Watchlist? _previousWatchlist; // Track previous selection to detect Scanner -> Watchlist transitions
     private bool _isSyncing = false; // Flag to prevent restore when syncing from scanner refresh
 
@@ -52,9 +59,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private const int BatchIntervalMs = 16; // ~60 FPS for smooth updates
     private const int MaxBatchSize = 50;
     private readonly TimeSpan _searchDebounceDelay = TimeSpan.FromMilliseconds(300);
+    private const string ChartBarSize = IbkrConstants.BAR_SIZE_1_MIN;
+    private const int ChartHistoryDays = 2;
+    private const int ChartMovingAveragePeriod = 20;
 
     private readonly IServiceProvider? _serviceProvider;
     private CancellationTokenSource? _searchCts;
+    private CancellationTokenSource? _chartCts;
 
     public QuoteViewModel(
         IbkrGatewayService ibkrService,
@@ -268,6 +279,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             _logger.LogError(ex, "Failed to restore saved quotes");
             ErrorMessage = $"Failed to restore quotes: {ex.Message}";
         }
+
+        SelectedQuote = QuoteItems.FirstOrDefault(q => !q.IsDropped) ?? QuoteItems.FirstOrDefault();
     }
 
     private async Task LoadQuotesFromWatchlistAsync(int watchlistId, bool saveSnapshot = false)
@@ -353,6 +366,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
 
             _logger.LogInformation("Loaded {Count} symbols from watchlist into quotes", QuoteItems.Count);
+            SelectedQuote = QuoteItems.FirstOrDefault();
+            if (SelectedQuote == null)
+            {
+                ChartSnapshot = null;
+                ChartStatusMessage = "Select a symbol to view the chart.";
+            }
         }
         catch (Exception ex)
         {
@@ -411,6 +430,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
                 _rowCache[symbol] = rowVm;
                 QuoteItems.Add(rowVm);
+            }
+
+            if (SelectedQuote == null && QuoteItems.Count > 0)
+            {
+                SelectedQuote = QuoteItems.FirstOrDefault(q => !q.IsDropped) ?? QuoteItems.FirstOrDefault();
             }
         }
         catch (Exception ex)
@@ -621,6 +645,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
             _rowCache[symbol] = rowVm;
             QuoteItems.Add(rowVm);
+            SelectedQuote = rowVm;
 
             // Subscribe to market data for this symbol (ensures live updates work)
             // Only subscribe via IBKR if connected, otherwise rely on fallback playback
@@ -691,6 +716,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var symbol = row.Symbol;
             QuoteItems.Remove(row);
             _rowCache.Remove(symbol);
+            if (SelectedQuote == row)
+            {
+                SelectedQuote = QuoteItems.FirstOrDefault(q => !q.IsDropped) ?? QuoteItems.FirstOrDefault();
+            }
             _logger.LogInformation("Removed symbol {Symbol} from quotes", symbol);
         }
         catch (Exception ex)
@@ -708,6 +737,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             QuoteItems.Clear();
             _rowCache.Clear();
             ErrorMessage = "";
+            SelectedQuote = null;
+            ChartSnapshot = null;
+            ChartStatusMessage = "Select a symbol to view the chart.";
             _logger.LogInformation("Cleared all quotes");
         }
         catch (Exception ex)
@@ -798,6 +830,194 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             _logger.LogError(ex, "Failed to open algo runner");
             ErrorMessage = $"Failed to open algo runner: {ex.Message}";
         }
+    }
+
+    private async Task LoadChartForSymbolAsync(ScannerRowViewModel symbol)
+    {
+        _chartCts?.Cancel();
+        _chartCts?.Dispose();
+        _chartCts = new CancellationTokenSource();
+        var token = _chartCts.Token;
+
+        try
+        {
+            IsChartLoading = true;
+            ChartStatusMessage = "Loading chart...";
+
+            IReadOnlyList<Bar>? bars = null;
+            try
+            {
+                bars = await _ibkrService.GetHistoricalBarsForRSIAsync(
+                    symbol.Symbol,
+                    days: ChartHistoryDays,
+                    barSize: ChartBarSize,
+                    ct: token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "QuoteViewModel: Failed to fetch historical bars for {Symbol}. Falling back to synthetic data.", symbol.Symbol);
+            }
+
+            var candles = bars != null && bars.Count > 0
+                ? ConvertBarsToCandles(bars)
+                : GenerateFallbackSeries(symbol.Symbol, symbol.LastPrice);
+
+            if (candles.Count == 0)
+            {
+                ChartSnapshot = null;
+                ChartStatusMessage = "No historical data available.";
+                return;
+            }
+
+            var movingAverage = CalculateSimpleMovingAverage(candles, ChartMovingAveragePeriod);
+            ChartSnapshot = new ChartSnapshot
+            {
+                Symbol = symbol.Symbol,
+                Candles = candles,
+                MovingAverage = movingAverage.Count > 0 ? movingAverage : null
+            };
+
+            ChartStatusMessage = bars != null && bars.Count > 0
+                ? string.Empty
+                : "Showing simulated data until IBKR historical data is available.";
+        }
+        catch (OperationCanceledException)
+        {
+            // Swallow cancellation when user selects a different symbol
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "QuoteViewModel: Unexpected error while loading chart for {Symbol}", symbol.Symbol);
+            ChartStatusMessage = $"Failed to load chart: {ex.Message}";
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                IsChartLoading = false;
+            }
+        }
+    }
+
+    private static List<ChartCandlePoint> ConvertBarsToCandles(IReadOnlyList<Bar> bars)
+    {
+        var candles = new List<ChartCandlePoint>(bars.Count);
+        foreach (var bar in bars)
+        {
+            candles.Add(new ChartCandlePoint
+            {
+                Time = ParseBarTime(bar.Time),
+                Open = Math.Round(bar.Open, 4),
+                High = Math.Round(bar.High, 4),
+                Low = Math.Round(bar.Low, 4),
+                Close = Math.Round(bar.Close, 4),
+                Volume = bar.Volume
+            });
+        }
+        return candles;
+    }
+
+    private static long ParseBarTime(string time)
+    {
+        if (string.IsNullOrWhiteSpace(time))
+        {
+            return DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        }
+
+        string[] formats = { "yyyyMMdd  HH:mm:ss", "yyyyMMdd HH:mm:ss", "yyyyMMdd" };
+        if (DateTime.TryParseExact(time, formats, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+        {
+            return new DateTimeOffset(parsed).ToUnixTimeSeconds();
+        }
+
+        if (long.TryParse(time, out var unix))
+        {
+            return unix;
+        }
+
+        return DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    }
+
+    private static List<ChartCandlePoint> GenerateFallbackSeries(string symbol, double lastPrice)
+    {
+        const int sampleCount = 120; // 2 hours of 1-minute candles
+        var candles = new List<ChartCandlePoint>(sampleCount);
+        var random = new Random(HashCode.Combine(symbol, DateTime.UtcNow.DayOfYear));
+        var start = DateTimeOffset.UtcNow.AddMinutes(-sampleCount);
+        var price = lastPrice > 0 ? lastPrice : 5 + random.NextDouble() * 5;
+
+        for (int i = 0; i < sampleCount; i++)
+        {
+            var open = price;
+            var delta = (random.NextDouble() - 0.5) * 0.04 * Math.Max(1, price);
+            var close = Math.Max(0.1, open + delta);
+            var high = Math.Max(open, close) + Math.Abs(delta) * 0.5;
+            var low = Math.Min(open, close) - Math.Abs(delta) * 0.5;
+
+            candles.Add(new ChartCandlePoint
+            {
+                Time = start.AddMinutes(i).ToUnixTimeSeconds(),
+                Open = Math.Round(open, 4),
+                High = Math.Round(high, 4),
+                Low = Math.Round(low, 4),
+                Close = Math.Round(close, 4),
+                Volume = random.Next(50_000, 250_000)
+            });
+
+            price = close;
+        }
+
+        return candles;
+    }
+
+    private static List<ChartLinePoint> CalculateSimpleMovingAverage(IReadOnlyList<ChartCandlePoint> candles, int period)
+    {
+        var points = new List<ChartLinePoint>();
+        if (candles.Count < period)
+        {
+            return points;
+        }
+
+        double sum = 0;
+        for (int i = 0; i < candles.Count; i++)
+        {
+            sum += candles[i].Close;
+            if (i >= period)
+            {
+                sum -= candles[i - period].Close;
+            }
+
+            if (i >= period - 1)
+            {
+                points.Add(new ChartLinePoint
+                {
+                    Time = candles[i].Time,
+                    Value = Math.Round(sum / period, 4)
+                });
+            }
+        }
+
+        return points;
+    }
+
+    partial void OnSelectedQuoteChanged(ScannerRowViewModel? value)
+    {
+        if (value == null)
+        {
+            _chartCts?.Cancel();
+            ChartSnapshot = null;
+            ChartStatusMessage = "Select a symbol to view the chart.";
+            IsChartLoading = false;
+            return;
+        }
+
+        ChartStatusMessage = string.Empty;
+        _ = LoadChartForSymbolAsync(value);
     }
 
     partial void OnNewSymbolTextChanged(string value)
@@ -907,6 +1127,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             _searchCts?.Cancel();
             _searchCts?.Dispose();
+            _chartCts?.Cancel();
+            _chartCts?.Dispose();
         }
         catch { }
 

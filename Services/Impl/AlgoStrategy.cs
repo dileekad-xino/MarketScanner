@@ -1,5 +1,6 @@
 using MarketScanner.Models;
 using MarketScanner.ViewModels;
+using Microsoft.Extensions.Logging;
 
 namespace MarketScanner.Services.Impl;
 

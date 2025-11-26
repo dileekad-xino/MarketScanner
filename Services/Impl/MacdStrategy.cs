@@ -2,6 +2,7 @@ using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
+using Microsoft.Extensions.Logging;
 
 namespace MarketScanner.Services.Impl;
 
@@ -33,7 +34,7 @@ public class MacdStrategy : IAlgoStrategy
         try
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
-            
+
             // Get recent candlesticks (need at least slowPeriod + signalPeriod for MACD)
             var minRequired = _config.Macd.SlowPeriod + _config.Macd.SignalPeriod;
             var candlesticks = _candlestickStorage.GetCandlesticks(symbol.Symbol, interval, minRequired + 10);

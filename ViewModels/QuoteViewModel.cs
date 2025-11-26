@@ -766,7 +766,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
-                candlestickBuilder);
+                candlestickBuilder,
+                _ibkrService);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);

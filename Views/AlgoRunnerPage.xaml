@@ -49,7 +49,7 @@
 
         <!-- Price Information -->
         <Grid Grid.Row="1"
-              ColumnDefinitions="*,*"
+              ColumnDefinitions="*,*,*"
               ColumnSpacing="15"
               Margin="0,0,0,15">
             <Border Grid.Column="0"
@@ -86,6 +86,27 @@
                            TextColor="{Binding SelectedSymbol.ChangePercent, Converter={StaticResource ChangeToColorConverter}}"
                            FontSize="16"
                            FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                </VerticalStackLayout>
+            </Border>
+            <Border Grid.Column="2"
+                    StrokeThickness="1"
+                    Stroke="{StaticResource BorderDark}"
+                    BackgroundColor="{StaticResource SurfaceDark}"
+                    Padding="15">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="4"/>
+                </Border.StrokeShape>
+                <VerticalStackLayout>
+                    <Label Text="Quantity"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="12"/>
+                    <Entry Text="{Binding Quantity}"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="16"
+                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                           Keyboard="Numeric"
+                           BackgroundColor="Transparent"
+                           Placeholder="100"/>
                 </VerticalStackLayout>
             </Border>
         </Grid>
@@ -149,6 +170,94 @@
                            TextColor="{StaticResource OnSurfaceDark}"
                            FontSize="13"
                            LineBreakMode="WordWrap"/>
+                </Grid>
+
+                <!-- P/L Section -->
+                <BoxView HeightRequest="1" 
+                         BackgroundColor="{StaticResource BorderDark}" 
+                         Margin="0,10"/>
+                
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="15">
+                    <!-- Position Value -->
+                    <VerticalStackLayout Grid.Column="0">
+                        <Label Text="Position Value"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="12"/>
+                        <Label Text="{Binding PositionValue, StringFormat='{0:C2}'}"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="14"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                    
+                    <!-- P/L Dollar -->
+                    <VerticalStackLayout Grid.Column="1">
+                        <Label Text="P/L"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="12"/>
+                        <Label Text="{Binding ProfitLoss, StringFormat='{0:+$#,##0.00;-$#,##0.00;$0.00}'}"
+                               TextColor="{Binding ProfitLoss, Converter={StaticResource ChangeToColorConverter}}"
+                               FontSize="14"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                    
+                    <!-- P/L Percent -->
+                    <VerticalStackLayout Grid.Column="2">
+                        <Label Text="P/L %"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="12"/>
+                        <Label Text="{Binding ProfitLossPercent, StringFormat='{0:+#0.00;-#0.00;0.00}%'}"
+                               TextColor="{Binding ProfitLossPercent, Converter={StaticResource ChangeToColorConverter}}"
+                               FontSize="14"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                </Grid>
+
+                <!-- P/L Calculation Formula -->
+                <Label Text="{Binding PlCalculation}"
+                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                       FontSize="11"
+                       FontFamily="Cascadia Mono, Consolas, Menlo"
+                       HorizontalOptions="Center"
+                       Margin="0,8,0,0"
+                       IsVisible="{Binding HasPosition}"/>
+
+                <!-- Entry/Exit Price (if position exists) -->
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" 
+                      IsVisible="{Binding HasPosition}"
+                      Margin="0,10,0,0"
+                      ColumnSpacing="10">
+                    <Label Grid.Column="0"
+                           Text="Entry:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="12"
+                           VerticalOptions="Center"/>
+                    <Label Grid.Column="1"
+                           Text="{Binding EntryPrice, StringFormat='{0:C2}'}"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="12"
+                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                           VerticalOptions="Center"/>
+                    <Label Grid.Column="2"
+                           Text="Exit:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="12"
+                           VerticalOptions="Center"
+                           IsVisible="{Binding PositionClosed}"/>
+                    <Label Grid.Column="3"
+                           Text="{Binding ExitPrice, StringFormat='{0:C2}'}"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="12"
+                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                           VerticalOptions="Center"
+                           IsVisible="{Binding PositionClosed}"/>
+                    <Button Grid.Column="5"
+                            Text="Reset"
+                            Command="{Binding ResetPositionCommand}"
+                            BackgroundColor="{StaticResource SurfaceDark}"
+                            TextColor="{StaticResource OnSurfaceVariantDark}"
+                            FontSize="11"
+                            HeightRequest="28"
+                            Padding="10,0"/>
                 </Grid>
             </VerticalStackLayout>
         </Border>

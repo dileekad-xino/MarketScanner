@@ -17,6 +17,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly IbkrGatewayService? _ibkrGatewayService;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
+    private IDisposable? _candlestickSubscription;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
@@ -33,6 +34,15 @@ public partial class AlgoRunnerViewModel : ObservableObject
     [ObservableProperty] private bool _hasPosition;
     [ObservableProperty] private bool _positionClosed;
     [ObservableProperty] private string _plCalculation = string.Empty;
+    
+    // MACD display properties
+    [ObservableProperty] private decimal _macdLine;
+    [ObservableProperty] private decimal _signalLine;
+    [ObservableProperty] private decimal _histogram;
+    [ObservableProperty] private bool _isHistogramPositive;
+    [ObservableProperty] private string _crossoverStatus = "No Crossover";
+    [ObservableProperty] private bool _hasCrossedUp;
+    [ObservableProperty] private bool _hasCrossedDown;
 
     public AlgoRunnerViewModel(
         IAlgoStrategy algorithm,
@@ -118,59 +128,105 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             IsRunning = true;
             ErrorMessage = string.Empty;
-            Result = null;
 
             // Cancel any previous execution
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource = new CancellationTokenSource();
 
-            _logger.LogInformation("Running algorithm {AlgorithmName} on symbol {Symbol}", 
-                _algorithm.Name, SelectedSymbol.Symbol);
+            _logger.LogInformation("Starting continuous monitoring for {Symbol} with algorithm {AlgorithmName}", 
+                SelectedSymbol.Symbol, _algorithm.Name);
 
-            // Execute algorithm
-            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            // Run initial algo execution
+            await ExecuteAlgoOnceAsync();
 
-            _logger.LogInformation("Algorithm completed: {Action} for {Symbol} at {Price}", 
-                Result.Action, Result.Symbol, Result.Price);
+            // Subscribe to candlestick stream for continuous updates
+            SubscribeToCandlestickStream();
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Algorithm execution was cancelled");
+            ErrorMessage = "Algorithm execution was cancelled";
+            IsRunning = false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing algorithm");
+            ErrorMessage = $"Error executing algorithm: {ex.Message}";
+            IsRunning = false;
+        }
+    }
+
+    private async Task ExecuteAlgoOnceAsync()
+    {
+        if (SelectedSymbol == null || _cancellationTokenSource?.IsCancellationRequested == true)
+            return;
+
+        try
+        {
+            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource?.Token ?? CancellationToken.None);
+
+            _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}", 
+                Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);
+
+            // Update MACD display
+            UpdateMacdDisplay();
 
             // Update P/L calculations
             UpdateProfitLoss();
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Algorithm execution was cancelled");
-            ErrorMessage = "Algorithm execution was cancelled";
+            // Ignore - expected when stopping
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error executing algorithm");
-            ErrorMessage = $"Error executing algorithm: {ex.Message}";
-        }
-        finally
-        {
-            IsRunning = false;
+            _logger.LogError(ex, "Error in algo execution");
         }
     }
 
-    [RelayCommand]
-    private void CancelExecution()
+    private void SubscribeToCandlestickStream()
     {
+        if (_candlestickBuilder == null || SelectedSymbol == null)
+            return;
+
+        _candlestickSubscription?.Dispose();
+        _candlestickSubscription = _candlestickBuilder.CandlestickStream
+            .Where(c => c.Symbol == SelectedSymbol.Symbol)
+            .Subscribe(OnNewCandlestick);
+
+        _logger.LogInformation("Subscribed to candlestick stream for continuous MACD updates on {Symbol}", SelectedSymbol.Symbol);
+    }
+
+    private async void OnNewCandlestick(Candlestick candlestick)
+    {
+        if (!IsRunning || SelectedSymbol == null || candlestick.Symbol != SelectedSymbol.Symbol)
+            return;
+
+        _logger.LogInformation("New candlestick for {Symbol}, re-running algorithm", candlestick.Symbol);
+        await ExecuteAlgoOnceAsync();
+    }
+
+    [RelayCommand]
+    private void StopAlgo()
+    {
+        _logger.LogInformation("Stopping algorithm monitoring for {Symbol}", SelectedSymbol?.Symbol);
+        
+        // Stop candlestick subscription
+        _candlestickSubscription?.Dispose();
+        _candlestickSubscription = null;
+        
+        // Cancel any pending execution
         _cancellationTokenSource?.Cancel();
-        _logger.LogInformation("Algorithm execution cancelled by user");
+        
+        IsRunning = false;
     }
 
     [RelayCommand]
     private async Task CloseAsync()
     {
-        // Cancel any running algorithm
-        _cancellationTokenSource?.Cancel();
-        
-        // Unsubscribe from tick stream
-        _tickSubscription?.Dispose();
-        _tickSubscription = null;
-        
-        // Unsubscribe from candlestick builder when closing to free up resources
-        UnsubscribeFromCandlestickBuilder();
+        // NOTE: Do NOT stop the algo when closing - it keeps running in background
+        // Only close the page UI
+        _logger.LogInformation("Closing algo runner window (algo continues running in background)");
         
         // Close the page
         if (Application.Current?.MainPage != null)
@@ -198,6 +254,28 @@ public partial class AlgoRunnerViewModel : ObservableObject
     partial void OnQuantityChanged(int value)
     {
         UpdateProfitLoss();
+    }
+
+    private void UpdateMacdDisplay()
+    {
+        if (Result?.Macd == null)
+            return;
+
+        MacdLine = Result.Macd.MacdLine;
+        SignalLine = Result.Macd.SignalLine;
+        Histogram = Result.Macd.Histogram;
+        IsHistogramPositive = Result.Macd.HasPositiveHistogram;
+
+        // Update crossover status
+        HasCrossedUp = Result.Crossover == Models.CrossoverStatus.CrossedUp;
+        HasCrossedDown = Result.Crossover == Models.CrossoverStatus.CrossedDown;
+        
+        CrossoverStatus = Result.Crossover switch
+        {
+            Models.CrossoverStatus.CrossedUp => "↑ Crossed Up",
+            Models.CrossoverStatus.CrossedDown => "↓ Crossed Down",
+            _ => "No Crossover"
+        };
     }
 
     private void UpdateProfitLoss()
@@ -263,6 +341,10 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     public void Dispose()
     {
+        // Stop algo monitoring
+        _candlestickSubscription?.Dispose();
+        _candlestickSubscription = null;
+        
         // Unsubscribe from tick stream
         _tickSubscription?.Dispose();
         _tickSubscription = null;

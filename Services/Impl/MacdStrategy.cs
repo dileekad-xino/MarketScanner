@@ -39,8 +39,13 @@ public class MacdStrategy : IAlgoStrategy
             var minRequired = _config.Macd.SlowPeriod + _config.Macd.SignalPeriod;
             var candlesticks = _candlestickStorage.GetCandlesticks(symbol.Symbol, interval, minRequired + 10);
 
+            _logger.LogInformation("MacdStrategy: Got {Count} candlesticks for {Symbol} (need {Min})", 
+                candlesticks.Count, symbol.Symbol, minRequired);
+
             if (candlesticks.Count < minRequired)
             {
+                _logger.LogWarning("MacdStrategy: Insufficient candlesticks for {Symbol}: need {Min}, got {Count}", 
+                    symbol.Symbol, minRequired, candlesticks.Count);
                 return new AlgoResult(
                     Symbol: symbol.Symbol,
                     Action: AlgoAction.Hold,
@@ -84,40 +89,44 @@ public class MacdStrategy : IAlgoStrategy
 
             var action = AlgoAction.Hold;
             var reason = "";
+            var crossover = CrossoverStatus.None;
 
-            // Bullish signals
-            if (macd.MacdLine > macd.SignalLine &&
-                prevMacd != null &&
-                prevMacd.MacdLine <= prevMacd.SignalLine)
+            // Detect crossovers
+            bool bullishCrossover = prevMacd != null && 
+                                    macd.MacdLine > macd.SignalLine && 
+                                    prevMacd.MacdLine <= prevMacd.SignalLine;
+            
+            bool bearishCrossover = prevMacd != null && 
+                                    macd.MacdLine < macd.SignalLine && 
+                                    prevMacd.MacdLine >= prevMacd.SignalLine;
+
+            // BUY: Only when both lines are positive AND 12 crosses above 26
+            if (bullishCrossover && macd.MacdLine > 0 && macd.SignalLine > 0)
             {
-                // Bullish crossover: MACD crossed above signal
                 action = AlgoAction.Buy;
-                reason = $"MACD bullish crossover: MACD ({macd.MacdLine:F4}) crossed above Signal ({macd.SignalLine:F4})";
+                crossover = CrossoverStatus.CrossedUp;
+                reason = $"BUY SIGNAL: MACD ({macd.MacdLine:F4}) crossed above Signal ({macd.SignalLine:F4}) - both positive";
             }
-            else if (macd.MacdLine > macd.SignalLine && macd.HasPositiveHistogram)
+            // SELL: When 12 crosses below 26
+            else if (bearishCrossover)
             {
-                // MACD above signal with positive histogram
-                action = AlgoAction.Buy;
-                reason = $"MACD above signal with positive histogram: {macd.Histogram:F4}";
-            }
-            // Bearish signals
-            else if (macd.MacdLine < macd.SignalLine &&
-                     prevMacd != null &&
-                     prevMacd.MacdLine >= prevMacd.SignalLine)
-            {
-                // Bearish crossover: MACD crossed below signal
                 action = AlgoAction.Sell;
-                reason = $"MACD bearish crossover: MACD ({macd.MacdLine:F4}) crossed below Signal ({macd.SignalLine:F4})";
+                crossover = CrossoverStatus.CrossedDown;
+                reason = $"SELL SIGNAL: MACD ({macd.MacdLine:F4}) crossed below Signal ({macd.SignalLine:F4})";
             }
-            else if (macd.MacdLine < macd.SignalLine && macd.HasNegativeHistogram)
+            // Monitoring states
+            else if (bullishCrossover)
             {
-                // MACD below signal with negative histogram
-                action = AlgoAction.Sell;
-                reason = $"MACD below signal with negative histogram: {macd.Histogram:F4}";
+                crossover = CrossoverStatus.CrossedUp;
+                reason = $"Crossed up but lines not both positive. MACD={macd.MacdLine:F4}, Signal={macd.SignalLine:F4}";
+            }
+            else if (macd.MacdLine > 0 && macd.SignalLine > 0 && macd.MacdLine < macd.SignalLine)
+            {
+                reason = $"Monitoring: Both positive, waiting for crossover. MACD={macd.MacdLine:F4}, Signal={macd.SignalLine:F4}";
             }
             else
             {
-                reason = $"MACD neutral: MACD={macd.MacdLine:F4}, Signal={macd.SignalLine:F4}, Histogram={macd.Histogram:F4}";
+                reason = $"Monitoring: MACD={macd.MacdLine:F4}, Signal={macd.SignalLine:F4}, Histogram={macd.Histogram:F4}";
             }
 
             return new AlgoResult(
@@ -125,7 +134,9 @@ public class MacdStrategy : IAlgoStrategy
                 Action: action,
                 Price: symbol.LastPrice,
                 Reason: reason,
-                Timestamp: DateTime.UtcNow
+                Timestamp: DateTime.UtcNow,
+                Macd: macd,
+                Crossover: crossover
             );
         }
         catch (Exception ex)

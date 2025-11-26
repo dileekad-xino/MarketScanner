@@ -78,6 +78,9 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         // Only process ticks for subscribed symbols
         if (!_subscribedSymbols.ContainsKey(symbol))
             return;
+
+        _logger.LogInformation("CandlestickBuilder: Tick for {Symbol}: Price={Price}, Time={Time}", 
+            symbol, tick.LastPrice, tick.Timestamp);
         var price = (decimal)tick.LastPrice.Value;
         var volume = tick.Volume ?? 0;
         var timestamp = tick.Timestamp;
@@ -91,6 +94,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
             if (intervalBoundary > lastBoundary)
             {
                 // New interval started - finalize previous candlestick
+                _logger.LogInformation("CandlestickBuilder: Interval boundary crossed for {Symbol}, finalizing candlestick", symbol);
                 FinalizeCandlestick(symbol, lastBoundary);
             }
         }
@@ -142,8 +146,8 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
             Interval: inProgress.Interval
         );
 
-        _logger.LogDebug("Finalized candlestick for {Symbol}: O={Open}, H={High}, L={Low}, C={Close}, V={Volume}",
-            symbol, candlestick.Open, candlestick.High, candlestick.Low, candlestick.Close, candlestick.Volume);
+        _logger.LogInformation("Finalized candlestick for {Symbol}: O={Open}, H={High}, L={Low}, C={Close}, V={Volume}, Time={Time}",
+            symbol, candlestick.Open, candlestick.High, candlestick.Low, candlestick.Close, candlestick.Volume, candlestick.Timestamp);
 
         _candlestickSubject.OnNext(candlestick);
     }

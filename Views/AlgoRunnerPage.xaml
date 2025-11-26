@@ -13,6 +13,7 @@
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
             <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
             <converters:AlgoActionToColorConverter x:Key="AlgoActionToColorConverter"/>
+            <converters:BoolToGreenRedConverter x:Key="BoolToGreenRedConverter"/>
         </ResourceDictionary>
     </ContentPage.Resources>
 
@@ -172,6 +173,71 @@
                            LineBreakMode="WordWrap"/>
                 </Grid>
 
+                <!-- MACD Indicator Section -->
+                <BoxView HeightRequest="1" 
+                         BackgroundColor="{StaticResource BorderDark}" 
+                         Margin="0,10"/>
+                
+                <Label Text="MACD Indicator"
+                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                       FontSize="12"
+                       FontAttributes="Bold"
+                       Margin="0,0,0,8"/>
+                
+                <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="15">
+                    <!-- MACD Line (12) -->
+                    <VerticalStackLayout Grid.Column="0">
+                        <Label Text="MACD (12)"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="11"/>
+                        <Label Text="{Binding MacdLine, StringFormat='{0:F4}'}"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="13"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                    
+                    <!-- Signal Line (26) -->
+                    <VerticalStackLayout Grid.Column="1">
+                        <Label Text="Signal (26)"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="11"/>
+                        <Label Text="{Binding SignalLine, StringFormat='{0:F4}'}"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="13"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                    
+                    <!-- Histogram -->
+                    <VerticalStackLayout Grid.Column="2">
+                        <Label Text="Histogram"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="11"/>
+                        <Label Text="{Binding Histogram, StringFormat='{0:+0.0000;-0.0000;0.0000}'}"
+                               TextColor="{Binding IsHistogramPositive, Converter={StaticResource BoolToGreenRedConverter}}"
+                               FontSize="13"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                    </VerticalStackLayout>
+                    
+                    <!-- Crossover Status -->
+                    <VerticalStackLayout Grid.Column="3">
+                        <Label Text="Crossover"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="11"/>
+                        <Label Text="{Binding CrossoverStatus}"
+                               FontSize="13"
+                               FontFamily="Cascadia Mono, Consolas, Menlo">
+                            <Label.Triggers>
+                                <DataTrigger TargetType="Label" Binding="{Binding HasCrossedUp}" Value="True">
+                                    <Setter Property="TextColor" Value="{StaticResource PositiveGreen}"/>
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding HasCrossedDown}" Value="True">
+                                    <Setter Property="TextColor" Value="{StaticResource NegativeRed}"/>
+                                </DataTrigger>
+                            </Label.Triggers>
+                        </Label>
+                    </VerticalStackLayout>
+                </Grid>
+
                 <!-- P/L Section -->
                 <BoxView HeightRequest="1" 
                          BackgroundColor="{StaticResource BorderDark}" 
@@ -275,12 +341,21 @@
         <Grid Grid.Row="4"
               ColumnDefinitions="*,*"
               ColumnSpacing="15">
+            <!-- Run Algorithm button - visible when NOT running -->
             <Button Grid.Column="0"
                     Text="Run Algorithm"
                     Command="{Binding RunAlgoCommand}"
                     BackgroundColor="{StaticResource PrimaryDark}"
                     TextColor="{StaticResource TextOnAccent}"
-                    IsEnabled="{Binding IsRunning, Converter={StaticResource InvertedBoolConverter}}"
+                    IsVisible="{Binding IsRunning, Converter={StaticResource InvertedBoolConverter}}"
+                    HeightRequest="40"/>
+            <!-- Stop Algorithm button - visible when running -->
+            <Button Grid.Column="0"
+                    Text="Stop Algorithm"
+                    Command="{Binding StopAlgoCommand}"
+                    BackgroundColor="#EF5350"
+                    TextColor="White"
+                    IsVisible="{Binding IsRunning}"
                     HeightRequest="40"/>
             <Button Grid.Column="1"
                     Text="Close"

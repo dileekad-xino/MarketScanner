@@ -71,6 +71,10 @@ public class AlgoStrategy : IAlgoStrategy
         var prices = results.Where(r => r.Price.HasValue).Select(r => r.Price!.Value).ToList();
         var avgPrice = prices.Count > 0 ? prices.Average() : symbol.LastPrice;
 
+        // Get MACD data from results (take first non-null)
+        var macdData = results.FirstOrDefault(r => r.Macd != null)?.Macd;
+        var crossover = results.FirstOrDefault(r => r.Crossover != CrossoverStatus.None)?.Crossover ?? CrossoverStatus.None;
+
         // Decision logic: require majority consensus
         var total = results.Count;
         var buyRatio = (double)buyCount / total;
@@ -100,7 +104,9 @@ public class AlgoStrategy : IAlgoStrategy
             Action: action,
             Price: avgPrice,
             Reason: $"{summary} | {reasons}",
-            Timestamp: DateTime.UtcNow
+            Timestamp: DateTime.UtcNow,
+            Macd: macdData,
+            Crossover: crossover
         );
     }
 }

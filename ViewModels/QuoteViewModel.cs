@@ -866,20 +866,40 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 ? ConvertBarsToCandles(bars)
                 : GenerateFallbackSeries(symbol.Symbol, symbol.LastPrice);
 
+            _logger.LogInformation("QuoteViewModel: LoadChartForSymbolAsync - Symbol={Symbol}, BarsCount={BarsCount}, CandlesCount={CandlesCount}", 
+                symbol.Symbol, bars?.Count ?? 0, candles.Count);
+
             if (candles.Count == 0)
             {
+                _logger.LogWarning("QuoteViewModel: No candles generated for {Symbol}", symbol.Symbol);
                 ChartSnapshot = null;
                 ChartStatusMessage = "No historical data available.";
                 return;
             }
 
             var movingAverage = CalculateSimpleMovingAverage(candles, ChartMovingAveragePeriod);
-            ChartSnapshot = new ChartSnapshot
+            var snapshot = new ChartSnapshot
             {
                 Symbol = symbol.Symbol,
                 Candles = candles,
                 MovingAverage = movingAverage.Count > 0 ? movingAverage : null
             };
+
+            _logger.LogInformation("QuoteViewModel: Created ChartSnapshot for {Symbol} - Candles={CandlesCount}, MovingAverage={MaCount}", 
+                symbol.Symbol, snapshot.Candles.Count, snapshot.MovingAverage?.Count ?? 0);
+
+            // Log first and last candle for debugging
+            if (candles.Count > 0)
+            {
+                var first = candles[0];
+                var last = candles[candles.Count - 1];
+                _logger.LogDebug("QuoteViewModel: First candle - Time={Time}, O={Open}, H={High}, L={Low}, C={Close}", 
+                    first.Time, first.Open, first.High, first.Low, first.Close);
+                _logger.LogDebug("QuoteViewModel: Last candle - Time={Time}, O={Open}, H={High}, L={Low}, C={Close}", 
+                    last.Time, last.Open, last.High, last.Low, last.Close);
+            }
+
+            ChartSnapshot = snapshot;
 
             ChartStatusMessage = bars != null && bars.Count > 0
                 ? string.Empty

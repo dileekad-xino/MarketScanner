@@ -55,7 +55,7 @@
         color: #8ab4ff;
       }
     </style>
-    <script src="https://unpkg.com/lightweight-charts@5.0.9/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="lightweight-charts.standalone.production.js"></script>
   </head>
   <body>
     <div id="chart-container">
@@ -64,78 +64,189 @@
     </div>
 
     <script>
-      (function () {
-        const container = document.getElementById("chart-root");
-        const symbolText = document.querySelector("#chart-symbol span");
-        const chart = LightweightCharts.createChart(container, {
-          layout: {
-            background: { type: "solid", color: "#0b0b0b" },
-            textColor: "#d7d7d7",
-          },
-          grid: {
-            vertLines: { color: "rgba(255,255,255,0.04)" },
-            horzLines: { color: "rgba(255,255,255,0.04)" },
-          },
-          crosshair: {
-            mode: LightweightCharts.CrosshairMode.Magnet,
-          },
-          rightPriceScale: { borderVisible: false },
-          timeScale: { borderVisible: false },
-          autoSize: true,
-        });
-
-        const candleSeries = chart.addCandlestickSeries({
-          upColor: "#00c853",
-          downColor: "#ff5252",
-          borderUpColor: "#00c853",
-          borderDownColor: "#ff5252",
-          wickUpColor: "#00c853",
-          wickDownColor: "#ff5252",
-        });
-
-        let maSeries = null;
-
-        function ensureLineSeries() {
-          if (!maSeries) {
-            maSeries = chart.addLineSeries({
-              color: "#ffcc80",
-              lineWidth: 2,
-            });
-          }
-          return maSeries;
-        }
-
-        function resizeChart() {
-          if (!container || !container.parentElement) {
+      console.log("Chart HTML script tag executing...");
+      
+      // Initialize immediately when script runs
+      function initializeChart() {
+        console.log("initializeChart() called");
+        try {
+          const container = document.getElementById("chart-root");
+          const symbolText = document.querySelector("#chart-symbol span");
+          
+          if (!container) {
+            console.error("Chart container not found!");
             return;
           }
-          const { clientWidth, clientHeight } = container.parentElement;
-          chart.applyOptions({ width: clientWidth, height: clientHeight });
-        }
 
-        resizeChart();
-        window.addEventListener("resize", resizeChart);
+          console.log("Container found, creating chart...");
+          console.log("Container size:", container.clientWidth, "x", container.clientHeight);
+          
+          const chart = LightweightCharts.createChart(container, {
+            layout: {
+              background: { type: "solid", color: "#0b0b0b" },
+              textColor: "#d7d7d7",
+            },
+            grid: {
+              vertLines: { color: "rgba(255,255,255,0.04)" },
+              horzLines: { color: "rgba(255,255,255,0.04)" },
+            },
+            crosshair: {
+              mode: LightweightCharts.CrosshairMode.Magnet,
+            },
+            rightPriceScale: { borderVisible: false },
+            timeScale: { borderVisible: false },
+            autoSize: true,
+          });
 
-        window.marketScannerChart = {
-          setData: function (payload) {
-            if (!payload || !payload.candles) {
+          console.log("Chart created successfully");
+
+          const candleSeries = chart.addCandlestickSeries({
+            upColor: "#00c853",
+            downColor: "#ff5252",
+            borderUpColor: "#00c853",
+            borderDownColor: "#ff5252",
+            wickUpColor: "#00c853",
+            wickDownColor: "#ff5252",
+          });
+
+          console.log("Candlestick series added");
+
+          let maSeries = null;
+
+          function ensureLineSeries() {
+            if (!maSeries) {
+              maSeries = chart.addLineSeries({
+                color: "#ffcc80",
+                lineWidth: 2,
+              });
+              console.log("Moving average line series created");
+            }
+            return maSeries;
+          }
+
+          function resizeChart() {
+            if (!container || !container.parentElement) {
               return;
             }
-
-            candleSeries.setData(payload.candles);
-            symbolText.textContent = payload.symbol || "-";
-
-            if (payload.movingAverage && payload.movingAverage.length > 0) {
-              ensureLineSeries().setData(payload.movingAverage);
-            } else if (maSeries) {
-              chart.removeSeries(maSeries);
-              maSeries = null;
+            const { clientWidth, clientHeight } = container.parentElement;
+            if (clientWidth > 0 && clientHeight > 0) {
+              chart.applyOptions({ width: clientWidth, height: clientHeight });
+              console.log("Chart resized to", clientWidth, "x", clientHeight);
             }
+          }
 
-            chart.timeScale().fitContent();
-          },
-        };
-      })();
+          // Initial resize
+          resizeChart();
+          
+          // Resize on window resize
+          window.addEventListener("resize", resizeChart);
+          
+          // Also try to resize after a short delay to ensure container is measured
+          setTimeout(resizeChart, 100);
+          setTimeout(resizeChart, 500);
+
+          window.marketScannerChart = {
+            setData: function (payload) {
+              try {
+                console.log("marketScannerChart.setData called with payload:", payload);
+                
+                if (!payload) {
+                  console.error("marketScannerChart.setData: payload is null or undefined");
+                  return;
+                }
+
+                if (!payload.candles) {
+                  console.error("marketScannerChart.setData: payload.candles is missing");
+                  return;
+                }
+
+                if (!Array.isArray(payload.candles)) {
+                  console.error("marketScannerChart.setData: payload.candles is not an array", typeof payload.candles);
+                  return;
+                }
+
+                if (payload.candles.length === 0) {
+                  console.warn("marketScannerChart.setData: payload.candles is empty");
+                  return;
+                }
+
+                // Validate first candle structure
+                var firstCandle = payload.candles[0];
+                if (!firstCandle.hasOwnProperty('time') || !firstCandle.hasOwnProperty('open') || 
+                    !firstCandle.hasOwnProperty('high') || !firstCandle.hasOwnProperty('low') || 
+                    !firstCandle.hasOwnProperty('close')) {
+                  console.error("marketScannerChart.setData: Invalid candle structure. Expected: time, open, high, low, close. Got:", Object.keys(firstCandle));
+                  return;
+                }
+
+                // Validate time is a number
+                if (typeof firstCandle.time !== 'number') {
+                  console.error("marketScannerChart.setData: Invalid time type. Expected number, got:", typeof firstCandle.time, "value:", firstCandle.time);
+                  return;
+                }
+
+                console.log("marketScannerChart.setData: Setting", payload.candles.length, "candles for symbol", payload.symbol);
+                console.log("marketScannerChart.setData: First candle:", JSON.stringify(firstCandle));
+                console.log("marketScannerChart.setData: Last candle:", JSON.stringify(payload.candles[payload.candles.length - 1]));
+
+                // Ensure container has size before setting data
+                var containerParent = container.parentElement;
+                if (containerParent && (containerParent.clientWidth === 0 || containerParent.clientHeight === 0)) {
+                  console.warn("marketScannerChart.setData: Container has zero size:", containerParent.clientWidth, "x", containerParent.clientHeight);
+                  // Try to resize
+                  setTimeout(function() {
+                    resizeChart();
+                    candleSeries.setData(payload.candles);
+                    symbolText.textContent = payload.symbol || "-";
+                    if (payload.movingAverage && Array.isArray(payload.movingAverage) && payload.movingAverage.length > 0) {
+                      ensureLineSeries().setData(payload.movingAverage);
+                    }
+                    chart.timeScale().fitContent();
+                  }, 100);
+                  return;
+                }
+
+                candleSeries.setData(payload.candles);
+                symbolText.textContent = payload.symbol || "-";
+
+                if (payload.movingAverage && Array.isArray(payload.movingAverage) && payload.movingAverage.length > 0) {
+                  console.log("marketScannerChart.setData: Setting", payload.movingAverage.length, "moving average points");
+                  ensureLineSeries().setData(payload.movingAverage);
+                } else if (maSeries) {
+                  console.log("marketScannerChart.setData: Removing moving average series");
+                  chart.removeSeries(maSeries);
+                  maSeries = null;
+                }
+
+                chart.timeScale().fitContent();
+                console.log("marketScannerChart.setData: Chart updated successfully. Container size:", containerParent ? containerParent.clientWidth + "x" + containerParent.clientHeight : "unknown");
+              } catch (error) {
+                console.error("marketScannerChart.setData: Error updating chart:", error);
+                console.error("marketScannerChart.setData: Error name:", error.name);
+                console.error("marketScannerChart.setData: Error message:", error.message);
+                console.error("marketScannerChart.setData: Error stack:", error.stack);
+              }
+            },
+          };
+
+          console.log("marketScannerChart initialized and ready");
+          console.log("window.marketScannerChart exists:", typeof window.marketScannerChart !== 'undefined');
+          console.log("window.marketScannerChart.setData exists:", typeof window.marketScannerChart.setData === 'function');
+        } catch (error) {
+          console.error("Error initializing chart:", error);
+        }
+      }
+      
+      // Try to initialize immediately
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeChart);
+      } else {
+        // DOM already loaded
+        initializeChart();
+      }
+      
+      // Also try after a short delay as fallback
+      setTimeout(initializeChart, 100);
     </script>
   </body>
 </html>

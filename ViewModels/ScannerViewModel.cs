@@ -1071,6 +1071,9 @@ public partial class ScannerViewModel : ObservableObject
     [RelayCommand]
     private async void SwitchToQuote()
     {
+        _logger.LogInformation("═══════════════════════════════════════════════════");
+        _logger.LogInformation("SwitchToQuote: SWITCHING TO QUOTE VIEW");
+        _logger.LogInformation("═══════════════════════════════════════════════════");
         _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
         
         // Initialize quote ViewModel BEFORE switching to ensure it exists
@@ -1081,6 +1084,7 @@ public partial class ScannerViewModel : ObservableObject
             _logger.LogDebug("QuoteViewModel created");
         }
 
+        _logger.LogInformation("SwitchToQuote: Setting IsInQuoteView = true (this will make QuoteContentView visible)");
         IsInScannerView = false;
         IsInWatchlistView = false;
         IsInQuoteView = true;
@@ -1089,7 +1093,7 @@ public partial class ScannerViewModel : ObservableObject
         
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
-        _logger.LogInformation("Switched to Quote view");
+        _logger.LogInformation("Switched to Quote view - IsInQuoteView={IsInQuoteView}", IsInQuoteView);
 
         // Resume subscriptions to ensure live updates continue
         if (_quoteViewModel != null)

@@ -24,8 +24,23 @@ namespace MarketScanner.WinUI
 
     private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
-        // Log the exception
-        System.Diagnostics.Debug.WriteLine($"Unhandled exception: {e.Exception}");
+        // Log the exception with full details
+        System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════════════╗");
+        System.Diagnostics.Debug.WriteLine("║ ✗✗✗ UNHANDLED EXCEPTION CAUGHT BY GLOBAL HANDLER ✗✗✗               ║");
+        System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════════════╝");
+        System.Diagnostics.Debug.WriteLine($"Exception Type: {e.Exception.GetType().FullName}");
+        System.Diagnostics.Debug.WriteLine($"Exception Message: {e.Exception.Message}");
+        System.Diagnostics.Debug.WriteLine($"Stack Trace:\n{e.Exception.StackTrace}");
+        System.Diagnostics.Debug.WriteLine($"HRESULT: {e.Exception.HResult}");
+        
+        if (e.Exception.InnerException != null)
+        {
+            System.Diagnostics.Debug.WriteLine($"\nInner Exception Type: {e.Exception.InnerException.GetType().FullName}");
+            System.Diagnostics.Debug.WriteLine($"Inner Exception Message: {e.Exception.InnerException.Message}");
+            System.Diagnostics.Debug.WriteLine($"Inner Stack Trace:\n{e.Exception.InnerException.StackTrace}");
+        }
+        
+        System.Diagnostics.Debug.WriteLine("════════════════════════════════════════════════════════════════════");
         
         // Mark as handled to prevent crash
         e.Handled = true;

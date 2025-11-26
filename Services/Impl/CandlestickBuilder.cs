@@ -15,6 +15,7 @@ namespace MarketScanner.Services.Impl;
 public class CandlestickBuilder : ICandlestickBuilder, IDisposable
 {
     private readonly IbkrGatewayService _ibkrGatewayService;
+    private readonly ICandlestickStorage _candlestickStorage;
     private readonly CandlestickConfig _config;
     private readonly ILogger<CandlestickBuilder> _logger;
     private readonly Subject<Candlestick> _candlestickSubject = new();
@@ -34,10 +35,12 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
 
     public CandlestickBuilder(
         IbkrGatewayService ibkrGatewayService,
+        ICandlestickStorage candlestickStorage,
         CandlestickConfig config,
         ILogger<CandlestickBuilder> logger)
     {
         _ibkrGatewayService = ibkrGatewayService;
+        _candlestickStorage = candlestickStorage;
         _config = config;
         _logger = logger;
     }
@@ -194,6 +197,47 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
             return false;
 
         return _subscribedSymbols.ContainsKey(symbol);
+    }
+
+    public async Task PreloadCandlesticksAsync(string symbol, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+            return;
+
+        // Calculate how many bars we need for MACD (slowPeriod + signalPeriod + buffer)
+        var minRequired = _config.Macd.SlowPeriod + _config.Macd.SignalPeriod;
+        var barsToFetch = minRequired + 15; // Extra buffer
+
+        _logger.LogInformation("PreloadCandlesticksAsync: Fetching {Count} historical bars for {Symbol} ({Interval}s)", 
+            barsToFetch, symbol, _config.IntervalSeconds);
+
+        try
+        {
+            var bars = await _ibkrGatewayService.GetHistoricalBarsAsync(
+                symbol, 
+                _config.IntervalSeconds, 
+                barsToFetch, 
+                ct);
+
+            if (bars.Count == 0)
+            {
+                _logger.LogWarning("PreloadCandlesticksAsync: No historical bars returned for {Symbol}", symbol);
+                return;
+            }
+
+            // Add candlesticks to storage
+            foreach (var candle in bars)
+            {
+                _candlestickStorage.AddCandlestick(candle);
+            }
+
+            _logger.LogInformation("PreloadCandlesticksAsync: Loaded {Count} historical candlesticks for {Symbol}", 
+                bars.Count, symbol);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PreloadCandlesticksAsync: Failed to preload candlesticks for {Symbol}", symbol);
+        }
     }
 
     public void Dispose()

@@ -44,5 +44,13 @@ public interface ICandlestickBuilder
     /// <param name="symbol">The symbol to check</param>
     /// <returns>True if the symbol is subscribed, false otherwise</returns>
     bool IsSubscribed(string symbol);
+
+    /// <summary>
+    /// Preloads historical candlesticks for a symbol from IBKR.
+    /// This seeds the storage so MACD can calculate immediately.
+    /// </summary>
+    /// <param name="symbol">The symbol to preload candlesticks for</param>
+    /// <param name="ct">Cancellation token</param>
+    Task PreloadCandlesticksAsync(string symbol, CancellationToken ct = default);
 }
 

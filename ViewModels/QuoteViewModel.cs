@@ -744,6 +744,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 {
                     candlestickBuilder.SubscribeSymbol(row.Symbol);
                     _logger.LogInformation("Subscribed {Symbol} to candlestick builder", row.Symbol);
+                    
+                    // Preload historical candlesticks so MACD can calculate immediately
+                    await candlestickBuilder.PreloadCandlesticksAsync(row.Symbol);
+                    _logger.LogInformation("Preloaded historical candlesticks for {Symbol}", row.Symbol);
                 }
                 else
                 {
@@ -752,7 +756,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to subscribe {Symbol} to candlestick builder", row.Symbol);
+                _logger.LogWarning(ex, "Failed to subscribe/preload {Symbol} to candlestick builder", row.Symbol);
                 // Continue anyway - algo can still run without candlesticks (will return Hold)
             }
 

@@ -99,13 +99,14 @@ namespace MarketScanner
             builder.Services.AddSingleton<ICandlestickStorage, CandlestickStorage>();
             builder.Services.AddSingleton<ICandlestickBuilder>(sp =>
             {
+                var storage = sp.GetRequiredService<ICandlestickStorage>();
                 var builder = new CandlestickBuilder(
                     sp.GetRequiredService<IbkrGatewayService>(),
+                    storage,
                     sp.GetRequiredService<CandlestickConfig>(),
                     sp.GetRequiredService<ILogger<CandlestickBuilder>>());
                 
                 // Subscribe storage to candlestick stream
-                var storage = sp.GetRequiredService<ICandlestickStorage>();
                 builder.CandlestickStream.Subscribe(candlestick => storage.AddCandlestick(candlestick));
                 
                 return builder;

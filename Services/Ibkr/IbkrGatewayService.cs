@@ -72,6 +72,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly Dictionary<int, List<SymbolSearchResult>> _symbolSearchBuffers = new();
     private int _nextSearchReqId = 20000; // Start from high ID to avoid conflicts
 
+    // Historical bars for candlestick preloading
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<Candlestick>>> _histBarsWaiters = new();
+    private readonly ConcurrentDictionary<int, List<Candlestick>> _histBarsBuffers = new();
+    private readonly ConcurrentDictionary<int, (string Symbol, string Interval)> _histBarsMetadata = new();
+
     // Tick stream for live updates
     private readonly Subject<TickData> _tickSubject = new();
     public IObservable<TickData> TickStream => _tickSubject.AsObservable();
@@ -566,6 +571,106 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     #endregion
 
+    #region Historical Bars for Candlestick Preloading
+
+    /// <summary>
+    /// Fetches historical bars for candlestick preloading.
+    /// </summary>
+    /// <param name="symbol">The symbol to fetch bars for</param>
+    /// <param name="barSizeSeconds">Bar size in seconds (30 or 60)</param>
+    /// <param name="count">Number of bars to fetch</param>
+    /// <returns>List of candlesticks in chronological order (oldest first)</returns>
+    public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(string symbol, int barSizeSeconds, int count, CancellationToken ct = default)
+    {
+        await EnsureConnectedAsync(ct);
+
+        var reqId = GetNextReqId();
+        var tcs = new TaskCompletionSource<List<Candlestick>>();
+        _histBarsWaiters[reqId] = tcs;
+        _histBarsBuffers[reqId] = new List<Candlestick>();
+
+        var interval = barSizeSeconds switch
+        {
+            15 => "15s",
+            30 => "30s",
+            60 => "1min",
+            _ => $"{barSizeSeconds}s"
+        };
+        _histBarsMetadata[reqId] = (symbol, interval);
+
+        var contract = new Contract
+        {
+            Symbol = symbol,
+            SecType = "STK",
+            Exchange = "SMART",
+            Currency = "USD"
+        };
+
+        // Calculate duration string based on bar size and count
+        // For 30-second bars, 50 bars = 25 minutes, request 1 hour to be safe
+        // For 60-second bars, 50 bars = 50 minutes, request 2 hours to be safe
+        var durationSeconds = barSizeSeconds * count * 2; // 2x buffer
+        var durationStr = durationSeconds >= 3600 ? $"{durationSeconds / 3600 + 1} H" : $"{durationSeconds} S";
+
+        var barSizeStr = barSizeSeconds switch
+        {
+            15 => "15 secs",
+            30 => "30 secs",
+            60 => "1 min",
+            _ => "30 secs"
+        };
+
+        try
+        {
+            _client.reqHistoricalData(
+                reqId, contract, "", durationStr, barSizeStr, "TRADES", 1, 1, false, null);
+            _logger.LogInformation("GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) for {Symbol} (reqId={ReqId})", 
+                count, barSizeStr, symbol, reqId);
+
+            // Register cancellation
+            ct.Register(() =>
+            {
+                if (_histBarsWaiters.TryRemove(reqId, out var cancelledTcs))
+                {
+                    cancelledTcs.TrySetCanceled();
+                    _histBarsBuffers.TryRemove(reqId, out _);
+                    _histBarsMetadata.TryRemove(reqId, out _);
+                }
+            });
+
+            // Wait for results with timeout
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            try
+            {
+                var results = await tcs.Task.WaitAsync(linkedCts.Token);
+                // Return only the requested count, oldest first
+                var sorted = results.OrderBy(c => c.Timestamp).TakeLast(count).ToList();
+                _logger.LogInformation("GetHistoricalBarsAsync: Received {Count} bars for {Symbol}", sorted.Count, symbol);
+                return sorted;
+            }
+            catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
+            {
+                _logger.LogWarning("GetHistoricalBarsAsync: Timed out waiting for historical bars for {Symbol}", symbol);
+                return Array.Empty<Candlestick>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetHistoricalBarsAsync: Error requesting historical bars for {Symbol}", symbol);
+            return Array.Empty<Candlestick>();
+        }
+        finally
+        {
+            _histBarsWaiters.TryRemove(reqId, out _);
+            _histBarsBuffers.TryRemove(reqId, out _);
+            _histBarsMetadata.TryRemove(reqId, out _);
+        }
+    }
+
+    #endregion
+
     #region EWrapper Callbacks
 
     public void nextValidId(int orderId)
@@ -688,6 +793,37 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void historicalData(int reqId, Bar bar)
     {
+        // Check if this is for candlestick preloading
+        if (_histBarsBuffers.TryGetValue(reqId, out var candleBuffer) && 
+            _histBarsMetadata.TryGetValue(reqId, out var metadata))
+        {
+            // Parse timestamp from bar.Time (format: "yyyyMMdd HH:mm:ss" or "yyyyMMdd")
+            DateTime timestamp;
+            if (DateTime.TryParseExact(bar.Time, "yyyyMMdd  HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out timestamp) ||
+                DateTime.TryParseExact(bar.Time, "yyyyMMdd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out timestamp) ||
+                DateTime.TryParseExact(bar.Time, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out timestamp))
+            {
+                var candle = new Candlestick(
+                    Symbol: metadata.Symbol,
+                    Open: (decimal)bar.Open,
+                    High: (decimal)bar.High,
+                    Low: (decimal)bar.Low,
+                    Close: (decimal)bar.Close,
+                    Volume: bar.Volume,
+                    Timestamp: timestamp,
+                    Interval: metadata.Interval
+                );
+                candleBuffer.Add(candle);
+                _logger.LogDebug("historicalData: Added candlestick for {Symbol} at {Time}", metadata.Symbol, bar.Time);
+            }
+            else
+            {
+                _logger.LogWarning("historicalData: Could not parse timestamp '{Time}' for {Symbol}", bar.Time, metadata.Symbol);
+            }
+            return;
+        }
+
+        // Original logic for average volume / prev close
         if (!_histReqToSymbol.TryGetValue(reqId, out var symbol))
         {
             _logger.LogWarning("historicalData: Received bar for unknown reqId={ReqId}", reqId);
@@ -716,6 +852,15 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void historicalDataEnd(int reqId, string startDate, string endDate)
     {
+        // Check if this is for candlestick preloading
+        if (_histBarsWaiters.TryGetValue(reqId, out var candleTcs) && 
+            _histBarsBuffers.TryGetValue(reqId, out var candleBuffer))
+        {
+            _logger.LogInformation("historicalDataEnd: Candlestick preload completed for reqId={ReqId}, received {Count} bars", reqId, candleBuffer.Count);
+            candleTcs.TrySetResult(candleBuffer);
+            return;
+        }
+
         if (!_histReqToSymbol.TryGetValue(reqId, out var symbol))
         {
             _logger.LogWarning("historicalDataEnd: Received end for unknown reqId={ReqId}", reqId);

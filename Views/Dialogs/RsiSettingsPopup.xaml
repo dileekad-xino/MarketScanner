@@ -31,9 +31,9 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="6"/>
                 </Border.StrokeShape>
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="280">
+                      MinimumHeightRequest="320">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Length"
                                TextColor="{StaticResource OnSurfaceDark}"
@@ -65,6 +65,17 @@
                     </Grid>
 
                     <Grid Grid.Row="3" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                        <Label Text="Take Profit Level"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               VerticalOptions="Center"/>
+                        <Entry x:Name="TakeProfitEntry"
+                               Grid.Column="1"
+                               Keyboard="Numeric"
+                               Placeholder="60.0"
+                               Style="{StaticResource FilterEntryStyle}"/>
+                    </Grid>
+
+                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Historical Days"
                                TextColor="{StaticResource OnSurfaceDark}"
                                VerticalOptions="Center"/>
@@ -74,7 +85,7 @@
                                Style="{StaticResource FilterEntryStyle}"/>
                     </Grid>
 
-                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                    <Grid Grid.Row="5" ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Bar Size"
                                TextColor="{StaticResource OnSurfaceDark}"
                                VerticalOptions="Center"/>

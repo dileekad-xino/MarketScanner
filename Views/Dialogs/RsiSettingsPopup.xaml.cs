@@ -20,6 +20,7 @@ public partial class RsiSettingsPopup : Popup
         PeriodEntry.Text = settings.Period.ToString();
         OversoldEntry.Text = settings.Oversold.ToString("0.##");
         OverboughtEntry.Text = settings.Overbought.ToString("0.##");
+        TakeProfitEntry.Text = settings.TakeProfitLevel.ToString("0.##");
         DaysEntry.Text = settings.HistoricalDays.ToString();
         
         // Set bar size picker
@@ -84,6 +85,12 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
+        if (!double.TryParse(TakeProfitEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var takeProfit) || takeProfit <= 50 || takeProfit >= overbought)
+        {
+            error = $"Take Profit Level must be between 50 and Overbought ({overbought}).";
+            return false;
+        }
+
         if (!int.TryParse(DaysEntry.Text, out var days) || days < 1 || days > 60)
         {
             error = "Historical days must be between 1 and 60.";
@@ -102,6 +109,7 @@ public partial class RsiSettingsPopup : Popup
         settings.Period = period;
         settings.Oversold = oversold;
         settings.Overbought = overbought;
+        settings.TakeProfitLevel = takeProfit;
         settings.HistoricalDays = days;
         settings.BarSize = barSize;
         return true;

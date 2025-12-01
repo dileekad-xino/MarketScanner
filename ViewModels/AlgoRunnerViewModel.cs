@@ -61,6 +61,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         SelectedSymbol = symbol;
         ErrorMessage = string.Empty;
         Result = null;
+        ResetPosition(); // Reset position on initialization
 
         // Subscribe to live tick updates for this symbol
         SubscribeToTickUpdates();
@@ -168,8 +169,36 @@ public partial class AlgoRunnerViewModel : ObservableObject
             _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}", 
                 Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);
 
+            // Ensure we only buy when we don't have a position, and only sell when we have a position
+            if (Result.Action == AlgoAction.Buy && HasPosition)
+            {
+                _logger.LogInformation("Ignoring BUY signal - already have a position");
+                Result = Result with { Action = AlgoAction.Hold, Reason = "Already have position. " + Result.Reason };
+            }
+            else if (Result.Action == AlgoAction.Sell && !HasPosition)
+            {
+                _logger.LogInformation("Ignoring SELL signal - no position to close");
+                Result = Result with { Action = AlgoAction.Hold, Reason = "No position to close. " + Result.Reason };
+            }
+
             // Update MACD display
             UpdateMacdDisplay();
+
+            // Handle position opening/closing based on algo action (only if action wasn't filtered out)
+            if (Result.Action == AlgoAction.Buy && !HasPosition)
+            {
+                EntryPrice = (decimal)SelectedSymbol.LastPrice;
+                HasPosition = true;
+                PositionClosed = false;
+                _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
+            }
+            else if (Result.Action == AlgoAction.Sell && HasPosition && !PositionClosed)
+            {
+                ExitPrice = (decimal)SelectedSymbol.LastPrice;
+                PositionClosed = true;
+                HasPosition = false; // Position is now closed
+                _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
+            }
 
             // Update P/L calculations
             UpdateProfitLoss();
@@ -280,28 +309,29 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     private void UpdateProfitLoss()
     {
-        if (SelectedSymbol == null || Result == null)
+        if (SelectedSymbol == null)
             return;
 
         var currentPrice = (decimal)SelectedSymbol.LastPrice;
         
-        // First run - establish entry position at current price
-        if (!HasPosition)
+        // Don't auto-open position - wait for BUY signal from algorithm
+        // Only update exit price if we have an open position
+        if (HasPosition && !PositionClosed)
         {
-            EntryPrice = currentPrice;
-            ExitPrice = null;
-            HasPosition = true;
-            PositionClosed = false;
-            _logger.LogInformation("Position opened at {Price} for {Qty} shares", currentPrice, Quantity);
+            ExitPrice = currentPrice;
         }
         
-        // Update exit price to current price (tracks live P/L)
-        ExitPrice = currentPrice;
+        // Calculate position value only if we have a position
+        if (HasPosition && EntryPrice.HasValue)
+        {
+            PositionValue = currentPrice * Quantity;
+        }
+        else
+        {
+            PositionValue = 0;
+        }
         
-        // Calculate position value
-        PositionValue = currentPrice * Quantity;
-        
-        // Calculate P/L if we have a position
+        // Calculate P/L if we have a position (open or closed)
         if (HasPosition && EntryPrice.HasValue && EntryPrice.Value > 0)
         {
             // Use exit price if position closed, otherwise use current price
@@ -324,6 +354,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             ProfitLoss = 0;
             ProfitLossPercent = 0;
+            PlCalculation = "No position";
         }
     }
 

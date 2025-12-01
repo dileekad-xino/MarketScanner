@@ -15,9 +15,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly ILogger<AlgoRunnerViewModel> _logger;
     private readonly ICandlestickBuilder? _candlestickBuilder;
     private readonly IbkrGatewayService? _ibkrGatewayService;
+    private readonly ITradeService? _tradeService;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
     private IDisposable? _candlestickSubscription;
+    private DateTime? _entryTime;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
@@ -48,12 +50,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
         IAlgoStrategy algorithm,
         ILogger<AlgoRunnerViewModel> logger,
         ICandlestickBuilder? candlestickBuilder = null,
-        IbkrGatewayService? ibkrGatewayService = null)
+        IbkrGatewayService? ibkrGatewayService = null,
+        ITradeService? tradeService = null)
     {
         _algorithm = algorithm;
         _logger = logger;
         _candlestickBuilder = candlestickBuilder;
         _ibkrGatewayService = ibkrGatewayService;
+        _tradeService = tradeService;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -188,6 +192,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             if (Result.Action == AlgoAction.Buy && !HasPosition)
             {
                 EntryPrice = (decimal)SelectedSymbol.LastPrice;
+                _entryTime = DateTime.UtcNow;
                 HasPosition = true;
                 PositionClosed = false;
                 _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
@@ -198,6 +203,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 PositionClosed = true;
                 HasPosition = false; // Position is now closed
                 _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
+                
+                // Save trade to database
+                await SaveTradeAsync();
             }
 
             // Update P/L calculations
@@ -365,9 +373,44 @@ public partial class AlgoRunnerViewModel : ObservableObject
         ExitPrice = null;
         HasPosition = false;
         PositionClosed = false;
+        _entryTime = null;
         ProfitLoss = 0;
         ProfitLossPercent = 0;
         _logger.LogInformation("Position reset");
+    }
+
+    private async Task SaveTradeAsync()
+    {
+        if (_tradeService == null || SelectedSymbol == null || !EntryPrice.HasValue || !ExitPrice.HasValue || !_entryTime.HasValue)
+        {
+            _logger.LogWarning("Cannot save trade: missing required data or service");
+            return;
+        }
+
+        try
+        {
+            var trade = new Trade
+            {
+                Symbol = SelectedSymbol.Symbol,
+                EntryPrice = EntryPrice.Value,
+                ExitPrice = ExitPrice.Value,
+                Quantity = Quantity,
+                ProfitLoss = ProfitLoss,
+                ProfitLossPercent = ProfitLossPercent,
+                EntryTime = _entryTime.Value,
+                ExitTime = DateTime.UtcNow,
+                AlgorithmName = _algorithm.Name
+            };
+
+            await _tradeService.SaveTradeAsync(trade);
+            _logger.LogInformation("Trade saved: {Symbol} Entry={EntryPrice:C2} Exit={ExitPrice:C2} P/L={PL:C2}",
+                trade.Symbol, trade.EntryPrice, trade.ExitPrice, trade.ProfitLoss);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save trade for {Symbol}", SelectedSymbol.Symbol);
+            // Don't throw - allow algo to continue even if trade save fails
+        }
     }
 
     public void Dispose()

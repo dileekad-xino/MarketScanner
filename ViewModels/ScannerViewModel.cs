@@ -20,8 +20,10 @@ public partial class ScannerViewModel : ObservableObject
     private readonly IDispatcherService _dispatcher;
     private readonly ILogger<ScannerViewModel> _logger;
     private readonly IWatchlistService _watchlistService;
+    private readonly ITradeService _tradeService;
     private WatchlistViewModel? _watchlistViewModel;
     private QuoteViewModel? _quoteViewModel;
+    private DailyPlViewModel? _dailyPlViewModel;
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _filterCts;
     private int _applyEpoch; // NEW: prevents out-of-order commits
@@ -95,6 +97,7 @@ public partial class ScannerViewModel : ObservableObject
     [ObservableProperty] private bool _isInScannerView = true;
     [ObservableProperty] private bool _isInWatchlistView = false;
     [ObservableProperty] private bool _isInQuoteView = false;
+    [ObservableProperty] private bool _isInDailyPlView = false;
 
     // Computed property for filter panel visibility
     public bool ShowFiltersPanel => IsInScannerView;
@@ -102,6 +105,7 @@ public partial class ScannerViewModel : ObservableObject
     // Expose ViewModels for binding
     public WatchlistViewModel? WatchlistViewModel => _watchlistViewModel;
     public QuoteViewModel? QuoteViewModel => _quoteViewModel;
+    public DailyPlViewModel? DailyPlViewModel => _dailyPlViewModel;
 
     // Property changed handler for view switching
     partial void OnIsInWatchlistViewChanged(bool value)
@@ -114,6 +118,12 @@ public partial class ScannerViewModel : ObservableObject
     partial void OnIsInScannerViewChanged(bool value)
     {
         _logger.LogInformation("IsInScannerView changed to: {Value}", value);
+        OnPropertyChanged(nameof(ShowFiltersPanel));
+    }
+
+    partial void OnIsInDailyPlViewChanged(bool value)
+    {
+        _logger.LogInformation("IsInDailyPlView changed to: {Value}", value);
         OnPropertyChanged(nameof(ShowFiltersPanel));
     }
 
@@ -155,12 +165,13 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-    public ScannerViewModel(IScanner scanner, IDispatcherService dispatcher, ILogger<ScannerViewModel> logger, IWatchlistService watchlistService)
+    public ScannerViewModel(IScanner scanner, IDispatcherService dispatcher, ILogger<ScannerViewModel> logger, IWatchlistService watchlistService, ITradeService tradeService)
     {
         _scanner = scanner;
         _dispatcher = dispatcher;
         _logger = logger;
         _watchlistService = watchlistService;
+        _tradeService = tradeService;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -960,6 +971,7 @@ public partial class ScannerViewModel : ObservableObject
         IsInScannerView = true;
         IsInWatchlistView = false;
         IsInQuoteView = false;
+        IsInDailyPlView = false;
         PageTitle = "Market Scanner";
         OnPropertyChanged(nameof(ShowFiltersPanel));
         _logger.LogInformation("Switched to Scanner view");
@@ -986,8 +998,10 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogDebug("IsInScannerView set to false");
         
         _logger.LogDebug("Setting IsInWatchlistView = true");
+        IsInScannerView = false;
         IsInWatchlistView = true;
         IsInQuoteView = false;
+        IsInDailyPlView = false;
         _logger.LogDebug("IsInWatchlistView set to true");
         
         PageTitle = "Watchlists";
@@ -1071,6 +1085,7 @@ public partial class ScannerViewModel : ObservableObject
         IsInScannerView = false;
         IsInWatchlistView = false;
         IsInQuoteView = true;
+        IsInDailyPlView = false;
         
         PageTitle = "Quotes";
         
@@ -1088,6 +1103,47 @@ public partial class ScannerViewModel : ObservableObject
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to resume subscriptions when switching to Quote view");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Switches to the Daily P/L view.
+    /// </summary>
+    [RelayCommand]
+    private async void SwitchToDailyPl()
+    {
+        _logger.LogDebug("SwitchToDailyPl called, _dailyPlViewModel is null: {IsNull}", _dailyPlViewModel == null);
+
+        // Initialize Daily P/L ViewModel BEFORE switching to ensure it exists
+        if (_dailyPlViewModel == null)
+        {
+            _logger.LogDebug("Creating DailyPlViewModel...");
+            InitializeDailyPlView();
+            _logger.LogDebug("DailyPlViewModel created");
+        }
+
+        IsInScannerView = false;
+        IsInWatchlistView = false;
+        IsInQuoteView = false;
+        IsInDailyPlView = true;
+
+        PageTitle = "Daily P/L";
+
+        OnPropertyChanged(nameof(ShowFiltersPanel));
+
+        _logger.LogInformation("Switched to Daily P/L view");
+
+        // Load trades for the selected date
+        if (_dailyPlViewModel != null)
+        {
+            try
+            {
+                await _dailyPlViewModel.LoadTradesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load trades when switching to Daily P/L view");
             }
         }
     }
@@ -1137,6 +1193,44 @@ public partial class ScannerViewModel : ObservableObject
         }, TaskScheduler.Default);
 
         _logger.LogInformation("Quote view initialized");
+    }
+
+    /// <summary>
+    /// Initializes the Daily P/L ViewModel on-demand.
+    /// </summary>
+    private void InitializeDailyPlView()
+    {
+        if (_dailyPlViewModel != null) return;
+
+        _logger.LogDebug("Creating DailyPlViewModel on UI thread");
+
+        var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+        var loggerFactory = serviceProvider?.GetService<ILoggerFactory>();
+        var dailyPlLogger = loggerFactory?.CreateLogger<DailyPlViewModel>()
+            ?? Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<DailyPlViewModel>();
+
+        // Create ViewModel synchronously on UI thread
+        _dailyPlViewModel = new DailyPlViewModel(
+            _tradeService,
+            dailyPlLogger);
+
+        _logger.LogDebug("DailyPlViewModel created, notifying property change");
+        OnPropertyChanged(nameof(DailyPlViewModel));
+
+        // Initialize async (fire-and-forget)
+        _ = _dailyPlViewModel.InitializeAsync().ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+            {
+                _logger.LogError(t.Exception, "Failed to initialize Daily P/L view");
+            }
+            else
+            {
+                _logger.LogDebug("DailyPlViewModel initialized successfully");
+            }
+        }, TaskScheduler.Default);
+
+        _logger.LogInformation("Daily P/L view initialized");
     }
 
     /// <summary>

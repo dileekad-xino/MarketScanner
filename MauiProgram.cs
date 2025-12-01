@@ -7,6 +7,8 @@ using MarketScanner.Services.Impl;
 using MarketScanner.ViewModels;
 using MarketScanner.Views;
 using MarketScanner.Config;
+using MarketScanner.Database;
+using MarketScanner.Models;
 using System.Reflection;
 using CommunityToolkit.Maui;
 using NReco.Logging.File;
@@ -41,10 +43,38 @@ namespace MarketScanner
                 .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
                 .AddEnvironmentVariables();
 
+            // Database Services
+            builder.Services.AddSingleton<DatabaseInitializer>();
+            builder.Services.AddSingleton<IDatabaseContext, DatabaseContext>();
+            
             // Services
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
-            builder.Services.AddSingleton<IWatchlistService, WatchlistService>();
+            
+            // Register database tables after DatabaseInitializer is registered
+            builder.Services.AddSingleton<IWatchlistService>(sp =>
+            {
+                var initializer = sp.GetRequiredService<DatabaseInitializer>();
+                // Register tables for watchlists database
+                initializer.RegisterTable<Watchlist>("watchlists.db3");
+                initializer.RegisterTable<WatchlistItem>("watchlists.db3");
+                
+                return new WatchlistService(
+                    sp.GetRequiredService<ILogger<WatchlistService>>(),
+                    sp.GetRequiredService<IDatabaseContext>());
+            });
+            
+            // Register TradeService
+            builder.Services.AddSingleton<ITradeService>(sp =>
+            {
+                var initializer = sp.GetRequiredService<DatabaseInitializer>();
+                // Register Trade table for trades database
+                initializer.RegisterTable<Trade>("trades.db3");
+                
+                return new TradeService(
+                    sp.GetRequiredService<ILogger<TradeService>>(),
+                    sp.GetRequiredService<IDatabaseContext>());
+            });
             
             // Register IBKR configuration
             builder.Services.Configure<IbkrConfig>(builder.Configuration.GetSection("Ibkr"));
@@ -128,7 +158,15 @@ namespace MarketScanner
             });
 
             // ViewModels
-            builder.Services.AddTransient<ScannerViewModel>();
+            builder.Services.AddTransient<ScannerViewModel>(sp =>
+            {
+                return new ScannerViewModel(
+                    sp.GetRequiredService<IScanner>(),
+                    sp.GetRequiredService<IDispatcherService>(),
+                    sp.GetRequiredService<ILogger<ScannerViewModel>>(),
+                    sp.GetRequiredService<IWatchlistService>(),
+                    sp.GetRequiredService<ITradeService>());
+            });
             // WatchlistViewModel is created on-demand by ScannerViewModel
 
             // Views

@@ -272,6 +272,12 @@
                     BindingContext="{Binding QuoteViewModel}" />
             </Grid>
 
+            <!-- Daily P/L View (spans columns 0 and 1) -->
+            <Grid Grid.Column="0" Grid.ColumnSpan="2" IsVisible="{Binding IsInDailyPlView}">
+                <local:DailyPlContentView 
+                    BindingContext="{Binding DailyPlViewModel}" />
+            </Grid>
+
             <!-- Right Panel: Filters -->
             <ScrollView Grid.Column="1"
                         BackgroundColor="{StaticResource SurfaceDark}"
@@ -382,45 +388,68 @@
                 <Border BackgroundColor="{Binding IsInScannerView, Converter={StaticResource BoolToAccentConverter}}"
                         Padding="0" 
                         Margin="0">
-                    <Button Text="&#xE9F9;" 
-                            FontFamily="Segoe Fluent Icons"
-                            Command="{Binding SwitchToScannerCommand}"
+                    <Button Command="{Binding SwitchToScannerCommand}"
                             FontSize="20"
                             BackgroundColor="Transparent"
                             TextColor="{StaticResource OnSurfaceDark}"
                             HeightRequest="60"
                             WidthRequest="50"
-                            ToolTipProperties.Text="Scanner"/>
+                            ToolTipProperties.Text="Scanner">
+                        <Button.ImageSource>
+                            <FontImageSource FontFamily="Segoe Fluent Icons" Glyph="&#xE9F9;" Size="20"/>
+                        </Button.ImageSource>
+                    </Button>
                 </Border>
                 
                 <!-- Watchlist Icon Button -->
                 <Border BackgroundColor="{Binding IsInWatchlistView, Converter={StaticResource BoolToAccentConverter}}"
                         Padding="0" 
                         Margin="0">
-                    <Button Text="&#xE734;" 
-                            FontFamily="Segoe Fluent Icons"
-                            Command="{Binding SwitchToWatchlistCommand}"
+                    <Button Command="{Binding SwitchToWatchlistCommand}"
                             FontSize="20"
                             BackgroundColor="Transparent"
                             TextColor="{StaticResource OnSurfaceDark}"
                             HeightRequest="60"
                             WidthRequest="50"
-                            ToolTipProperties.Text="Watchlist"/>
+                            ToolTipProperties.Text="Watchlist">
+                        <Button.ImageSource>
+                            <FontImageSource FontFamily="Segoe Fluent Icons" Glyph="&#xE734;" Size="20"/>
+                        </Button.ImageSource>
+                    </Button>
                 </Border>
                 
                 <!-- Quote Icon Button -->
                 <Border BackgroundColor="{Binding IsInQuoteView, Converter={StaticResource BoolToAccentConverter}}"
                         Padding="0" 
                         Margin="0">
-                    <Button Text="&#xE907;" 
-                            FontFamily="Segoe Fluent Icons"
-                            Command="{Binding SwitchToQuoteCommand}"
+                    <Button Command="{Binding SwitchToQuoteCommand}"
                             FontSize="20"
                             BackgroundColor="Transparent"
                             TextColor="{StaticResource OnSurfaceDark}"
                             HeightRequest="60"
                             WidthRequest="50"
-                            ToolTipProperties.Text="Quotes"/>
+                            ToolTipProperties.Text="Quotes">
+                        <Button.ImageSource>
+                            <FontImageSource FontFamily="Segoe Fluent Icons" Glyph="&#xE907;" Size="20"/>
+                        </Button.ImageSource>
+                    </Button>
+                </Border>
+                
+                <!-- Daily P/L Icon Button -->
+                <Border BackgroundColor="{Binding IsInDailyPlView, Converter={StaticResource BoolToAccentConverter}}"
+                        Padding="0" 
+                        Margin="0">
+                    <Button Command="{Binding SwitchToDailyPlCommand}"
+                            FontSize="20"
+                            BackgroundColor="Transparent"
+                            TextColor="{StaticResource OnSurfaceDark}"
+                            HeightRequest="60"
+                            WidthRequest="50"
+                            ToolTipProperties.Text="Daily P/L">
+                        <Button.ImageSource>
+                            <FontImageSource FontFamily="Segoe Fluent Icons" Glyph="&#xE80C;" Size="20"/>
+                        </Button.ImageSource>
+                    </Button>
                 </Border>
                 
             </VerticalStackLayout>

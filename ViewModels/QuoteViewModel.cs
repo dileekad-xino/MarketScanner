@@ -763,11 +763,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             // Create algo runner view model
             var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
             var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
+            var tradeService = _serviceProvider.GetService<ITradeService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
                 candlestickBuilder,
-                _ibkrService);
+                _ibkrService,
+                tradeService);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);

@@ -2,6 +2,12 @@ using SQLite;
 
 namespace MarketScanner.Models;
 
+public enum TradeStatus
+{
+    Open,
+    Closed
+}
+
 [Table("trades")]
 public class Trade
 {
@@ -14,8 +20,7 @@ public class Trade
     [NotNull]
     public decimal EntryPrice { get; set; }
 
-    [NotNull]
-    public decimal ExitPrice { get; set; }
+    public decimal? ExitPrice { get; set; }
 
     [NotNull]
     public int Quantity { get; set; }
@@ -29,10 +34,14 @@ public class Trade
     [NotNull]
     public DateTime EntryTime { get; set; }
 
+    public DateTime? ExitTime { get; set; }
+
     [NotNull]
-    public DateTime ExitTime { get; set; }
+    public TradeStatus Status { get; set; } = TradeStatus.Open;
 
     [MaxLength(100)]
     public string AlgorithmName { get; set; } = string.Empty;
+
+    public decimal? CurrentPrice { get; set; }
 }
 

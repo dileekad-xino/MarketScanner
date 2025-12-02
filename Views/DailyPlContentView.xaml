@@ -9,6 +9,7 @@
             <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
             <converters:StringToBoolConverter x:Key="StringToBoolConverter"/>
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
+            <converters:BoolToGreenRedConverter x:Key="BoolToGreenRedConverter"/>
         </ResourceDictionary>
     </ContentView.Resources>
 
@@ -26,9 +27,9 @@
               ColumnSpacing="10">
             
             <!-- Total Daily P/L Display -->
-            <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+            <Grid Grid.Row="0" Grid.Column="0"
                   ColumnDefinitions="Auto,*"
-                  Padding="15,10"
+                  Padding="15,10,10,10"
                   Margin="0,0,0,10">
                 <Label Grid.Column="0"
                        Text="Daily P/L:"
@@ -42,7 +43,7 @@
                        FontSize="24"
                        FontAttributes="Bold"
                        FontFamily="Cascadia Mono, Consolas, Menlo"
-                       HorizontalTextAlignment="End"
+                       HorizontalOptions="End"
                        VerticalOptions="Center"/>
             </Grid>
 
@@ -55,9 +56,9 @@
                     FontSize="12"
                     WidthRequest="80"
                     HeightRequest="32"
-                    VerticalOptions="Start"
+                    VerticalOptions="Center"
                     HorizontalOptions="End"
-                    Margin="0,10,0,0"/>
+                    Margin="0,0,0,0"/>
 
             <!-- Date Picker -->
             <DatePicker Grid.Row="1" Grid.Column="0"
@@ -110,19 +111,20 @@
 
             <!-- Header -->
             <Grid Grid.Row="0"
-                  ColumnDefinitions="80,100,100,80,80,80,100,100"
+                  ColumnDefinitions="80,60,100,100,80,80,80,100,100"
                   BackgroundColor="{StaticResource SurfaceDark}"
                   HeightRequest="40"
                   Padding="5,0">
 
                 <Label Grid.Column="0" Text="Symbol" Style="{StaticResource HeaderLabel}" HorizontalOptions="Start"/>
-                <Label Grid.Column="1" Text="Entry Time" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="Center"/>
-                <Label Grid.Column="2" Text="Exit Time" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="Center"/>
-                <Label Grid.Column="3" Text="Entry Price" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
-                <Label Grid.Column="4" Text="Exit Price" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
-                <Label Grid.Column="5" Text="Quantity" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
-                <Label Grid.Column="6" Text="P/L" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
-                <Label Grid.Column="7" Text="P/L %" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
+                <Label Grid.Column="1" Text="Status" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="Center"/>
+                <Label Grid.Column="2" Text="Entry Time" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="Center"/>
+                <Label Grid.Column="3" Text="Exit Time" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="Center"/>
+                <Label Grid.Column="4" Text="Entry Price" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
+                <Label Grid.Column="5" Text="Exit Price" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
+                <Label Grid.Column="6" Text="Quantity" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
+                <Label Grid.Column="7" Text="P/L" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
+                <Label Grid.Column="8" Text="P/L %" Style="{StaticResource HeaderLabel}" HorizontalTextAlignment="End"/>
             </Grid>
 
             <!-- Data Rows -->
@@ -133,7 +135,7 @@
 
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
-                        <Grid ColumnDefinitions="80,100,100,80,80,80,100,100"
+                        <Grid ColumnDefinitions="80,60,100,100,80,80,80,100,100"
                               BackgroundColor="#1a1a1a"
                               HeightRequest="32"
                               Padding="5,0">
@@ -148,6 +150,15 @@
                                    Padding="6,4"/>
 
                             <Label Grid.Column="1" 
+                                   Text="{Binding StatusText}" 
+                                   TextColor="{Binding IsOpen, Converter={StaticResource BoolToGreenRedConverter}}"
+                                   FontSize="12" 
+                                   VerticalOptions="Center"
+                                   HorizontalTextAlignment="Center"
+                                   FontAttributes="Bold"
+                                   Padding="6,4"/>
+
+                            <Label Grid.Column="2" 
                                    Text="{Binding EntryTimeFormatted}" 
                                    TextColor="{StaticResource OnSurfaceDark}" 
                                    FontSize="13" 
@@ -156,7 +167,7 @@
                                    FontFamily="Cascadia Mono, Consolas, Menlo"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="2" 
+                            <Label Grid.Column="3" 
                                    Text="{Binding ExitTimeFormatted}" 
                                    TextColor="{StaticResource OnSurfaceDark}" 
                                    FontSize="13" 
@@ -165,7 +176,7 @@
                                    FontFamily="Cascadia Mono, Consolas, Menlo"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="3" 
+                            <Label Grid.Column="4" 
                                    Text="{Binding EntryPriceFormatted}" 
                                    TextColor="{StaticResource OnSurfaceDark}" 
                                    FontSize="13" 
@@ -174,7 +185,7 @@
                                    FontFamily="Cascadia Mono, Consolas, Menlo"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="4" 
+                            <Label Grid.Column="5" 
                                    Text="{Binding ExitPriceFormatted}" 
                                    TextColor="{StaticResource OnSurfaceDark}" 
                                    FontSize="13" 
@@ -183,7 +194,7 @@
                                    FontFamily="Cascadia Mono, Consolas, Menlo"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="5" 
+                            <Label Grid.Column="6" 
                                    Text="{Binding Quantity, StringFormat='{0:N0}'}" 
                                    TextColor="{StaticResource OnSurfaceDark}" 
                                    FontSize="13" 
@@ -192,7 +203,7 @@
                                    FontFamily="Cascadia Mono, Consolas, Menlo"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="6" 
+                            <Label Grid.Column="7" 
                                    Text="{Binding ProfitLossFormatted}" 
                                    TextColor="{Binding ProfitLoss, Converter={StaticResource ChangeToColorConverter}}"
                                    FontSize="13" 
@@ -202,7 +213,7 @@
                                    FontAttributes="Bold"
                                    Padding="6,4"/>
 
-                            <Label Grid.Column="7" 
+                            <Label Grid.Column="8" 
                                    Text="{Binding ProfitLossPercentFormatted}" 
                                    TextColor="{Binding ProfitLossPercent, Converter={StaticResource ChangeToColorConverter}}"
                                    FontSize="13" 

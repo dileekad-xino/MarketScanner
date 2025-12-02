@@ -20,6 +20,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private IDisposable? _tickSubscription;
     private IDisposable? _candlestickSubscription;
     private DateTime? _entryTime;
+    private int? _currentTradeId; // Track the current open trade ID
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
@@ -196,6 +197,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 HasPosition = true;
                 PositionClosed = false;
                 _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
+                
+                // Save trade as open position
+                await SaveTradeAsync();
             }
             else if (Result.Action == AlgoAction.Sell && HasPosition && !PositionClosed)
             {
@@ -204,8 +208,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 HasPosition = false; // Position is now closed
                 _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
                 
-                // Save trade to database
-                await SaveTradeAsync();
+                // Update trade to mark as closed
+                await UpdateTradeAsync();
             }
 
             // Update P/L calculations
@@ -374,6 +378,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         HasPosition = false;
         PositionClosed = false;
         _entryTime = null;
+        _currentTradeId = null;
         ProfitLoss = 0;
         ProfitLossPercent = 0;
         _logger.LogInformation("Position reset");
@@ -381,7 +386,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     private async Task SaveTradeAsync()
     {
-        if (_tradeService == null || SelectedSymbol == null || !EntryPrice.HasValue || !ExitPrice.HasValue || !_entryTime.HasValue)
+        if (_tradeService == null || SelectedSymbol == null || !EntryPrice.HasValue || !_entryTime.HasValue)
         {
             _logger.LogWarning("Cannot save trade: missing required data or service");
             return;
@@ -389,27 +394,96 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            var profitLoss = (currentPrice - EntryPrice.Value) * Quantity;
+            var profitLossPercent = EntryPrice.Value > 0 
+                ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100 
+                : 0;
+            
             var trade = new Trade
             {
                 Symbol = SelectedSymbol.Symbol,
                 EntryPrice = EntryPrice.Value,
-                ExitPrice = ExitPrice.Value,
+                ExitPrice = null, // Open position
                 Quantity = Quantity,
-                ProfitLoss = ProfitLoss,
-                ProfitLossPercent = ProfitLossPercent,
+                ProfitLoss = profitLoss, // Current unrealized P/L
+                ProfitLossPercent = profitLossPercent,
                 EntryTime = _entryTime.Value,
-                ExitTime = DateTime.UtcNow,
+                ExitTime = null, // Open position
+                Status = TradeStatus.Open,
+                CurrentPrice = currentPrice,
                 AlgorithmName = _algorithm.Name
             };
 
             await _tradeService.SaveTradeAsync(trade);
-            _logger.LogInformation("Trade saved: {Symbol} Entry={EntryPrice:C2} Exit={ExitPrice:C2} P/L={PL:C2}",
-                trade.Symbol, trade.EntryPrice, trade.ExitPrice, trade.ProfitLoss);
+            
+            // Query for the trade ID after insertion (SQLite-net should update Id, but query to be safe)
+            if (trade.Id == 0)
+            {
+                var openTrades = await _tradeService.GetOpenTradesAsync();
+                var latestTrade = openTrades
+                    .Where(t => t.Symbol == SelectedSymbol.Symbol && 
+                               Math.Abs((t.EntryTime - _entryTime.Value).TotalSeconds) < 1) // Match within 1 second
+                    .OrderByDescending(t => t.EntryTime)
+                    .FirstOrDefault();
+                if (latestTrade != null)
+                {
+                    _currentTradeId = latestTrade.Id;
+                }
+            }
+            else
+            {
+                _currentTradeId = trade.Id;
+            }
+            
+            _logger.LogInformation("Trade saved (OPEN): {Symbol} Entry={EntryPrice:C2} Status={Status} TradeId={TradeId}",
+                trade.Symbol, trade.EntryPrice, trade.Status, _currentTradeId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to save trade for {Symbol}", SelectedSymbol.Symbol);
             // Don't throw - allow algo to continue even if trade save fails
+        }
+    }
+
+    private async Task UpdateTradeAsync()
+    {
+        if (_tradeService == null || SelectedSymbol == null || !EntryPrice.HasValue || !ExitPrice.HasValue || !_entryTime.HasValue || !_currentTradeId.HasValue)
+        {
+            _logger.LogWarning("Cannot update trade: missing required data or service");
+            return;
+        }
+
+        try
+        {
+            // Get the existing trade
+            var trades = await _tradeService.GetTradesBySymbolAsync(SelectedSymbol.Symbol);
+            var trade = trades.FirstOrDefault(t => t.Id == _currentTradeId.Value && t.Status == TradeStatus.Open);
+
+            if (trade == null)
+            {
+                _logger.LogWarning("Cannot find open trade with ID {TradeId} for {Symbol}", _currentTradeId.Value, SelectedSymbol.Symbol);
+                return;
+            }
+
+            // Update the trade to mark as closed
+            trade.ExitPrice = ExitPrice.Value;
+            trade.ExitTime = DateTime.UtcNow;
+            trade.Status = TradeStatus.Closed;
+            trade.ProfitLoss = ProfitLoss;
+            trade.ProfitLossPercent = ProfitLossPercent;
+            trade.CurrentPrice = null; // No longer needed for closed trades
+
+            await _tradeService.UpdateTradeAsync(trade);
+            _logger.LogInformation("Trade updated (CLOSED): {Symbol} Entry={EntryPrice:C2} Exit={ExitPrice:C2} P/L={PL:C2}",
+                trade.Symbol, trade.EntryPrice, trade.ExitPrice, trade.ProfitLoss);
+            
+            _currentTradeId = null; // Clear the trade ID
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update trade for {Symbol}", SelectedSymbol.Symbol);
+            // Don't throw - allow algo to continue even if trade update fails
         }
     }
 

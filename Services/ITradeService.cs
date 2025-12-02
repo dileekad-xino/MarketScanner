@@ -3,17 +3,27 @@ using MarketScanner.Models;
 namespace MarketScanner.Services;
 
 /// <summary>
-/// Service for managing trade records (closed positions).
+/// Service for managing trade records (both open and closed positions).
 /// </summary>
 public interface ITradeService
 {
     /// <summary>
-    /// Saves a trade to the database.
+    /// Saves a new trade to the database.
     /// </summary>
     Task SaveTradeAsync(Trade trade);
 
     /// <summary>
-    /// Gets all trades for a specific date.
+    /// Updates an existing trade in the database.
+    /// </summary>
+    Task UpdateTradeAsync(Trade trade);
+
+    /// <summary>
+    /// Gets a trade by its ID.
+    /// </summary>
+    Task<Trade?> GetTradeByIdAsync(int id);
+
+    /// <summary>
+    /// Gets all trades (open and closed) for a specific date based on entry time.
     /// </summary>
     Task<List<Trade>> GetTradesByDateAsync(DateTime date);
 
@@ -28,7 +38,12 @@ public interface ITradeService
     Task<List<Trade>> GetAllTradesAsync();
 
     /// <summary>
-    /// Gets aggregate daily P/L for a specific date.
+    /// Gets all open positions.
+    /// </summary>
+    Task<List<Trade>> GetOpenTradesAsync();
+
+    /// <summary>
+    /// Gets aggregate daily P/L for a specific date (closed trades only).
     /// </summary>
     Task<(decimal TotalPL, decimal TotalPLPercent)> GetDailyPLAsync(DateTime date);
 

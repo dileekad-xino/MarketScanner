@@ -15,10 +15,11 @@
             <converters:AlgoActionToColorConverter x:Key="AlgoActionToColorConverter"/>
             <converters:RsiSignalToColorConverter x:Key="RsiSignalToColorConverter"/>
             <converters:NullableDoubleToBoolConverter x:Key="NullableDoubleToBoolConverter"/>
+            <converters:ObjectToBoolConverter x:Key="ObjectToBoolConverter"/>
         </ResourceDictionary>
     </ContentPage.Resources>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" 
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*" 
           Padding="20"
           BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -198,8 +199,144 @@
                Margin="0,0,0,15"
                LineBreakMode="WordWrap"/>
 
+        <!-- Position Tracking Toggle -->
+        <Border Grid.Row="4"
+                StrokeThickness="1"
+                Stroke="{StaticResource BorderDark}"
+                BackgroundColor="{StaticResource SurfaceDark}"
+                Padding="15"
+                Margin="0,0,0,15">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="4"/>
+            </Border.StrokeShape>
+            <Grid ColumnDefinitions="Auto,*">
+                <CheckBox Grid.Column="0"
+                         IsChecked="{Binding IsTrackingMode, Mode=TwoWay}"
+                         VerticalOptions="Center"
+                         Margin="0,0,10,0"/>
+                <Label Grid.Column="1"
+                       Text="Enable Position Tracking (Simulated Trade)"
+                       TextColor="{StaticResource OnSurfaceDark}"
+                       FontSize="14"
+                       VerticalOptions="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Position Status (when tracking) -->
+        <Border Grid.Row="5"
+                StrokeThickness="2"
+                Stroke="#4CAF50"
+                BackgroundColor="{StaticResource SurfaceDark}"
+                Padding="15"
+                Margin="0,0,0,15"
+                IsVisible="{Binding CurrentPosition, Converter={StaticResource ObjectToBoolConverter}}">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="4"/>
+            </Border.StrokeShape>
+            <VerticalStackLayout Spacing="10">
+                <Label Text="🟢 OPEN POSITION"
+                       TextColor="#4CAF50"
+                       FontSize="16"
+                       FontAttributes="Bold"/>
+                <Label Text="{Binding PositionStatus}"
+                       TextColor="{StaticResource OnSurfaceDark}"
+                       FontSize="13"
+                       LineBreakMode="WordWrap"/>
+                <Label Text="Monitoring for exit conditions..."
+                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                       FontSize="12"
+                       IsVisible="{Binding IsMonitoring}"/>
+            </VerticalStackLayout>
+        </Border>
+
+        <!-- Completed Trades -->
+        <Border Grid.Row="6"
+                StrokeThickness="1"
+                Stroke="{StaticResource BorderDark}"
+                BackgroundColor="{StaticResource SurfaceDark}"
+                Padding="15"
+                Margin="0,0,0,15"
+                IsVisible="{Binding HasCompletedTrades}">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="4"/>
+            </Border.StrokeShape>
+            <VerticalStackLayout Spacing="10">
+                <Label Text="Completed Trades"
+                       TextColor="{StaticResource OnSurfaceDark}"
+                       FontSize="16"
+                       FontAttributes="Bold"/>
+                <CollectionView ItemsSource="{Binding CompletedTrades}"
+                                MaximumHeightRequest="200"
+                                BackgroundColor="Transparent">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate>
+                            <Border StrokeThickness="1"
+                                    Stroke="{StaticResource BorderDark}"
+                                    BackgroundColor="{StaticResource BackgroundDark}"
+                                    Padding="10"
+                                    Margin="0,0,0,5">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="4"/>
+                                </Border.StrokeShape>
+                                <VerticalStackLayout Spacing="5">
+                                    <Label Text="{Binding Symbol}"
+                                           TextColor="{StaticResource OnSurfaceDark}"
+                                           FontSize="14"
+                                           FontAttributes="Bold"/>
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                        <Label Grid.Column="0"
+                                               Text="Entry:"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               FontSize="12"/>
+                                        <Label Grid.Column="1"
+                                               Text="{Binding EntrySignal}"
+                                               TextColor="#4CAF50"
+                                               FontSize="12"/>
+                                    </Grid>
+                                    <Label Text="{Binding EntryPrice, StringFormat='@ ${0:F2}'}"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           FontSize="11"
+                                           Margin="20,0,0,0"/>
+                                    <Label Text="{Binding EntryRsi, StringFormat='RSI: {0:F1}'}"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           FontSize="11"
+                                           Margin="20,0,0,0"/>
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                        <Label Grid.Column="0"
+                                               Text="Exit:"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               FontSize="12"/>
+                                        <Label Grid.Column="1"
+                                               Text="{Binding ExitSignal}"
+                                               TextColor="#F44336"
+                                               FontSize="12"/>
+                                    </Grid>
+                                    <Label Text="{Binding ExitPrice, StringFormat='@ ${0:F2}'}"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           FontSize="11"
+                                           Margin="20,0,0,0"/>
+                                    <Label Text="{Binding ExitRsi, StringFormat='RSI: {0:F1}'}"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           FontSize="11"
+                                           Margin="20,0,0,0"/>
+                                    <Label Text="{Binding RealizedPnLPercent, StringFormat='PnL: {0:+#0.00;-#0.00;0.00}%'}"
+                                           TextColor="{Binding RealizedPnLPercent, Converter={StaticResource ChangeToColorConverter}}"
+                                           FontSize="12"
+                                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                                           FontAttributes="Bold"/>
+                                    <Label Text="{Binding Duration, StringFormat='Duration: {0:mm\\:ss}'}"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           FontSize="11"/>
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </VerticalStackLayout>
+        </Border>
+
         <!-- Buttons -->
-        <Grid Grid.Row="4"
+        <Grid Grid.Row="7"
               ColumnDefinitions="*,*"
               ColumnSpacing="15">
             <Button Grid.Column="0"
@@ -218,7 +355,7 @@
         </Grid>
 
         <!-- Loading Indicator -->
-        <ActivityIndicator Grid.Row="5"
+        <ActivityIndicator Grid.Row="8"
                            IsRunning="{Binding IsRunning}"
                            IsVisible="{Binding IsRunning}"
                            Color="{StaticResource PrimaryDark}"

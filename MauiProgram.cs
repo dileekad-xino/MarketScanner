@@ -44,6 +44,7 @@ namespace MarketScanner
             // Services
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
+            builder.Services.AddSingleton<IPositionTrackingService, PositionTrackingService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
             builder.Services.AddSingleton<IWatchlistService, WatchlistService>();
             

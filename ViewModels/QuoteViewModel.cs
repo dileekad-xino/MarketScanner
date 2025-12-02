@@ -809,9 +809,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
             // Create algo runner view model
             var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
+            var positionTracking = _serviceProvider.GetRequiredService<IPositionTrackingService>();
+            var rsiSettings = _serviceProvider.GetRequiredService<IRsiSettingsService>();
             var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
+                positionTracking,
+                rsiSettings,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>());
 
             // Initialize with selected symbol

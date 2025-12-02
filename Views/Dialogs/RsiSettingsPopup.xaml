@@ -17,7 +17,7 @@
         </Border.StrokeShape>
         <Grid RowDefinitions="Auto,Auto,Auto,Auto"
               RowSpacing="16"
-              MinimumHeightRequest="480">
+              MinimumHeightRequest="560">
             <Label Text="RSI Settings"
                    FontSize="20"
                    FontAttributes="Bold"
@@ -33,7 +33,7 @@
                 </Border.StrokeShape>
                 <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="320">
+                      MinimumHeightRequest="400">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Length"
                                TextColor="{StaticResource OnSurfaceDark}"

@@ -49,6 +49,7 @@ namespace MarketScanner
             
             // Services
             builder.Services.AddSingleton<SettingsService>();
+            builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
             
             // Register database tables after DatabaseInitializer is registered
@@ -125,37 +126,13 @@ namespace MarketScanner
             builder.Services.AddSingleton<IConnectivity>(provider => 
                 Microsoft.Maui.Networking.Connectivity.Current);
 
-            // Candlestick Services
-            builder.Services.AddSingleton<ICandlestickStorage, CandlestickStorage>();
-            builder.Services.AddSingleton<ICandlestickBuilder>(sp =>
-            {
-                var storage = sp.GetRequiredService<ICandlestickStorage>();
-                var builder = new CandlestickBuilder(
-                    sp.GetRequiredService<IbkrGatewayService>(),
-                    storage,
-                    sp.GetRequiredService<CandlestickConfig>(),
-                    sp.GetRequiredService<ILogger<CandlestickBuilder>>());
-                
-                // Subscribe storage to candlestick stream
-                builder.CandlestickStream.Subscribe(candlestick => storage.AddCandlestick(candlestick));
-                
-                return builder;
-            });
-
-            // Individual Strategy Services (not registered as IAlgoStrategy)
-            builder.Services.AddSingleton<MacdStrategy>();
-
-            // Composite Algorithm Service - combines all strategies
-            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
-            {
-                var strategies = new List<MarketScanner.Services.IAlgoStrategy>
-                {
-                    sp.GetRequiredService<MacdStrategy>()
-                };
-                
-                var logger = sp.GetRequiredService<ILogger<AlgoStrategy>>();
-                return new AlgoStrategy(strategies, logger);
-            });
+            // Algorithm Services
+            // Register RSI Strategy as the default algorithm
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            
+            // Alternative: Register multiple algorithms and select at runtime
+            // builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            // builder.Services.AddSingleton<MarketScanner.Services.Impl.AlgoStrategy>();
 
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>(sp =>

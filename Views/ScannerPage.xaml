@@ -20,6 +20,7 @@
             <converters:EqualityConverter x:Key="EqInt"/>
             <converters:DecimalNullableConverter x:Key="DecimalNullableConverter"/>
             <converters:BoolToAccentColorConverter x:Key="BoolToAccentConverter"/>
+            <converters:RsiSignalToColorConverter x:Key="RsiSignalColorConverter"/>
         </ResourceDictionary>
     </ContentPage.Resources>
 
@@ -146,7 +147,6 @@
                                 <beh:HeaderAutoSizeBehavior ColumnIndex="7"/>
                             </Label.Behaviors>
                         </Label>
-
 
                         <!-- Resize Grips -->
                         <BoxView Grid.Column="0"
@@ -285,6 +285,11 @@
                         IsVisible="{Binding IsInScannerView}">
 
                 <StackLayout Spacing="12">
+
+                    <Label Text="Filters"
+                           Style="{StaticResource HeaderLabel}"
+                           HorizontalOptions="Start"
+                           VerticalOptions="Center"/>
 
                     <!-- Exchange Filter -->
                     <StackLayout>

@@ -170,6 +170,13 @@ public partial class AlgoRunnerViewModel : ObservableObject
         try
         {
             Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource?.Token ?? CancellationToken.None);
+            
+             Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            if (Result != null && SelectedSymbol != null)
+            {
+                SelectedSymbol.RsiValue = Result.RsiValue;
+                SelectedSymbol.RsiSignal = Result.RsiSignal;
+            }
 
             _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}", 
                 Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);

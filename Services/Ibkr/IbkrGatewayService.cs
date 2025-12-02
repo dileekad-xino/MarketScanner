@@ -66,6 +66,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, string> _histReqToSymbol = new();
     private readonly ConcurrentDictionary<int, List<long>> _histVolumes = new();
     private readonly ConcurrentDictionary<int, double?> _histClosePrices = new(); // Track most recent close from historical data
+    
+    // Historical bars tracking for RSI and other technical indicators
+    private readonly ConcurrentDictionary<int, List<Bar>> _histBars = new();
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<Bar>>> _histBarWaiters = new();
 
     // Symbol search state
     private readonly ConcurrentDictionary<int, TaskCompletionSource<List<SymbolSearchResult>>> _symbolSearchWaiters = new();
@@ -269,6 +273,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histReqToSymbol.Clear();
             _histVolumes.Clear();
             _histClosePrices.Clear();
+            _histBars.Clear();
+            // Cancel any pending bar waiters
+            foreach (var kvp in _histBarWaiters.ToList())
+            {
+                kvp.Value.TrySetCanceled();
+            }
+            _histBarWaiters.Clear();
 
             // Subscribe to market data for all scanner results
             var symbols = rows.Select(r => r.Symbol).ToList();
@@ -497,6 +508,102 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histReqToSymbol.TryRemove(reqId, out _);
             _histVolumes.TryRemove(reqId, out _);
             _histClosePrices.TryRemove(reqId, out _);
+        }
+    }
+
+    /// <summary>
+    /// Requests historical bars for technical indicator calculations (e.g., RSI).
+    /// Returns full bar data (OHLCV) in chronological order (oldest to newest).
+    /// </summary>
+    /// <param name="symbol">Stock symbol</param>
+    /// <param name="days">Number of days of historical data to request (default 30)</param>
+    /// <param name="barSize">Bar size setting (default "1 day" for daily bars)</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>List of historical bars in chronological order (oldest to newest)</returns>
+    public async Task<IReadOnlyList<Bar>> GetHistoricalBarsForRSIAsync(
+        string symbol,
+        int days = 30,
+        string barSize = "1 day",
+        CancellationToken ct = default)
+    {
+        await EnsureConnectedAsync(ct);
+
+        if (!IsConnected || _client == null || !_client.IsConnected())
+        {
+            throw new InvalidOperationException($"Cannot request historical data: IBKR gateway is not connected");
+        }
+
+        var reqId = GetNextReqId();
+        var tcs = new TaskCompletionSource<List<Bar>>();
+        var bars = new List<Bar>();
+
+        // Store request mapping
+        _histReqToSymbol[reqId] = symbol;
+        _histBars[reqId] = bars;
+        _histBarWaiters[reqId] = tcs;
+
+        var contract = new Contract
+        {
+            Symbol = symbol,
+            SecType = "STK",
+            Exchange = "SMART",
+            Currency = "USD"
+        };
+
+        try
+        {
+            // Request historical data
+            _client.reqHistoricalData(
+                reqId,
+                contract,
+                "",                    // endDateTime: empty = current time
+                $"{days} D",           // duration: number of days
+                barSize,               // barSize: "1 day", "1 min", etc.
+                "TRADES",              // whatToShow: trade data
+                1,                     // useRTH: regular trading hours only
+                1,                     // formatDate: string format
+                false,                 // keepUpToDate: snapshot only (not streaming)
+                null                    // chartOptions
+            );
+
+            _logger.LogInformation("GetHistoricalBarsForRSIAsync: Requested {Days} days of {BarSize} bars for {Symbol} (reqId={ReqId})", 
+                days, barSize, symbol, reqId);
+
+            // Wait for historicalDataEnd callback with timeout
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            // Register cancellation
+            linkedCts.Token.Register(() =>
+            {
+                if (_histBarWaiters.TryRemove(reqId, out var cancelledTcs))
+                {
+                    cancelledTcs.TrySetCanceled();
+                }
+            });
+
+            try
+            {
+                var result = await tcs.Task.WaitAsync(linkedCts.Token);
+                _logger.LogInformation("GetHistoricalBarsForRSIAsync: Received {Count} bars for {Symbol}", result.Count, symbol);
+                return result;
+            }
+            catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
+            {
+                _logger.LogWarning("GetHistoricalBarsForRSIAsync: Request timed out for {Symbol}", symbol);
+                throw new TimeoutException($"Historical data request timed out for {symbol}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetHistoricalBarsForRSIAsync: Error requesting historical data for {Symbol}", symbol);
+            
+            // Clean up on error
+            _histBarWaiters.TryRemove(reqId, out _);
+            _histBars.TryRemove(reqId, out _);
+            _histReqToSymbol.TryRemove(reqId, out _);
+            
+            throw;
         }
     }
 
@@ -830,6 +937,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             return;
         }
 
+        // Track full bars for RSI/technical indicator calculations
+        if (_histBars.TryGetValue(reqId, out var bars))
+        {
+            bars.Add(bar);
+        }
+
         if (_histVolumes.TryGetValue(reqId, out var volumes) && bar.Volume > 0)
         {
             volumes.Add(bar.Volume);
@@ -911,6 +1024,24 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogWarning("historicalDataEnd: {Symbol} - Completed but no volume tracking found for reqId={ReqId}", symbol, reqId);
         }
 
+        // Complete bar waiters if any (for RSI/technical indicator requests)
+        if (_histBarWaiters.TryRemove(reqId, out var barTcs))
+        {
+            if (_histBars.TryRemove(reqId, out var completedBars))
+            {
+                // Historical data comes in reverse chronological order (newest first), reverse to get chronological order
+                completedBars.Reverse();
+                barTcs.TrySetResult(completedBars);
+                _logger.LogInformation("historicalDataEnd: Completed bar request for reqId={ReqId}, returned {Count} bars", reqId, completedBars.Count);
+            }
+            else
+            {
+                // No bars were collected (empty result or error), complete with empty list
+                _logger.LogWarning("historicalDataEnd: No bars collected for reqId={ReqId}, completing with empty list", reqId);
+                barTcs.TrySetResult(new List<Bar>());
+            }
+        }
+
         _histReqToSymbol.TryRemove(reqId, out _);
         _histVolumes.TryRemove(reqId, out _);
         _histClosePrices.TryRemove(reqId, out _);
@@ -978,11 +1109,37 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             _logger.LogWarning("IBKR Error 165 (Session Conflict): {Message}. Scanner will return empty results. This is expected if another TWS/Gateway instance is running.", errorMsg);
         }
+        else if (errorCode == 2176)
+        {
+            // Error 2176 is a warning about fractional share size rules - not a fatal error
+            // This is just informational and shouldn't stop historical data requests
+            _logger.LogWarning("IBKR Warning {Code} for reqId {Id}: {Message}. This is informational and does not affect data retrieval.", errorCode, id, errorMsg);
+            // Don't treat this as a fatal error - let the request continue
+            return;
+        }
         else
         {
             _logger.LogError("IBKR Error {Code} for reqId {Id}: {Message}", errorCode, id, errorMsg);
         }
 
+        // Handle historical data request errors (for RSI/technical indicators)
+        // Only fail on actual errors, not warnings like 2176
+        if (_histBarWaiters.TryRemove(id, out var histBarTcs))
+        {
+            var symbol = _histReqToSymbol.GetValueOrDefault(id, "unknown");
+            _logger.LogWarning("Historical data request failed for {Symbol} (reqId={ReqId}, errorCode={ErrorCode}): {ErrorMsg}", 
+                symbol, id, errorCode, errorMsg);
+            
+            // Clean up tracking dictionaries
+            _histBars.TryRemove(id, out _);
+            _histReqToSymbol.TryRemove(id, out _);
+            _histVolumes.TryRemove(id, out _);
+            _histClosePrices.TryRemove(id, out _);
+            
+            // Complete with exception so the caller knows the request failed
+            histBarTcs.TrySetException(new Exception($"IBKR Error {errorCode}: {errorMsg}"));
+        }
+        
         // Handle scanner-specific errors
         if (_scannerWaiters.TryGetValue(id, out var tcs))
         {

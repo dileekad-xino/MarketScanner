@@ -31,5 +31,7 @@ public sealed record AlgoResult(
     DateTime Timestamp,
     MacdData? Macd = null,
     CrossoverStatus Crossover = CrossoverStatus.None
+    double? RsiValue = null,
+    string? RsiSignal = null
 );
 

@@ -19,9 +19,10 @@
         </ResourceDictionary>
     </ContentPage.Resources>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" 
-          Padding="20"
-          BackgroundColor="{StaticResource BackgroundDark}">
+    <ScrollView Orientation="Vertical">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" 
+              Padding="20"
+              BackgroundColor="{StaticResource BackgroundDark}">
 
         <!-- Symbol Information -->
         <Border Grid.Row="0"
@@ -408,6 +409,7 @@
                            Color="{StaticResource PrimaryDark}"
                            VerticalOptions="Center"
                            HorizontalOptions="Center"/>
-    </Grid>
+        </Grid>
+    </ScrollView>
 </ContentPage>
 

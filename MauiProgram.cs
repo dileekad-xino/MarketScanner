@@ -126,13 +126,26 @@ namespace MarketScanner
             builder.Services.AddSingleton<IConnectivity>(provider =>
                 Microsoft.Maui.Networking.Connectivity.Current);
 
-            // Algorithm Services
-            // Register RSI Strategy as the default algorithm
-            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            // Candlestick Services
+            builder.Services.AddSingleton<ICandlestickStorage, CandlestickStorage>();
+            builder.Services.AddSingleton<ICandlestickBuilder, CandlestickBuilder>();
 
-            // Alternative: Register multiple algorithms and select at runtime
-            // builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
-            // builder.Services.AddSingleton<MarketScanner.Services.Impl.AlgoStrategy>();
+            // Algorithm Services
+            // Register individual strategies
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
+
+            // Register composite strategy that combines both RSI and MACD
+            builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
+            {
+                var rsiStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.RSIAlgoStrategy>();
+                var macdStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.MacdStrategy>();
+                var logger = sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.AlgoStrategy>>();
+                
+                return new MarketScanner.Services.Impl.AlgoStrategy(
+                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy },
+                    logger);
+            });
 
             // ViewModels
             builder.Services.AddTransient<ScannerViewModel>(sp =>

@@ -149,6 +149,10 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         _logger.LogInformation("Finalized candlestick for {Symbol}: O={Open}, H={High}, L={Low}, C={Close}, V={Volume}, Time={Time}",
             symbol, candlestick.Open, candlestick.High, candlestick.Low, candlestick.Close, candlestick.Volume, candlestick.Timestamp);
 
+        // Add to storage so it's available for MACD calculations
+        _candlestickStorage.AddCandlestick(candlestick);
+        
+        // Publish to observable stream for subscribers
         _candlestickSubject.OnNext(candlestick);
     }
 

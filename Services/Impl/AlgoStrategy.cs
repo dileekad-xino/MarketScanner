@@ -75,28 +75,30 @@ public class AlgoStrategy : IAlgoStrategy
         var macdData = results.FirstOrDefault(r => r.Macd != null)?.Macd;
         var crossover = results.FirstOrDefault(r => r.Crossover != CrossoverStatus.None)?.Crossover ?? CrossoverStatus.None;
 
-        // Decision logic: require majority consensus
+        // Get RSI data from results (take first non-null)
+        var rsiValue = results.FirstOrDefault(r => r.RsiValue.HasValue)?.RsiValue;
+        var rsiSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.RsiSignal))?.RsiSignal;
+
+        // Decision logic: require unanimous agreement
         var total = results.Count;
-        var buyRatio = (double)buyCount / total;
-        var sellRatio = (double)sellCount / total;
 
         var action = AlgoAction.Hold;
         var reasons = string.Join(" | ", results.Select(r => $"[{r.Action}] {r.Reason}"));
         var summary = "";
 
-        if (buyRatio >= 0.5)
+        if (buyCount == total && total > 0)
         {
             action = AlgoAction.Buy;
-            summary = $"BUY consensus: {buyCount}/{total} strategies recommend BUY";
+            summary = $"BUY unanimous: All {total} strategies agree on BUY";
         }
-        else if (sellRatio >= 0.5)
+        else if (sellCount == total && total > 0)
         {
             action = AlgoAction.Sell;
-            summary = $"SELL consensus: {sellCount}/{total} strategies recommend SELL";
+            summary = $"SELL unanimous: All {total} strategies agree on SELL";
         }
         else
         {
-            summary = $"HOLD: Mixed signals (Buy: {buyCount}, Sell: {sellCount}, Hold: {holdCount})";
+            summary = $"HOLD: Strategies disagree (Buy: {buyCount}, Sell: {sellCount}, Hold: {holdCount}) - Unanimous agreement required";
         }
 
         return new AlgoResult(
@@ -106,7 +108,9 @@ public class AlgoStrategy : IAlgoStrategy
             Reason: $"{summary} | {reasons}",
             Timestamp: DateTime.UtcNow,
             Macd: macdData,
-            Crossover: crossover
+            Crossover: crossover,
+            RsiValue: rsiValue,
+            RsiSignal: rsiSignal
         );
     }
 }

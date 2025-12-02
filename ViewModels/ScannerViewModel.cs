@@ -36,7 +36,7 @@ public partial class ScannerViewModel : ObservableObject
     private bool _isOffline = false;
     private bool _linkedQuotes = false;
     private SemaphoreSlim _syncQuotesSemaphore = new SemaphoreSlim(1, 1);
-    
+
     // Store page title for dynamic watchlist naming and view title (set from code-behind and when switching views)
     [ObservableProperty] private string _pageTitle = "Market Scanner"; // fallback default
 
@@ -95,8 +95,8 @@ public partial class ScannerViewModel : ObservableObject
     [ObservableProperty] private bool _isRefreshing = false;
     [ObservableProperty] private bool _isLoading = false;
     [ObservableProperty] private string _errorMessage = "";
-        [ObservableProperty] private bool _autoRefreshEnabled = false;
-        [ObservableProperty] private int _refreshIntervalSeconds = 60; // default 60
+    [ObservableProperty] private bool _autoRefreshEnabled = false;
+    [ObservableProperty] private int _refreshIntervalSeconds = 60; // default 60
 
     // View switching properties
     [ObservableProperty] private bool _isInScannerView = true;
@@ -115,7 +115,7 @@ public partial class ScannerViewModel : ObservableObject
     // Property changed handler for view switching
     partial void OnIsInWatchlistViewChanged(bool value)
     {
-        _logger.LogInformation("IsInWatchlistView changed to: {Value}, WatchlistViewModel is null: {IsNull}", 
+        _logger.LogInformation("IsInWatchlistView changed to: {Value}, WatchlistViewModel is null: {IsNull}",
             value, _watchlistViewModel == null);
         OnPropertyChanged(nameof(ShowFiltersPanel));
     }
@@ -139,30 +139,30 @@ public partial class ScannerViewModel : ObservableObject
 
     private readonly Debounce _debounce = new(TimeSpan.FromMilliseconds(50)); // very responsive for production use
     private readonly Debounce _priceDebouncer = new(TimeSpan.FromMilliseconds(800)); // longer delay for price to prevent rescans on each keystroke
-        
-        // Auto-refresh timer fields
-        private CancellationTokenSource? _autoCts;
-        private Task? _autoTask;
+
+    // Auto-refresh timer fields
+    private CancellationTokenSource? _autoCts;
+    private Task? _autoTask;
 
     // Property change handlers - all use debounced filtering
-        partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
+    partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
     partial void OnVolumeMinTextChanged(string value) => DebouncedApply();
-        
-        // Auto-refresh property change handlers
-        partial void OnRefreshIntervalSecondsChanged(int oldValue, int newValue)
-        {
-            // Persist selection
-            Preferences.Set("refresh.interval.seconds", newValue);
-            // If auto-refresh is on, restart quickly
-            RestartAutoRefreshTimerIfNeeded();
-        }
 
-        partial void OnAutoRefreshEnabledChanged(bool oldValue, bool newValue)
-        {
-            Preferences.Set("refresh.enabled", newValue);
-            if (newValue) 
-                RestartAutoRefreshTimerIfNeeded();
-            else 
+    // Auto-refresh property change handlers
+    partial void OnRefreshIntervalSecondsChanged(int oldValue, int newValue)
+    {
+        // Persist selection
+        Preferences.Set("refresh.interval.seconds", newValue);
+        // If auto-refresh is on, restart quickly
+        RestartAutoRefreshTimerIfNeeded();
+    }
+
+    partial void OnAutoRefreshEnabledChanged(bool oldValue, bool newValue)
+    {
+        Preferences.Set("refresh.enabled", newValue);
+        if (newValue)
+            RestartAutoRefreshTimerIfNeeded();
+        else
         {
             // Stop auto-refresh immediately (synchronous cancellation)
             try { _autoCts?.Cancel(); } catch { }
@@ -170,7 +170,6 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-    public ScannerViewModel(IScanner scanner, IDispatcherService dispatcher, ILogger<ScannerViewModel> logger, IWatchlistService watchlistService, ITradeService tradeService)
     public ScannerViewModel(
         IScanner scanner,
         IDispatcherService dispatcher,
@@ -205,10 +204,10 @@ public partial class ScannerViewModel : ObservableObject
                 _batchedTicks.Enqueue(tick);
             });
         }
-            
-            // Subscribe to property changes for debounced filtering
-            PropertyChanged += (_, e) =>
-            {
+
+        // Subscribe to property changes for debounced filtering
+        PropertyChanged += (_, e) =>
+        {
             // Auto-reset exchange to "any" when region changes to non-US to avoid IBKR mismatch errors
 
             {
@@ -224,21 +223,21 @@ public partial class ScannerViewModel : ObservableObject
                 _ = _priceDebouncer.ExecuteAsync(ApplyFiltersAsync);
             }
             else if (e.PropertyName?.StartsWith("Min") == true ||
-                    e.PropertyName?.StartsWith("Max") == true ||
-                    e.PropertyName?.StartsWith("Selected") == true ||
-                    e.PropertyName?.StartsWith("TopN") == true ||
-                    e.PropertyName?.StartsWith("Exchange") == true)
-                {
-                    DebouncedApply();
-                }
-            };
-            
-            // Load refresh preferences after initialization
-            LoadRefreshPrefs();
-            
-            // Wire auto-refresh property changes
-            WireAutoRefresh();
-        }
+                        e.PropertyName?.StartsWith("Max") == true ||
+                        e.PropertyName?.StartsWith("Selected") == true ||
+                        e.PropertyName?.StartsWith("TopN") == true ||
+                        e.PropertyName?.StartsWith("Exchange") == true)
+            {
+                DebouncedApply();
+            }
+        };
+
+        // Load refresh preferences after initialization
+        LoadRefreshPrefs();
+
+        // Wire auto-refresh property changes
+        WireAutoRefresh();
+    }
 
     private void SetProductionDefaults()
     {
@@ -273,10 +272,10 @@ public partial class ScannerViewModel : ObservableObject
     public async Task RefreshAsync()
     {
         if (IsRefreshing || IsLoading || _disposed) return;
-        
+
         try
         {
-        _cts?.Cancel();
+            _cts?.Cancel();
             _cts?.Dispose();
         }
         catch (ObjectDisposedException)
@@ -296,7 +295,7 @@ public partial class ScannerViewModel : ObservableObject
             IsRefreshing = true;
             ErrorMessage = "";
             DebugStatus = "Loading data...";
-            
+
             // Start batch timer now that we're refreshing (UI should be ready)
             StartBatchTimer();
 
@@ -389,19 +388,19 @@ public partial class ScannerViewModel : ObservableObject
                 _snapshot = ScannerItems.ToArray();
             });
 
-        // Re-apply client-side filters (TopN, MinChangePercent, Volume)
-        // If MinChgPct filter is active, wait for all symbols to receive initial tick data
-        if (!string.IsNullOrWhiteSpace(MinChangePercentText))
-        {
-            _pendingInitialTicks = new HashSet<string>(rows.Select(r => r.Symbol));
-            _logger.LogInformation("MinChgPct filter active - waiting for {Count} symbols to receive initial tick data", _pendingInitialTicks.Count);
-        }
-        else
-        {
-            // No MinChgPct filter - apply other filters immediately
-            await ApplyFiltersAsync();
-            // Note: SyncQuotesToVisibleAsync is called at the end of ApplyFiltersAsync if _linkedQuotes is true
-        }
+            // Re-apply client-side filters (TopN, MinChangePercent, Volume)
+            // If MinChgPct filter is active, wait for all symbols to receive initial tick data
+            if (!string.IsNullOrWhiteSpace(MinChangePercentText))
+            {
+                _pendingInitialTicks = new HashSet<string>(rows.Select(r => r.Symbol));
+                _logger.LogInformation("MinChgPct filter active - waiting for {Count} symbols to receive initial tick data", _pendingInitialTicks.Count);
+            }
+            else
+            {
+                // No MinChgPct filter - apply other filters immediately
+                await ApplyFiltersAsync();
+                // Note: SyncQuotesToVisibleAsync is called at the end of ApplyFiltersAsync if _linkedQuotes is true
+            }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -410,8 +409,8 @@ public partial class ScannerViewModel : ObservableObject
             ErrorMessage = ex.Message;
             DebugStatus = $"Error: {ex.Message}";
         }
-        finally 
-        { 
+        finally
+        {
             IsRefreshing = false;
             DebugStatus = $"ScannerItems: {ScannerItems.Count}";
             _logger.LogInformation("RefreshAsync completed: ScannerItems={ScannerItemsCount}", ScannerItems.Count);
@@ -450,7 +449,7 @@ public partial class ScannerViewModel : ObservableObject
         var current = fallback.CurrentSymbols;
         if (current != null && current.Count > 0)
             return current.Take(topN);
-        return new[] { "AAPL","MSFT","NVDA","AMD","TSLA","META","AMZN","GOOGL","SPY","QQQ" }.Take(topN);
+        return new[] { "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "SPY", "QQQ" }.Take(topN);
     }
 
     private async Task SeedFromFallbackAsync(IEnumerable<string> symbols, IReadOnlyDictionary<string, TickData> latest)
@@ -463,7 +462,7 @@ public partial class ScannerViewModel : ObservableObject
             // Clear ScannerItems BEFORE building snapshot to ensure clean state
             ScannerItems.Clear();
             _rowLookup.Clear();
-            
+
             foreach (var s in symbols)
             {
                 var rowVm = new ScannerRowViewModel
@@ -493,7 +492,7 @@ public partial class ScannerViewModel : ObservableObject
             _snapshot = rows.ToArray(); // Set snapshot - ApplyFiltersAsync will populate ScannerItems from this
             snapshotCount = _snapshot.Length;
             scannerItemsCount = ScannerItems.Count;
-            
+
             // Verify ScannerItems is still empty (defensive check)
             if (scannerItemsCount != 0)
             {
@@ -799,13 +798,13 @@ public partial class ScannerViewModel : ObservableObject
             {
                 return;
             }
-            
+
             // Preserve order from ScannerItems (ObservableCollection maintains order)
             var visible = ScannerItems
                 .Select(r => r.Symbol)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToArray(); // Convert to array to ensure order is maintained
-            
+
             await _quoteViewModel.SyncToSymbols(visible);
         }
         catch (Exception ex)
@@ -843,34 +842,34 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogDebug("Page title set to: {Title}", title);
     }
 
-        /// <summary>
-        /// Load refresh preferences from storage
-        /// </summary>
-        public void LoadRefreshPrefs()
-        {
-            RefreshIntervalSeconds = Preferences.Get("refresh.interval.seconds", 60);
-            AutoRefreshEnabled = Preferences.Get("refresh.enabled", false);
-        }
+    /// <summary>
+    /// Load refresh preferences from storage
+    /// </summary>
+    public void LoadRefreshPrefs()
+    {
+        RefreshIntervalSeconds = Preferences.Get("refresh.interval.seconds", 60);
+        AutoRefreshEnabled = Preferences.Get("refresh.enabled", false);
+    }
 
-        /// <summary>
-        /// Wire auto-refresh property changes to trigger refresh logic
-        /// </summary>
-        private void WireAutoRefresh()
+    /// <summary>
+    /// Wire auto-refresh property changes to trigger refresh logic
+    /// </summary>
+    private void WireAutoRefresh()
+    {
+        PropertyChanged += (_, e) =>
         {
-            PropertyChanged += (_, e) =>
+            if (e.PropertyName == nameof(AutoRefreshEnabled) || e.PropertyName == nameof(RefreshIntervalSeconds))
             {
-                if (e.PropertyName == nameof(AutoRefreshEnabled) || e.PropertyName == nameof(RefreshIntervalSeconds))
-                {
-                    RestartAutoRefreshTimerIfNeeded();
-                }
-            };
-        }
+                RestartAutoRefreshTimerIfNeeded();
+            }
+        };
+    }
 
-        /// <summary>
-        /// Stop the auto-refresh timer
-        /// </summary>
-        public async Task StopAutoRefreshAsync()
-        {
+    /// <summary>
+    /// Stop the auto-refresh timer
+    /// </summary>
+    public async Task StopAutoRefreshAsync()
+    {
         try
         {
             _autoCts?.Cancel();
@@ -879,22 +878,22 @@ public partial class ScannerViewModel : ObservableObject
         }
         catch { }
 
-            if (_autoTask != null)
-            {
-                try { await _autoTask; } catch { }
+        if (_autoTask != null)
+        {
+            try { await _autoTask; } catch { }
             _autoTask = null;
         }
-        }
+    }
 
-        /// <summary>
-        /// Restart the auto-refresh timer if enabled
-        /// </summary>
-        public void RestartAutoRefreshTimerIfNeeded()
+    /// <summary>
+    /// Restart the auto-refresh timer if enabled
+    /// </summary>
+    public void RestartAutoRefreshTimerIfNeeded()
+    {
+        _ = Task.Run(async () =>
         {
-            _ = Task.Run(async () =>
-            {
-                await StopAutoRefreshAsync();
-                if (!AutoRefreshEnabled) return;
+            await StopAutoRefreshAsync();
+            if (!AutoRefreshEnabled) return;
 
             var cts = new CancellationTokenSource();
             var token = cts.Token;  // Capture token BEFORE assigning to field
@@ -902,80 +901,80 @@ public partial class ScannerViewModel : ObservableObject
 
             // Use captured token (safe even if cts gets disposed)
             _autoTask = Task.Run(() => RunAutoRefreshLoopAsync(token));
-            });
-        }
+        });
+    }
 
-        /// <summary>
-        /// Run the auto-refresh loop with proper error handling
-        /// </summary>
-        private async Task RunAutoRefreshLoopAsync(CancellationToken ct)
+    /// <summary>
+    /// Run the auto-refresh loop with proper error handling
+    /// </summary>
+    private async Task RunAutoRefreshLoopAsync(CancellationToken ct)
+    {
+        // Start with immediate refresh
+        await RefreshAsync().ConfigureAwait(false);
+
+        while (!ct.IsCancellationRequested)
         {
-            // Start with immediate refresh
-            await RefreshAsync().ConfigureAwait(false);
-
-            while (!ct.IsCancellationRequested)
+            var delay = Math.Max(5, RefreshIntervalSeconds); // floor to 5s
+            try
             {
-                var delay = Math.Max(5, RefreshIntervalSeconds); // floor to 5s
-                try
+                await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
+                if (!ct.IsCancellationRequested)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
-                    if (!ct.IsCancellationRequested)
+                    // If fallback is active, re-sync symbols based on current filters
+                    var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
+                    if (fb != null && (fb.IsActive || _isOffline))
                     {
-                        // If fallback is active, re-sync symbols based on current filters
-                        var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                        if (fb != null && (fb.IsActive || _isOffline))
-                        {
-                            // Always read current filter values fresh - don't use cached/defaults
-                            var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
-                            var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
-                            var topN = TopN; // Use current TopN value from ViewModel
-                            _logger.LogInformation("Auto-refresh using filters: MinPrice={MinPrice}, MaxPrice={MaxPrice}, TopN={TopN}", minPrice, maxPrice, topN);
-                            var symbols = fb.SelectSymbols(topN, minPrice, maxPrice);
-                            fb.UpdateSymbols(symbols);
-                            var latest = await WaitForSnapshotsAsync(fb, symbols, TimeSpan.FromMilliseconds(500));
-                            await SeedFromFallbackAsync(symbols, latest).ConfigureAwait(false);
-                            await ApplyFiltersAsync().ConfigureAwait(false);
-                            if (_linkedQuotes) await SyncQuotesToVisibleAsync().ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            // Only call RefreshAsync when not offline - it will handle IBKR connection
-                            await RefreshAsync().ConfigureAwait(false);
-                        }
+                        // Always read current filter values fresh - don't use cached/defaults
+                        var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
+                        var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
+                        var topN = TopN; // Use current TopN value from ViewModel
+                        _logger.LogInformation("Auto-refresh using filters: MinPrice={MinPrice}, MaxPrice={MaxPrice}, TopN={TopN}", minPrice, maxPrice, topN);
+                        var symbols = fb.SelectSymbols(topN, minPrice, maxPrice);
+                        fb.UpdateSymbols(symbols);
+                        var latest = await WaitForSnapshotsAsync(fb, symbols, TimeSpan.FromMilliseconds(500));
+                        await SeedFromFallbackAsync(symbols, latest).ConfigureAwait(false);
+                        await ApplyFiltersAsync().ConfigureAwait(false);
+                        if (_linkedQuotes) await SyncQuotesToVisibleAsync().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // Only call RefreshAsync when not offline - it will handle IBKR connection
+                        await RefreshAsync().ConfigureAwait(false);
                     }
                 }
-                catch (TaskCanceledException) { }
             }
+            catch (TaskCanceledException) { }
         }
+    }
 
-        /// <summary>
-        /// Handle auto-refresh toggle
-        /// </summary>
-        public async Task OnAutoRefreshToggledAsync(bool isEnabled)
+    /// <summary>
+    /// Handle auto-refresh toggle
+    /// </summary>
+    public async Task OnAutoRefreshToggledAsync(bool isEnabled)
+    {
+        if (isEnabled)
+            RestartAutoRefreshTimerIfNeeded();
+        else
+            await StopAutoRefreshAsync();
+    }
+
+    private IRelayCommand? _resetFiltersCommand;
+    public IRelayCommand ResetFiltersCommand => _resetFiltersCommand ??=
+        new RelayCommand(async () =>
         {
-            if (isEnabled)
-                RestartAutoRefreshTimerIfNeeded();
-            else
-                await StopAutoRefreshAsync();
-        }
-
-        private IRelayCommand? _resetFiltersCommand;
-        public IRelayCommand ResetFiltersCommand => _resetFiltersCommand ??=
-            new RelayCommand(async () =>
-            {
 
             Exchange = "us stocks";
             MinPriceText = "2";
             MaxPriceText = "20";
             VolumeMinText = "100000";
-                MinChangePercentText = "";
+            MinChangePercentText = "";
             TopN = 50;
 
-                await ApplyFiltersAsync();
+            await ApplyFiltersAsync();
 
-                // Stop auto-refresh timer when resetting filters
-                await StopAutoRefreshAsync();
-            });
+            // Stop auto-refresh timer when resetting filters
+            await StopAutoRefreshAsync();
+        });
 
     /// <summary>
     /// Switches to the scanner view.
@@ -999,7 +998,7 @@ public partial class ScannerViewModel : ObservableObject
     private async void SwitchToWatchlist()
     {
         _logger.LogDebug("SwitchToWatchlist called, _watchlistViewModel is null: {IsNull}", _watchlistViewModel == null);
-        
+
         // Initialize watchlist ViewModel BEFORE switching to ensure it exists
         if (_watchlistViewModel == null)
         {
@@ -1011,16 +1010,16 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogDebug("Setting IsInScannerView = false");
         IsInScannerView = false;
         _logger.LogDebug("IsInScannerView set to false");
-        
+
         _logger.LogDebug("Setting IsInWatchlistView = true");
         IsInScannerView = false;
         IsInWatchlistView = true;
         IsInQuoteView = false;
         IsInDailyPlView = false;
         _logger.LogDebug("IsInWatchlistView set to true");
-        
+
         PageTitle = "Watchlists";
-        
+
         _logger.LogDebug("Calling OnPropertyChanged for ShowFiltersPanel");
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
@@ -1088,7 +1087,7 @@ public partial class ScannerViewModel : ObservableObject
     private async void SwitchToQuote()
     {
         _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
-        
+
         // Initialize quote ViewModel BEFORE switching to ensure it exists
         if (_quoteViewModel == null)
         {
@@ -1101,9 +1100,9 @@ public partial class ScannerViewModel : ObservableObject
         IsInWatchlistView = false;
         IsInQuoteView = true;
         IsInDailyPlView = false;
-        
+
         PageTitle = "Quotes";
-        
+
         OnPropertyChanged(nameof(ShowFiltersPanel));
 
         _logger.LogInformation("Switched to Quote view");
@@ -1178,11 +1177,11 @@ public partial class ScannerViewModel : ObservableObject
         // Create ViewModel synchronously on UI thread (ready for binding)
         // Get logger from service provider to use the main app's logging configuration
         var loggerFactory = serviceProvider?.GetService<ILoggerFactory>();
-        var quoteLogger = loggerFactory?.CreateLogger<QuoteViewModel>() 
+        var quoteLogger = loggerFactory?.CreateLogger<QuoteViewModel>()
             ?? Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<QuoteViewModel>();
-        
+
         var symbolSearchService = serviceProvider?.GetService<ISymbolSearchService>();
-        
+
         _quoteViewModel = new QuoteViewModel(
             (IbkrGatewayService)_scanner,
             _dispatcher,
@@ -1298,18 +1297,18 @@ public partial class ScannerViewModel : ObservableObject
     {
         await _watchlistService.InitializeAsync();
         var watchlists = await _watchlistService.GetAllWatchlistsAsync();
-        
+
         var baseName = PageTitle; // Uses page Title dynamically!
         var existingNames = watchlists.Select(w => w.Name).ToHashSet();
         var number = 1;
         string newName;
-        
+
         do
         {
             newName = $"{baseName} {number}";
             number++;
         } while (existingNames.Contains(newName));
-        
+
         return newName;
     }
 
@@ -1320,7 +1319,7 @@ public partial class ScannerViewModel : ObservableObject
         {
             // Get ALL visible stocks with their company names
             var symbolsToAdd = ScannerItems.Select(r => (r.Symbol, r.Company)).ToList();
-            
+
             _logger.LogInformation("User double-clicked {Symbol}, adding ALL {Count} visible symbols to watchlist",
                 clickedRow.Symbol, symbolsToAdd.Count);
 
@@ -1329,7 +1328,7 @@ public partial class ScannerViewModel : ObservableObject
 
             // Create watchlist with auto-generated name
             var newWatchlist = await _watchlistService.CreateWatchlistAsync(newName);
-            
+
             // Add all visible stocks with company names
             await _watchlistService.AddItemsAsync(newWatchlist.Id, symbolsToAdd);
 
@@ -1374,7 +1373,7 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-        public void Dispose()
+    public void Dispose()
     {
         _disposed = true;
         _snapshot = Array.Empty<ScannerRowViewModel>();
@@ -1385,7 +1384,7 @@ public partial class ScannerViewModel : ObservableObject
             _cts?.Cancel();
         }
         catch (ObjectDisposedException) { }
-        
+
         try
         {
             _cts?.Dispose();
@@ -1399,7 +1398,7 @@ public partial class ScannerViewModel : ObservableObject
             Task.Delay(50).Wait();  // Give pending operations time to cancel
         }
         catch (ObjectDisposedException) { }
-        
+
         try
         {
             _filterCts?.Dispose();
@@ -1419,19 +1418,19 @@ public partial class ScannerViewModel : ObservableObject
             _ = StopAutoRefreshAsync();
         }
         catch (ObjectDisposedException) { }
-        
+
         try
         {
             _autoCts?.Dispose();
         }
         catch (ObjectDisposedException) { }
-        
+
         try
         {
             _debounce.Dispose();
         }
         catch (ObjectDisposedException) { }
-        
+
         try
         {
             _priceDebouncer.Dispose();

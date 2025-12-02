@@ -30,7 +30,7 @@ public sealed record AlgoResult(
     string? Reason,
     DateTime Timestamp,
     MacdData? Macd = null,
-    CrossoverStatus Crossover = CrossoverStatus.None
+    CrossoverStatus Crossover = CrossoverStatus.None,
     double? RsiValue = null,
     string? RsiSignal = null
 );

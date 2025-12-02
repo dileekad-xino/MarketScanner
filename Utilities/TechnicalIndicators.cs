@@ -28,10 +28,13 @@ public static class TechnicalIndicators
         var slowEma = CalculateEma(closes, slowPeriod);
 
         // Calculate MACD line (fast EMA - slow EMA)
+        // We need to wait until both EMAs have enough data points
+        // The slow EMA needs slowPeriod values, so we start calculating at index slowPeriod - 1
         var macdLine = new List<decimal>();
         for (int i = 0; i < closes.Count; i++)
         {
-            if (i >= slowPeriod - fastPeriod && fastEma[i].HasValue && slowEma[i].HasValue)
+            // Wait until slowPeriod - 1 to ensure slow EMA has enough data
+            if (i >= slowPeriod - 1 && fastEma[i].HasValue && slowEma[i].HasValue)
             {
                 macdLine.Add(fastEma[i].Value - slowEma[i].Value);
             }
@@ -58,10 +61,14 @@ public static class TechnicalIndicators
             }
         }
 
-        // Get the latest values
-        var currentMacd = macdLine.LastOrDefault();
-        var currentSignal = signalLine.LastOrDefault();
-        var currentHistogram = histogram.LastOrDefault();
+        // Get the latest values - use Last() instead of LastOrDefault() to ensure we have valid data
+        // We've already checked that we have enough data points, so Last() should be safe
+        if (macdLine.Count == 0 || signalLine.Count == 0 || histogram.Count == 0)
+            return null;
+
+        var currentMacd = macdLine[macdLine.Count - 1]; // Get last element directly
+        var currentSignal = signalLine[signalLine.Count - 1]; // Get last element directly
+        var currentHistogram = histogram[histogram.Count - 1]; // Get last element directly
 
         if (!currentSignal.HasValue || currentHistogram == null)
             return null;

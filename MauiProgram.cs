@@ -46,12 +46,12 @@ namespace MarketScanner
             // Database Services
             builder.Services.AddSingleton<DatabaseInitializer>();
             builder.Services.AddSingleton<IDatabaseContext, DatabaseContext>();
-            
+
             // Services
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
-            
+
             // Register database tables after DatabaseInitializer is registered
             builder.Services.AddSingleton<IWatchlistService>(sp =>
             {
@@ -59,34 +59,34 @@ namespace MarketScanner
                 // Register tables for watchlists database
                 initializer.RegisterTable<Watchlist>("watchlists.db3");
                 initializer.RegisterTable<WatchlistItem>("watchlists.db3");
-                
+
                 return new WatchlistService(
                     sp.GetRequiredService<ILogger<WatchlistService>>(),
                     sp.GetRequiredService<IDatabaseContext>());
             });
-            
+
             // Register TradeService
             builder.Services.AddSingleton<ITradeService>(sp =>
             {
                 var initializer = sp.GetRequiredService<DatabaseInitializer>();
                 // Register Trade table for trades database
                 initializer.RegisterTable<Trade>("trades.db3");
-                
+
                 return new TradeService(
                     sp.GetRequiredService<ILogger<TradeService>>(),
                     sp.GetRequiredService<IDatabaseContext>());
             });
-            
+
             // Register IBKR configuration
             builder.Services.Configure<IbkrConfig>(builder.Configuration.GetSection("Ibkr"));
-            builder.Services.AddSingleton<IbkrConfig>(provider => 
+            builder.Services.AddSingleton<IbkrConfig>(provider =>
                 provider.GetRequiredService<IOptions<IbkrConfig>>().Value);
-            
+
             // Register Candlestick configuration
             builder.Services.Configure<CandlestickConfig>(builder.Configuration.GetSection("Candlestick"));
-            builder.Services.AddSingleton<CandlestickConfig>(provider => 
+            builder.Services.AddSingleton<CandlestickConfig>(provider =>
                 provider.GetRequiredService<IOptions<CandlestickConfig>>().Value);
-            
+
             builder.Services.AddSingleton<AppSettings>(provider =>
             {
                 var config = provider.GetRequiredService<IConfiguration>();
@@ -110,7 +110,7 @@ namespace MarketScanner
             builder.Services.AddSingleton<IScanner>(sp => sp.GetRequiredService<IbkrGatewayService>());
             builder.Services.AddSingleton<IMarketDataService>(sp => sp.GetRequiredService<IbkrGatewayService>());
             builder.Services.AddSingleton<IInstrumentMetadataProvider, IbkrInstrumentMetadataProvider>();
-            
+
             // Symbol Search Service
             builder.Services.AddSingleton<ISymbolSearchService>(sp =>
             {
@@ -123,13 +123,13 @@ namespace MarketScanner
             builder.Services.AddSingleton<PlaybackFallback>();
 
             // MAUI Services
-            builder.Services.AddSingleton<IConnectivity>(provider => 
+            builder.Services.AddSingleton<IConnectivity>(provider =>
                 Microsoft.Maui.Networking.Connectivity.Current);
 
             // Algorithm Services
             // Register RSI Strategy as the default algorithm
             builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy, MarketScanner.Services.Impl.RSIAlgoStrategy>();
-            
+
             // Alternative: Register multiple algorithms and select at runtime
             // builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
             // builder.Services.AddSingleton<MarketScanner.Services.Impl.AlgoStrategy>();
@@ -142,7 +142,9 @@ namespace MarketScanner
                     sp.GetRequiredService<IDispatcherService>(),
                     sp.GetRequiredService<ILogger<ScannerViewModel>>(),
                     sp.GetRequiredService<IWatchlistService>(),
-                    sp.GetRequiredService<ITradeService>());
+                    sp.GetRequiredService<ITradeService>(),
+                    sp.GetRequiredService<IRsiSettingsService>(),
+                    sp.GetRequiredService<IAlgoStrategy>());
             });
             // WatchlistViewModel is created on-demand by ScannerViewModel
 
@@ -176,7 +178,7 @@ namespace MarketScanner
             // Try to use a logs directory in the project root
             var currentDir = Directory.GetCurrentDirectory();
             var projectDir = currentDir;
-            
+
             // Walk up to find the project directory
             while (!string.IsNullOrEmpty(projectDir) && !File.Exists(Path.Combine(projectDir, "MarketScanner.csproj")))
             {

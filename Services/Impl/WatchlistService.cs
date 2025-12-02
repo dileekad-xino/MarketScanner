@@ -1,3 +1,4 @@
+using MarketScanner.Database;
 using MarketScanner.Models;
 using Microsoft.Extensions.Logging;
 using SQLite;
@@ -7,40 +8,37 @@ namespace MarketScanner.Services.Impl;
 public class WatchlistService : IWatchlistService
 {
     private readonly ILogger<WatchlistService> _logger;
-    private SQLiteAsyncConnection? _database;
+    private readonly IDatabaseContext _databaseContext;
+    private const string DatabaseFileName = "watchlists.db3";
 
-    public WatchlistService(ILogger<WatchlistService> logger)
+    public WatchlistService(ILogger<WatchlistService> logger, IDatabaseContext databaseContext)
     {
         _logger = logger;
+        _databaseContext = databaseContext;
+    }
+
+    private async Task<SQLiteAsyncConnection> GetDatabaseAsync()
+    {
+        return await _databaseContext.GetConnectionAsync(DatabaseFileName);
     }
 
     public async Task InitializeAsync()
     {
-        if (_database != null)
-            return;
-
-        var dbPath = Path.Combine(FileSystem.AppDataDirectory, "watchlists.db3");
-        _logger.LogInformation("Initializing watchlist database at {DbPath}", dbPath);
-
-        _database = new SQLiteAsyncConnection(dbPath);
-
-        await _database.CreateTableAsync<Watchlist>();
-        await _database.CreateTableAsync<WatchlistItem>();
-
-        _logger.LogInformation("Watchlist database initialized successfully");
+        // Tables are initialized automatically by DatabaseContext
+        await _databaseContext.InitializeTablesAsync(DatabaseFileName);
     }
 
     public async Task<List<Watchlist>> GetAllWatchlistsAsync()
     {
-        await InitializeAsync();
-        return await _database!.Table<Watchlist>()
+        var database = await GetDatabaseAsync();
+        return await database.Table<Watchlist>()
             .OrderBy(w => w.CreatedAt)
             .ToListAsync();
     }
 
     public async Task<Watchlist> CreateWatchlistAsync(string name)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
         var watchlist = new Watchlist
         {
@@ -49,7 +47,7 @@ public class WatchlistService : IWatchlistService
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _database!.InsertAsync(watchlist);
+        await database.InsertAsync(watchlist);
         _logger.LogInformation("Created watchlist '{Name}' with ID {Id}", name, watchlist.Id);
 
         return watchlist;
@@ -57,9 +55,9 @@ public class WatchlistService : IWatchlistService
 
     public async Task<bool> RenameWatchlistAsync(int watchlistId, string newName)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
-        var watchlist = await _database!.FindAsync<Watchlist>(watchlistId);
+        var watchlist = await database.FindAsync<Watchlist>(watchlistId);
         if (watchlist == null)
         {
             _logger.LogWarning("Watchlist {Id} not found for rename", watchlistId);
@@ -69,7 +67,7 @@ public class WatchlistService : IWatchlistService
         watchlist.Name = newName;
         watchlist.UpdatedAt = DateTime.UtcNow;
 
-        await _database.UpdateAsync(watchlist);
+        await database.UpdateAsync(watchlist);
         _logger.LogInformation("Renamed watchlist {Id} to '{NewName}'", watchlistId, newName);
 
         return true;
@@ -77,13 +75,13 @@ public class WatchlistService : IWatchlistService
 
     public async Task<bool> DeleteWatchlistAsync(int watchlistId)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
         // Delete all items first
-        await _database!.ExecuteAsync("DELETE FROM watchlist_items WHERE WatchlistId = ?", watchlistId);
+        await database.ExecuteAsync("DELETE FROM watchlist_items WHERE WatchlistId = ?", watchlistId);
 
         // Delete watchlist
-        var deleted = await _database.DeleteAsync<Watchlist>(watchlistId);
+        var deleted = await database.DeleteAsync<Watchlist>(watchlistId);
 
         if (deleted > 0)
         {
@@ -97,9 +95,9 @@ public class WatchlistService : IWatchlistService
 
     public async Task<List<WatchlistItem>> GetWatchlistItemsAsync(int watchlistId)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
-        return await _database!.Table<WatchlistItem>()
+        return await database.Table<WatchlistItem>()
             .Where(wi => wi.WatchlistId == watchlistId)
             .OrderBy(wi => wi.DisplayOrder)
             .ToListAsync();
@@ -107,10 +105,10 @@ public class WatchlistService : IWatchlistService
 
     public async Task AddItemsAsync(int watchlistId, List<(string Symbol, string Company)> symbolsAndCompanies)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
         // Get current max display order
-        var maxOrder = await _database!.ExecuteScalarAsync<int>(
+        var maxOrder = await database.ExecuteScalarAsync<int>(
             "SELECT COALESCE(MAX(DisplayOrder), -1) FROM watchlist_items WHERE WatchlistId = ?",
             watchlistId);
 
@@ -121,7 +119,7 @@ public class WatchlistService : IWatchlistService
             var company = symbolsAndCompanies[i].Company; // Get company name
             
             // Skip if symbol already exists in this watchlist
-            var existing = await _database.Table<WatchlistItem>()
+            var existing = await database.Table<WatchlistItem>()
                 .Where(wi => wi.WatchlistId == watchlistId && wi.Symbol == symbol)
                 .CountAsync();
 
@@ -143,21 +141,21 @@ public class WatchlistService : IWatchlistService
 
         if (items.Count > 0)
         {
-            await _database.InsertAllAsync(items);
+            await database.InsertAllAsync(items);
             _logger.LogInformation("Added {Count} symbols to watchlist {WatchlistId}", items.Count, watchlistId);
         }
 
         // Update watchlist timestamp
-        await _database.ExecuteAsync(
+        await database.ExecuteAsync(
             "UPDATE watchlists SET UpdatedAt = ? WHERE Id = ?",
             DateTime.UtcNow, watchlistId);
     }
 
     public async Task RemoveItemAsync(int watchlistId, string symbol)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
-        var deleted = await _database!.ExecuteAsync(
+        var deleted = await database.ExecuteAsync(
             "DELETE FROM watchlist_items WHERE WatchlistId = ? AND Symbol = ?",
             watchlistId, symbol);
 
@@ -166,7 +164,7 @@ public class WatchlistService : IWatchlistService
             _logger.LogInformation("Removed {Symbol} from watchlist {WatchlistId}", symbol, watchlistId);
 
             // Update watchlist timestamp
-            await _database.ExecuteAsync(
+            await database.ExecuteAsync(
                 "UPDATE watchlists SET UpdatedAt = ? WHERE Id = ?",
                 DateTime.UtcNow, watchlistId);
         }
@@ -178,11 +176,11 @@ public class WatchlistService : IWatchlistService
 
     public async Task ReorderItemsAsync(int watchlistId, List<string> orderedSymbols)
     {
-        await InitializeAsync();
+        var database = await GetDatabaseAsync();
 
         for (int i = 0; i < orderedSymbols.Count; i++)
         {
-            await _database!.ExecuteAsync(
+            await database.ExecuteAsync(
                 "UPDATE watchlist_items SET DisplayOrder = ? WHERE WatchlistId = ? AND Symbol = ?",
                 i, watchlistId, orderedSymbols[i]);
         }
@@ -190,7 +188,7 @@ public class WatchlistService : IWatchlistService
         _logger.LogInformation("Reordered {Count} items in watchlist {WatchlistId}", orderedSymbols.Count, watchlistId);
 
         // Update watchlist timestamp
-        await _database!.ExecuteAsync(
+        await database.ExecuteAsync(
             "UPDATE watchlists SET UpdatedAt = ? WHERE Id = ?",
             DateTime.UtcNow, watchlistId);
     }

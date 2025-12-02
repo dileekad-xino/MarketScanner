@@ -293,10 +293,8 @@ public partial class ScannerPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
-        if (BindingContext is ScannerViewModel vm)
-        {
-            vm.Dispose();
-        }
+        // Don't dispose here - scanner should keep running in background
+        // Disposal will happen when app closes via App lifecycle
     }
 
 

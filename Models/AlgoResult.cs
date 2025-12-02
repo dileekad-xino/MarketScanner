@@ -11,6 +11,16 @@ public enum AlgoAction
 }
 
 /// <summary>
+/// Crossover status for MACD indicator.
+/// </summary>
+public enum CrossoverStatus
+{
+    None,
+    CrossedUp,
+    CrossedDown
+}
+
+/// <summary>
 /// Represents the result of running an algorithm on a symbol.
 /// </summary>
 public sealed record AlgoResult(
@@ -19,6 +29,8 @@ public sealed record AlgoResult(
     double? Price,
     string? Reason,
     DateTime Timestamp,
+    MacdData? Macd = null,
+    CrossoverStatus Crossover = CrossoverStatus.None
     double? RsiValue = null,
     string? RsiSignal = null
 );

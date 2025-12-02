@@ -775,12 +775,40 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            // Get candlestick builder and subscribe symbol (so candlesticks are built for this symbol)
+            var candlestickBuilder = _serviceProvider.GetService<ICandlestickBuilder>();
+            try
+            {
+                if (candlestickBuilder != null)
+                {
+                    candlestickBuilder.SubscribeSymbol(row.Symbol);
+                    _logger.LogInformation("Subscribed {Symbol} to candlestick builder", row.Symbol);
+                    
+                    // Preload historical candlesticks so MACD can calculate immediately
+                    await candlestickBuilder.PreloadCandlesticksAsync(row.Symbol);
+                    _logger.LogInformation("Preloaded historical candlesticks for {Symbol}", row.Symbol);
+                }
+                else
+                {
+                    _logger.LogWarning("CandlestickBuilder not available - candlesticks may not be built for {Symbol}", row.Symbol);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to subscribe/preload {Symbol} to candlestick builder", row.Symbol);
+                // Continue anyway - algo can still run without candlesticks (will return Hold)
+            }
+
             // Create algo runner view model
             var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
             var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
+            var tradeService = _serviceProvider.GetService<ITradeService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
-                loggerFactory.CreateLogger<AlgoRunnerViewModel>());
+                loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
+                candlestickBuilder,
+                _ibkrService,
+                tradeService);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);

@@ -17,21 +17,24 @@ public class RSIAlgoStrategy : IAlgoStrategy
 {
     private readonly IbkrGatewayService _ibkrService;
     private readonly IRsiSettingsService _settingsService;
+    private readonly ITradeService? _tradeService;
     private readonly ILogger<RSIAlgoStrategy> _logger;
     
     private const int TrendEmaPeriod = 20;
 
     public string Name => "RSI Strategy";
     public string Description => "Trading strategy based on Relative Strength Index (RSI). " +
-                               "Buy when RSI < 30 (oversold), Sell when RSI > 70 (overbought).";
+                               "Buy when RSI crosses above 50 with uptrend. Uses trailing stop for position management.";
 
     public RSIAlgoStrategy(
         IbkrGatewayService ibkrService,
         IRsiSettingsService settingsService,
-        ILogger<RSIAlgoStrategy> logger)
+        ILogger<RSIAlgoStrategy> logger,
+        ITradeService? tradeService = null)
     {
         _ibkrService = ibkrService;
         _settingsService = settingsService;
+        _tradeService = tradeService;
         _logger = logger;
     }
 
@@ -153,6 +156,24 @@ public class RSIAlgoStrategy : IAlgoStrategy
             bool uptrend = closePrices[^1] >= ema;
             bool downtrend = !uptrend;
 
+            // Check for trailing stop if we have an open position
+            var trailingStopResult = await CheckTrailingStopAsync(symbol.Symbol, currentRsi, settings, ct);
+            if (trailingStopResult != null)
+            {
+                var (peakRsi, trailingStopReason) = trailingStopResult.Value;
+                _logger.LogInformation("RSIAlgoStrategy: Trailing stop triggered for {Symbol} - RSI={RSI:F2}, Peak={Peak:F2}, Stop={Stop:F2}", 
+                    symbol.Symbol, currentRsi, peakRsi, settings.TrailingStopPoints);
+                return new AlgoResult(
+                    Symbol: symbol.Symbol,
+                    Action: AlgoAction.Sell,
+                    Price: symbol.LastPrice,
+                    Reason: trailingStopReason,
+                    Timestamp: DateTime.UtcNow,
+                    RsiValue: currentRsi,
+                    RsiSignal: "TRAILING STOP SELL"
+                );
+            }
+
             var (action, signal, reason) = EvaluateSignal(symbol, settings, prevRsi, currentRsi, uptrend, downtrend, ema);
 
             _logger.LogInformation("RSIAlgoStrategy: {Action} signal for {Symbol} - RSI={RSI:F2}, Signal={Signal}", 
@@ -207,21 +228,22 @@ public class RSIAlgoStrategy : IAlgoStrategy
     {
         string priceInfo = $"Price ${symbol.LastPrice:F2} vs EMA{TrendEmaPeriod} {ema:F2}";
 
-        // STRONG BUY: RSI rebounded above oversold (momentum reversal)
-        if (prevRsi <= settings.Oversold && currentRsi > settings.Oversold)
-        {
-            return (AlgoAction.Buy,
-                "STRONG BUY",
-                $"RSI rebounded above oversold ({settings.Oversold}) -> STRONG BUY. {priceInfo}");
-        }
+        // STRONG BUY signals removed for intraday trading - oversold conditions are too risky
+        // Commented out: RSI rebounded above oversold (momentum reversal)
+        // if (prevRsi <= settings.Oversold && currentRsi > settings.Oversold)
+        // {
+        //     return (AlgoAction.Buy,
+        //         "STRONG BUY",
+        //         $"RSI rebounded above oversold ({settings.Oversold}) -> STRONG BUY. {priceInfo}");
+        // }
 
-        // STRONG BUY: RSI is deeply oversold (absolute level trigger)
-        if (currentRsi <= settings.Oversold)
-        {
-            return (AlgoAction.Buy,
-                "STRONG BUY",
-                $"RSI {currentRsi:F1} is deeply oversold (below {settings.Oversold}) -> STRONG BUY. {priceInfo}");
-        }
+        // Commented out: RSI is deeply oversold (absolute level trigger)
+        // if (currentRsi <= settings.Oversold)
+        // {
+        //     return (AlgoAction.Buy,
+        //         "STRONG BUY",
+        //         $"RSI {currentRsi:F1} is deeply oversold (below {settings.Oversold}) -> STRONG BUY. {priceInfo}");
+        // }
 
         // BUY: RSI crossed above 50 with uptrend (momentum confirmation)
         if (prevRsi < 50 && currentRsi >= 50 && uptrend)
@@ -259,6 +281,57 @@ public class RSIAlgoStrategy : IAlgoStrategy
         return (AlgoAction.Hold,
             signal,
             $"RSI {currentRsi:F1} is neutral between levels. {priceInfo}");
+    }
+
+    private async Task<(double PeakRsi, string Reason)?> CheckTrailingStopAsync(
+        string symbol,
+        double currentRsi,
+        RsiSettings settings,
+        CancellationToken ct)
+    {
+        if (_tradeService == null)
+        {
+            return null; // No trade service available, skip trailing stop check
+        }
+
+        try
+        {
+            var openTrades = await _tradeService.GetOpenTradesAsync();
+            var openTrade = openTrades.FirstOrDefault(t => 
+                t.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && 
+                t.AlgorithmName == Name);
+
+            if (openTrade == null)
+            {
+                return null; // No open position for this symbol
+            }
+
+            // Get peak RSI value (or use current RSI if null)
+            var peakRsi = openTrade.PeakRsiValue ?? currentRsi;
+
+            // Update peak if current RSI is higher
+            if (currentRsi > peakRsi)
+            {
+                // Note: We don't update the trade here - AlgoRunnerViewModel will handle that
+                // Just return null to let normal signal evaluation proceed
+                return null;
+            }
+
+            // Check if trailing stop is triggered
+            var stopLevel = peakRsi - settings.TrailingStopPoints;
+            if (currentRsi < stopLevel)
+            {
+                return (peakRsi, 
+                    $"Trailing stop triggered: RSI dropped from peak {peakRsi:F2} to {currentRsi:F2} (stop: {stopLevel:F2}, threshold: {settings.TrailingStopPoints:F2} points)");
+            }
+
+            return null; // No trailing stop trigger
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error checking trailing stop for {Symbol}", symbol);
+            return null; // Fail gracefully - don't block signal evaluation
+        }
     }
 }
 

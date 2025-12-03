@@ -169,13 +169,17 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
-            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource?.Token ?? CancellationToken.None);
-            
-             Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
             if (Result != null && SelectedSymbol != null)
             {
                 SelectedSymbol.RsiValue = Result.RsiValue;
                 SelectedSymbol.RsiSignal = Result.RsiSignal;
+            }
+
+            // Update peak RSI for open positions
+            if (Result?.RsiValue.HasValue == true && HasPosition && !PositionClosed && _currentTradeId.HasValue)
+            {
+                await UpdatePeakRsiAsync(Result.RsiValue.Value);
             }
 
             _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}", 
@@ -419,7 +423,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 ExitTime = null, // Open position
                 Status = TradeStatus.Open,
                 CurrentPrice = currentPrice,
-                AlgorithmName = _algorithm.Name
+                AlgorithmName = _algorithm.Name,
+                PeakRsiValue = Result?.RsiValue // Initialize peak RSI with entry RSI if available
             };
 
             await _tradeService.SaveTradeAsync(trade);
@@ -491,6 +496,39 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             _logger.LogError(ex, "Failed to update trade for {Symbol}", SelectedSymbol.Symbol);
             // Don't throw - allow algo to continue even if trade update fails
+        }
+    }
+
+    private async Task UpdatePeakRsiAsync(double currentRsi)
+    {
+        if (_tradeService == null || SelectedSymbol == null || !_currentTradeId.HasValue)
+        {
+            return;
+        }
+
+        try
+        {
+            // Get the existing trade
+            var trades = await _tradeService.GetTradesBySymbolAsync(SelectedSymbol.Symbol);
+            var trade = trades.FirstOrDefault(t => t.Id == _currentTradeId.Value && t.Status == TradeStatus.Open);
+
+            if (trade == null)
+            {
+                return; // Trade not found or already closed
+            }
+
+            // Update peak RSI if current RSI is higher
+            if (!trade.PeakRsiValue.HasValue || currentRsi > trade.PeakRsiValue.Value)
+            {
+                trade.PeakRsiValue = currentRsi;
+                await _tradeService.UpdateTradeAsync(trade);
+                _logger.LogInformation("Updated peak RSI for {Symbol}: {PeakRsi:F2}", SelectedSymbol.Symbol, currentRsi);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to update peak RSI for {Symbol}", SelectedSymbol?.Symbol);
+            // Don't throw - allow algo to continue even if peak update fails
         }
     }
 

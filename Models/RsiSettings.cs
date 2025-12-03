@@ -10,6 +10,7 @@ public class RsiSettings
     public double Overbought { get; set; } = 65.0;
     public int HistoricalDays { get; set; } = 2;
     public string BarSize { get; set; } = "1 min"; // Supported: "15 secs", "30 secs", "1 min" (IBKR format)
+    public double TrailingStopPoints { get; set; } = 4.0;
 
     public static RsiSettings CreateDefaults() => new()
     {
@@ -17,7 +18,8 @@ public class RsiSettings
         Oversold = 35.0,
         Overbought = 65.0,
         HistoricalDays = 2,
-        BarSize = "1 min"
+        BarSize = "1 min",
+        TrailingStopPoints = 4.0
     };
 
     public RsiSettings Clone() => new()
@@ -26,7 +28,8 @@ public class RsiSettings
         Oversold = Oversold,
         Overbought = Overbought,
         HistoricalDays = HistoricalDays,
-        BarSize = BarSize
+        BarSize = BarSize,
+        TrailingStopPoints = TrailingStopPoints
     };
 }
 

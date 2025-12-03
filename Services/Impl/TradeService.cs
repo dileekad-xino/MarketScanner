@@ -65,12 +65,13 @@ public class TradeService : ITradeService
 
             // Check if ExitPrice has NOT NULL constraint (old schema) or if Status column is missing
             bool hasStatusColumn = columnInfo.Any(col => col.name.Equals("Status", StringComparison.OrdinalIgnoreCase));
+            bool hasPeakRsiColumn = columnInfo.Any(col => col.name.Equals("PeakRsiValue", StringComparison.OrdinalIgnoreCase));
             bool exitPriceIsNotNull = exitPriceColumn.notnull == 1;
             
-            if (exitPriceIsNotNull || !hasStatusColumn)
+            if (exitPriceIsNotNull || !hasStatusColumn || !hasPeakRsiColumn)
             {
-                _logger.LogInformation("Old schema detected (ExitPrice NOT NULL={ExitPriceNotNull}, HasStatus={HasStatus}) - recreating database", 
-                    exitPriceIsNotNull, hasStatusColumn);
+                _logger.LogInformation("Old schema detected (ExitPrice NOT NULL={ExitPriceNotNull}, HasStatus={HasStatus}, HasPeakRsi={HasPeakRsi}) - recreating database", 
+                    exitPriceIsNotNull, hasStatusColumn, hasPeakRsiColumn);
                 await RecreateDatabaseAsync();
                 return true;
             }

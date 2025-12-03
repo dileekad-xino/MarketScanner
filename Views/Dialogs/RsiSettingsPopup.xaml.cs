@@ -21,6 +21,7 @@ public partial class RsiSettingsPopup : Popup
         OversoldEntry.Text = settings.Oversold.ToString("0.##");
         OverboughtEntry.Text = settings.Overbought.ToString("0.##");
         DaysEntry.Text = settings.HistoricalDays.ToString();
+        TrailingStopEntry.Text = settings.TrailingStopPoints.ToString("0.##");
         
         // Set bar size picker
         var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
@@ -96,6 +97,12 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
+        if (!double.TryParse(TrailingStopEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingStop) || trailingStop <= 0 || trailingStop > 50)
+        {
+            error = "Trailing stop must be between 0 and 50.";
+            return false;
+        }
+
         var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
         var barSize = validBarSizes[BarSizePicker.SelectedIndex];
 
@@ -104,6 +111,7 @@ public partial class RsiSettingsPopup : Popup
         settings.Overbought = overbought;
         settings.HistoricalDays = days;
         settings.BarSize = barSize;
+        settings.TrailingStopPoints = trailingStop;
         return true;
     }
 }

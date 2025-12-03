@@ -43,5 +43,7 @@ public class Trade
     public string AlgorithmName { get; set; } = string.Empty;
 
     public decimal? CurrentPrice { get; set; }
+
+    public double? PeakRsiValue { get; set; }
 }
 

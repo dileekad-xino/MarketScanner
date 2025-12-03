@@ -132,7 +132,14 @@ namespace MarketScanner
 
             // Algorithm Services
             // Register individual strategies
-            builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>(sp =>
+            {
+                return new MarketScanner.Services.Impl.RSIAlgoStrategy(
+                    sp.GetRequiredService<MarketScanner.Services.Ibkr.IbkrGatewayService>(),
+                    sp.GetRequiredService<IRsiSettingsService>(),
+                    sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.RSIAlgoStrategy>>(),
+                    sp.GetService<ITradeService>()); // Optional dependency
+            });
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
 
             // Register composite strategy that combines both RSI and MACD

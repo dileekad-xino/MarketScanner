@@ -17,7 +17,7 @@
         </Border.StrokeShape>
         <Grid RowDefinitions="Auto,Auto,Auto,Auto"
               RowSpacing="16"
-              MinimumHeightRequest="480">
+              MinimumHeightRequest="540">
             <Label Text="RSI Settings"
                    FontSize="20"
                    FontAttributes="Bold"
@@ -31,9 +31,9 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="6"/>
                 </Border.StrokeShape>
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="280">
+                      MinimumHeightRequest="380">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Length"
                                TextColor="{StaticResource OnSurfaceDark}"
@@ -91,6 +91,16 @@
                                 </x:Array>
                             </Picker.ItemsSource>
                         </Picker>
+                    </Grid>
+
+                    <Grid Grid.Row="5" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                        <Label Text="Trailing Stop"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               VerticalOptions="Center"/>
+                        <Entry x:Name="TrailingStopEntry"
+                               Grid.Column="1"
+                               Keyboard="Numeric"
+                               Style="{StaticResource FilterEntryStyle}"/>
                     </Grid>
                 </Grid>
             </Border>

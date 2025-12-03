@@ -181,14 +181,12 @@ public class TradeService : ITradeService
         var startOfDay = date.Date;
         var endOfDay = startOfDay.AddDays(1);
 
-        // Fetch all trades (open or closed) that were active on the selected date
-        // A trade is active if its entry time is on or before the end of the day,
-        // AND its exit time is null (open) or on or after the start of the day.
+        // Fetch all trades (open or closed) that were entered on the selected date
         // First get all trades, then filter in memory to avoid nullable DateTime LINQ issues
         var allTrades = await database.Table<Trade>().ToListAsync();
         
         return allTrades
-            .Where(t => t.EntryTime < endOfDay && (t.ExitTime == null || t.ExitTime.Value >= startOfDay))
+            .Where(t => t.EntryTime >= startOfDay && t.EntryTime < endOfDay)
             .OrderByDescending(t => t.EntryTime)
             .ToList();
     }

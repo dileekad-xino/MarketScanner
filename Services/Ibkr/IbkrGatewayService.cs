@@ -717,8 +717,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // For 30-second bars, 50 bars = 25 minutes, request 1 hour to be safe
         // For 60-second bars, 50 bars = 50 minutes, request 2 hours to be safe
         var durationSeconds = barSizeSeconds * count * 2; // 2x buffer
-        var durationStr = durationSeconds >= 3600 ? $"{durationSeconds / 3600 + 1} H" : $"{durationSeconds} S";
+        // var durationStr = durationSeconds >= 3600 ? $"{durationSeconds / 3600 + 1} H" : $"{durationSeconds} S";
 
+
+        var durationDays = Math.Max(1, (int)Math.Ceiling(durationSeconds / 86400.0));
+        var durationStr = $"{durationDays} D";  
         var barSizeStr = barSizeSeconds switch
         {
             15 => "15 secs",

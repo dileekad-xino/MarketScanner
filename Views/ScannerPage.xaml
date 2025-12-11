@@ -286,6 +286,19 @@
 
                 <StackLayout Spacing="12">
 
+                    <!-- Market Status -->
+                    <StackLayout BackgroundColor="{StaticResource SurfaceDark}"
+                                 Padding="8"
+                                 Margin="0,0,0,8">
+                        <Label Text="Market Status"
+                               Style="{StaticResource FilterLabelStyle}"
+                               FontSize="11"/>
+                        <Label Text="{Binding MarketStatus}"
+                               FontSize="14"
+                               FontAttributes="Bold"
+                               TextColor="{StaticResource TextPrimary}"/>
+                    </StackLayout>
+
                     <Label Text="Filters"
                            Style="{StaticResource HeaderLabel}"
                            HorizontalOptions="Start"

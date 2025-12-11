@@ -14,12 +14,30 @@ public class CandlestickConfig
     /// <summary>
     /// Maximum number of candlesticks to store per symbol (rolling window).
     /// </summary>
-    public int MaxCandlesticksToStore { get; set; } = 200;
+    public int MaxCandlesticksToStore { get; set; } = 500;
+
+    /// <summary>
+    /// Number of historical candlesticks to preload for MACD calculation.
+    /// More data = more stable MACD. Recommended: 300-500 for minute intervals.
+    /// Default: 400 (approximately 1 trading day for 1-minute intervals).
+    /// </summary>
+    public int HistoricalPreloadCount { get; set; } = 400;
+
+    /// <summary>
+    /// Number of candlesticks to use for MACD calculation.
+    /// Should be >= HistoricalPreloadCount. Using more data improves accuracy.
+    /// Default: 400 (use all preloaded data).
+    /// </summary>
+    public int MacdCalculationWindow { get; set; } = 400;
 
     /// <summary>
     /// MACD calculation parameters.
     /// </summary>
     public MacdConfig Macd { get; set; } = new();
+
+    public bool EnablePollingFallback { get; set; } = true;
+    public int PollingIntervalSeconds { get; set; } = 10;
+    public int PollingBarsToFetch { get; set; } = 3;
 }
 
 /// <summary>

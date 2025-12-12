@@ -732,12 +732,22 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
         try
         {
+            // prepare end date = now UTC (IBKR expects "yyyyMMdd HH:mm:ss <TZ>" or "yyyyMMdd HH:mm:ss")
+            var endDateTime = DateTime.UtcNow.ToString("yyyyMMdd HH:mm:ss");
+
+            // Request all trading hours (useRTH = 0) so pre/after market bars are included.
             _client.reqHistoricalData(
-            reqId, contract, "", durationStr, barSizeStr, "TRADES",
-            0,   // <-- RTH: 0 = include premarket + postmarket
-            1,
-            false,
-            null);
+                reqId,
+                contract,
+                endDateTime,
+                durationStr,
+                barSizeStr,
+                "TRADES",
+                0,     // useRTH = 0 -> include pre/post market
+                1,
+                false,
+                null);
+
 
             _logger.LogInformation("GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) for {Symbol} (reqId={ReqId})",
                 count, barSizeStr, symbol, reqId);

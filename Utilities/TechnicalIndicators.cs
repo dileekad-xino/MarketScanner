@@ -87,6 +87,7 @@ public static class TechnicalIndicators
 
     /// <summary>
     /// Calculates Exponential Moving Average (EMA).
+    /// TradingView approach: Seeds EMA with SMA of first period values, then applies standard EMA formula.
     /// </summary>
     private static List<decimal?> CalculateEma(IReadOnlyList<decimal> prices, int period)
     {
@@ -96,24 +97,36 @@ public static class TechnicalIndicators
         var ema = new List<decimal?>();
         var multiplier = 2.0m / (period + 1);
 
-        // Initialize with first price
-        ema.Add(prices[0]);
-
-        // Calculate EMA for remaining prices (starting from index 1)
-        for (int i = 1; i < prices.Count; i++)
+        // TradingView approach: Seed EMA with SMA of first period values
+        if (prices.Count < period)
         {
-            if (i < period)
+            // Not enough data - return SMA for available values
+            for (int i = 0; i < prices.Count; i++)
             {
-                // Use SMA for initial values (before we have enough data for EMA)
                 var sma = prices.Take(i + 1).Average();
                 ema.Add(sma);
             }
-            else
-            {
-                // Standard EMA formula: EMA = (Price - PreviousEMA) * Multiplier + PreviousEMA
-                var prevEma = ema[i - 1].Value;
-                ema.Add((prices[i] - prevEma) * multiplier + prevEma);
-            }
+            return ema;
+        }
+
+        // Calculate SMA of first period values (this is the seed)
+        var seedSma = prices.Take(period).Average();
+
+        // Fill first period-1 indices with SMA (for consistency with TradingView)
+        for (int i = 0; i < period - 1; i++)
+        {
+            var sma = prices.Take(i + 1).Average();
+            ema.Add(sma);
+        }
+
+        // At index period-1, use the SMA of first period values as the seed
+        ema.Add(seedSma);
+
+        // From index period onwards, apply standard EMA formula
+        for (int i = period; i < prices.Count; i++)
+        {
+            var prevEma = ema[i - 1].Value;
+            ema.Add((prices[i] - prevEma) * multiplier + prevEma);
         }
 
         return ema;

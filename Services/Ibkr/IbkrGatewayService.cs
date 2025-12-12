@@ -733,7 +733,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         try
         {
             _client.reqHistoricalData(
-                reqId, contract, "", durationStr, barSizeStr, "TRADES", 1, 1, false, null);
+            reqId, contract, "", durationStr, barSizeStr, "TRADES",
+            0,   // <-- RTH: 0 = include premarket + postmarket
+            1,
+            false,
+            null);
+
             _logger.LogInformation("GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) for {Symbol} (reqId={ReqId})",
                 count, barSizeStr, symbol, reqId);
 
@@ -911,7 +916,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // IBKR sends timestamps in Eastern Time (market time), so parse as ET and convert to UTC
             DateTime timestamp;
             TimeZoneInfo easternTimeZone = TimestampUtils.GetEasternTimeZone();
-            
+
             if (DateTime.TryParseExact(bar.Time, "yyyyMMdd  HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var parsedTime) ||
                 DateTime.TryParseExact(bar.Time, "yyyyMMdd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out parsedTime) ||
                 DateTime.TryParseExact(bar.Time, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out parsedTime))
@@ -919,7 +924,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 // Treat parsed time as Eastern Time and convert to UTC
                 var easternTime = DateTime.SpecifyKind(parsedTime, DateTimeKind.Unspecified);
                 timestamp = TimeZoneInfo.ConvertTimeToUtc(easternTime, easternTimeZone);
-                
+
                 var candle = new Candlestick(
                     Symbol: metadata.Symbol,
                     Open: (decimal)bar.Open,

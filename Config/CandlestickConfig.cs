@@ -35,7 +35,7 @@ public class CandlestickConfig
     /// </summary>
     public MacdConfig Macd { get; set; } = new();
 
-    public bool EnablePollingFallback { get; set; } = true;
+    public bool EnablePollingFallback { get; set; } = false;
     public int PollingIntervalSeconds { get; set; } = 10;
     public int PollingBarsToFetch { get; set; } = 3;
 }

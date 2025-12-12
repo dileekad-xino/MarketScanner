@@ -94,10 +94,10 @@ public class MacdStrategy : IAlgoStrategy
                 // (e.g., due to timezone conversion differences between live ticks and historical data)
                 if (latestCandlestick != null)
                 {
-                    var normalizedLatest = NormalizeAndTruncateToInterval(latestCandlestick.Timestamp);
+                    var normalizedLatest = TimestampUtils.NormalizeAndTruncateToInterval(latestCandlestick.Timestamp, _config.IntervalSeconds);
                     var isInList = allCandlesticks.Any(c => 
                     {
-                        var normalizedC = NormalizeAndTruncateToInterval(c.Timestamp);
+                        var normalizedC = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                         return normalizedC.Ticks == normalizedLatest.Ticks;
                     });
                     
@@ -158,7 +158,7 @@ public class MacdStrategy : IAlgoStrategy
                 .Select(c => 
                 {
                     // Safety check: ensure UTC and truncated (should already be from CandlestickStorage)
-                    var truncated = NormalizeAndTruncateToInterval(c.Timestamp);
+                    var truncated = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                     if (c.Timestamp != truncated)
                     {
                         _logger.LogWarning("MacdStrategy: Non-truncated timestamp detected for {Symbol} at {Time}, truncating to {Truncated}",
@@ -176,7 +176,7 @@ public class MacdStrategy : IAlgoStrategy
             // Normalize and truncate LastTimestamp if state exists
             if (emaState != null)
             {
-                emaState.LastTimestamp = NormalizeAndTruncateToInterval(emaState.LastTimestamp);
+                emaState.LastTimestamp = TimestampUtils.NormalizeAndTruncateToInterval(emaState.LastTimestamp, _config.IntervalSeconds);
             }
             
             _logger.LogInformation("MacdStrategy: EMA state check for {Symbol} - Found={Found}, LastTimestamp={LastTimestamp} (Kind={Kind})", 
@@ -207,8 +207,8 @@ public class MacdStrategy : IAlgoStrategy
                 if (newCandlesticks.Count == 0 && uniqueCandlesticks.Any())
                 {
                     var latestCandle = uniqueCandlesticks.Last();
-                    var truncatedLatest = NormalizeAndTruncateToInterval(latestCandle.Timestamp);
-                    var truncatedLast = NormalizeAndTruncateToInterval(emaState.LastTimestamp);
+                    var truncatedLatest = TimestampUtils.NormalizeAndTruncateToInterval(latestCandle.Timestamp, _config.IntervalSeconds);
+                    var truncatedLast = TimestampUtils.NormalizeAndTruncateToInterval(emaState.LastTimestamp, _config.IntervalSeconds);
                     var differenceTicks = truncatedLatest.Ticks - truncatedLast.Ticks;
                     
                     _logger.LogWarning(
@@ -221,11 +221,11 @@ public class MacdStrategy : IAlgoStrategy
                 // Same-timestamp fallback: check if close price changed
                 if (newCandlesticks.Count == 0)
                 {
-                    var truncatedLast = NormalizeAndTruncateToInterval(emaState.LastTimestamp);
+                    var truncatedLast = TimestampUtils.NormalizeAndTruncateToInterval(emaState.LastTimestamp, _config.IntervalSeconds);
                     // Compare using truncated timestamps for exact match
                     var sameTs = uniqueCandlesticks.LastOrDefault(c => 
                     {
-                        var truncatedCandle = NormalizeAndTruncateToInterval(c.Timestamp);
+                        var truncatedCandle = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                         return truncatedCandle.Ticks == truncatedLast.Ticks;
                     });
                     const decimal SAME_CLOSE_EPS = 0.0000001m;
@@ -409,7 +409,7 @@ public class MacdStrategy : IAlgoStrategy
     {
         // Normalize and truncate all timestamps to interval boundaries before grouping
         var normalized = candlesticks
-            .Select(c => c with { Timestamp = NormalizeAndTruncateToInterval(c.Timestamp) })
+            .Select(c => c with { Timestamp = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds) })
             .OrderBy(c => c.Timestamp)
             .ToList();
         
@@ -437,13 +437,13 @@ public class MacdStrategy : IAlgoStrategy
     private List<Candlestick> GetIncrementalCandles(DateTime lastTimestamp, List<Candlestick> allCandles)
     {
         // Normalize and truncate lastTimestamp to interval boundary
-        var truncatedLast = NormalizeAndTruncateToInterval(lastTimestamp);
+        var truncatedLast = TimestampUtils.NormalizeAndTruncateToInterval(lastTimestamp, _config.IntervalSeconds);
         
         // Filter candlesticks with truncated timestamps strictly greater than truncated lastTimestamp
         var result = allCandles
             .Where(c => 
             {
-                var truncatedCandle = NormalizeAndTruncateToInterval(c.Timestamp);
+                var truncatedCandle = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                 return truncatedCandle > truncatedLast;
             })
             .OrderBy(c => c.Timestamp)
@@ -452,7 +452,7 @@ public class MacdStrategy : IAlgoStrategy
         // Diagnostic logging
         if (result.Count > 0)
         {
-            var firstTruncated = NormalizeAndTruncateToInterval(result.First().Timestamp);
+            var firstTruncated = TimestampUtils.NormalizeAndTruncateToInterval(result.First().Timestamp, _config.IntervalSeconds);
             _logger.LogDebug(
                 "GetIncrementalCandles: TS TRACE - lastRaw={LastRaw:o}, lastTrunc={LastTrunc:o}, firstRaw={FirstRaw:o}, firstTrunc={FirstTrunc:o}, count={Count}",
                 lastTimestamp, truncatedLast,
@@ -466,29 +466,6 @@ public class MacdStrategy : IAlgoStrategy
     /// <summary>
     /// Normalizes a DateTime to UTC, handling all DateTimeKind values.
     /// </summary>
-    private DateTime NormalizeToUtc(DateTime dt)
-    {
-        if (dt.Kind == DateTimeKind.Utc)
-            return dt;
-        
-        if (dt.Kind == DateTimeKind.Local)
-            return dt.ToUniversalTime();
-        
-        // DateTimeKind.Unspecified - assume it's already in UTC or treat as UTC
-        return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-    }
-
-    /// <summary>
-    /// Normalizes to UTC and truncates to the nearest interval boundary (floor).
-    /// Result is always DateTimeKind.Utc and aligned to interval boundaries.
-    /// </summary>
-    private DateTime NormalizeAndTruncateToInterval(DateTime dt)
-    {
-        var utc = NormalizeToUtc(dt);
-        var interval = TimeSpan.FromSeconds(_config.IntervalSeconds).Ticks;
-        var truncatedTicks = (utc.Ticks / interval) * interval;
-        return new DateTime(truncatedTicks, DateTimeKind.Utc);
-    }
 
     /// <summary>
     /// Determines if we should force a full recalculation.
@@ -533,8 +510,8 @@ public class MacdStrategy : IAlgoStrategy
         }
 
         // Check for data gaps - normalize and truncate timestamps for comparison
-        var truncatedLastCandleTs = NormalizeAndTruncateToInterval(lastCandle.Timestamp);
-        var truncatedLastProcessedTs = NormalizeAndTruncateToInterval(emaState.LastTimestamp);
+        var truncatedLastCandleTs = TimestampUtils.NormalizeAndTruncateToInterval(lastCandle.Timestamp, _config.IntervalSeconds);
+        var truncatedLastProcessedTs = TimestampUtils.NormalizeAndTruncateToInterval(emaState.LastTimestamp, _config.IntervalSeconds);
         var timeDiff = truncatedLastCandleTs - truncatedLastProcessedTs;
         var expectedInterval = TimeSpan.FromSeconds(_config.IntervalSeconds);
         var maxGap = expectedInterval * MaxGapMultiplier;
@@ -553,7 +530,7 @@ public class MacdStrategy : IAlgoStrategy
             // Use truncated timestamps for comparison
             var hasIntermediateCandles = candlesticks.Any(c => 
             {
-                var truncatedCTs = NormalizeAndTruncateToInterval(c.Timestamp);
+                var truncatedCTs = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                 return truncatedCTs > truncatedLastProcessedTs && 
                        truncatedCTs < truncatedLastCandleTs;
             });
@@ -610,7 +587,7 @@ public class MacdStrategy : IAlgoStrategy
             emaState.SignalEma = alphaSignal * emaState.MacdLine + (1 - alphaSignal) * emaState.SignalEma;
 
             // Update timestamp, count, and last processed close - ensure timestamp is normalized and truncated
-            emaState.LastTimestamp = NormalizeAndTruncateToInterval(candle.Timestamp);
+            emaState.LastTimestamp = TimestampUtils.NormalizeAndTruncateToInterval(candle.Timestamp, _config.IntervalSeconds);
             emaState.LastProcessedClose = candle.Close;
             emaState.ProcessedCount++;
             
@@ -665,14 +642,14 @@ public class MacdStrategy : IAlgoStrategy
         // Set metadata - normalize and truncate LastTimestamp to interval boundary
         initialState.Symbol = symbol;
         initialState.Interval = interval;
-        initialState.LastTimestamp = NormalizeAndTruncateToInterval(lastTimestamp);
+        initialState.LastTimestamp = TimestampUtils.NormalizeAndTruncateToInterval(lastTimestamp, _config.IntervalSeconds);
         initialState.LastProcessedClose = lastClose;
 
         // Diagnostic logging
         _logger.LogDebug(
             "PerformInitialCalculation: TS TRACE - raw={Raw:o}, utc={Utc:o}, truncated={Trunc:o}",
             lastTimestamp,
-            NormalizeToUtc(lastTimestamp),
+            TimestampUtils.NormalizeToUtc(lastTimestamp),
             initialState.LastTimestamp);
         initialState.FastPeriod = _config.Macd.FastPeriod;
         initialState.SlowPeriod = _config.Macd.SlowPeriod;

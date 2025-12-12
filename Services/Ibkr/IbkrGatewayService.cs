@@ -910,22 +910,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // Parse timestamp from bar.Time (format: "yyyyMMdd HH:mm:ss" or "yyyyMMdd")
             // IBKR sends timestamps in Eastern Time (market time), so parse as ET and convert to UTC
             DateTime timestamp;
-            TimeZoneInfo easternTimeZone;
-            try
-            {
-                easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-            }
-            catch
-            {
-                try
-                {
-                    easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-                }
-                catch
-                {
-                    easternTimeZone = TimeZoneInfo.CreateCustomTimeZone("ET", TimeSpan.FromHours(-5), "Eastern Time", "ET");
-                }
-            }
+            TimeZoneInfo easternTimeZone = TimestampUtils.GetEasternTimeZone();
             
             if (DateTime.TryParseExact(bar.Time, "yyyyMMdd  HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var parsedTime) ||
                 DateTime.TryParseExact(bar.Time, "yyyyMMdd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out parsedTime) ||
@@ -1095,7 +1080,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 ClosePrice: (double?)state.PrevClose,
                 Volume: state.Volume,
                 FiftyTwoWeekHigh: null,
-                Timestamp: DateTime.UtcNow,
+                Timestamp: TimestampUtils.ConvertUtcNowToMarketTime(),
                 Bid: null,
                 Ask: null,
                 High: (double?)state.High,

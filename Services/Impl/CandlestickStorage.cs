@@ -1,5 +1,6 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Utilities;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 
@@ -24,38 +25,12 @@ public class CandlestickStorage : ICandlestickStorage
         _logger = logger;
     }
 
-    /// <summary>
-    /// Normalizes a DateTime to UTC, handling all DateTimeKind values.
-    /// </summary>
-    private DateTime NormalizeToUtc(DateTime dt)
-    {
-        if (dt.Kind == DateTimeKind.Utc)
-            return dt;
-        
-        if (dt.Kind == DateTimeKind.Local)
-            return dt.ToUniversalTime();
-        
-        // DateTimeKind.Unspecified - assume it's already in UTC or treat as UTC
-        return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-    }
-
-    /// <summary>
-    /// Normalizes to UTC and truncates to the nearest interval boundary (floor).
-    /// Result is always DateTimeKind.Utc and aligned to interval boundaries.
-    /// </summary>
-    private DateTime NormalizeAndTruncateToInterval(DateTime dt)
-    {
-        var utc = NormalizeToUtc(dt);
-        var interval = TimeSpan.FromSeconds(_config.IntervalSeconds).Ticks;
-        var truncatedTicks = (utc.Ticks / interval) * interval;
-        return new DateTime(truncatedTicks, DateTimeKind.Utc);
-    }
 
     public void AddCandlestick(Candlestick candlestick)
     {
         // Normalize to UTC and truncate to interval boundary
-        var utc = NormalizeToUtc(candlestick.Timestamp);
-        var truncated = NormalizeAndTruncateToInterval(utc);
+        var utc = TimestampUtils.NormalizeToUtc(candlestick.Timestamp);
+        var truncated = TimestampUtils.NormalizeAndTruncateToInterval(utc, _config.IntervalSeconds);
         
         // Create new candlestick with truncated UTC timestamp
         var normalizedCandlestick = candlestick with { Timestamp = truncated };
@@ -100,9 +75,9 @@ public class CandlestickStorage : ICandlestickStorage
                 .Select(c => 
                 {
                     // Safety check: ensure UTC and truncated (should already be from AddCandlestick)
-                    if (c.Timestamp.Kind != DateTimeKind.Utc || !IsTruncated(c.Timestamp))
+                    if (c.Timestamp.Kind != DateTimeKind.Utc || !TimestampUtils.IsTruncated(c.Timestamp, _config.IntervalSeconds))
                     {
-                        var truncated = NormalizeAndTruncateToInterval(c.Timestamp);
+                        var truncated = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
                         return c with { Timestamp = truncated };
                     }
                     return c;
@@ -126,17 +101,6 @@ public class CandlestickStorage : ICandlestickStorage
         }
     }
 
-    /// <summary>
-    /// Checks if a timestamp is already truncated to the interval boundary.
-    /// </summary>
-    private bool IsTruncated(DateTime dt)
-    {
-        if (dt.Kind != DateTimeKind.Utc)
-            return false;
-        
-        var interval = TimeSpan.FromSeconds(_config.IntervalSeconds).Ticks;
-        return (dt.Ticks % interval) == 0;
-    }
 
     public Candlestick? GetLatestCandlestick(string symbol, string interval)
     {

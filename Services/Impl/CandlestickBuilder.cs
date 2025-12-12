@@ -1,6 +1,7 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.Services.Ibkr;
+using MarketScanner.Utilities;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Reactive.Linq;
@@ -105,14 +106,10 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         var volume = tick.Volume ?? 0;
 
         // --- Normalize tick timestamp to UTC immediately (critical) ---
-        var timestamp = tick.Timestamp;
-        if (timestamp.Kind == DateTimeKind.Local)
-            timestamp = timestamp.ToUniversalTime();
-        else if (timestamp.Kind == DateTimeKind.Unspecified)
-            timestamp = DateTime.SpecifyKind(timestamp, DateTimeKind.Utc);
+        var timestamp = TimestampUtils.NormalizeToUtc(tick.Timestamp);
 
         // Calculate the interval boundary for this tick (truncated to interval)
-        var intervalBoundary = NormalizeAndTruncateToInterval(timestamp);
+        var intervalBoundary = TimestampUtils.NormalizeAndTruncateToInterval(timestamp, _config.IntervalSeconds);
 
         // Diagnostic logging
         _logger.LogDebug(
@@ -172,7 +169,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
             return;
 
         // Always truncate to interval boundary (should already be truncated, but ensure it)
-        var truncated = NormalizeAndTruncateToInterval(intervalBoundary);
+        var truncated = TimestampUtils.NormalizeAndTruncateToInterval(intervalBoundary, _config.IntervalSeconds);
 
         var candlestick = new Candlestick(
             Symbol: symbol,
@@ -189,7 +186,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         _logger.LogDebug(
             "CandlestickBuilder: Finalize TS TRACE - raw={Raw:o}, utc={Utc:o}, truncated={Trunc:o}",
             intervalBoundary,
-            NormalizeToUtc(intervalBoundary),
+            TimestampUtils.NormalizeToUtc(intervalBoundary),
             truncated);
 
         _logger.LogInformation("Finalized candlestick for {Symbol}: O={Open}, H={High}, L={Low}, C={Close}, V={Volume}, Time={Time} (Kind={Kind})",
@@ -253,7 +250,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
                                 // Get the latest candlestick ONCE before processing all bars
                                 var storedLatest = _candlestickStorage.GetLatestCandlestick(symbol, GetIntervalString(_config.IntervalSeconds));
                                 var storedLatestTrunc = storedLatest != null 
-                                    ? NormalizeAndTruncateToInterval(storedLatest.Timestamp) 
+                                    ? TimestampUtils.NormalizeAndTruncateToInterval(storedLatest.Timestamp, _config.IntervalSeconds) 
                                     : DateTime.MinValue;
 
                                 _logger.LogInformation("CandlestickBuilder(POLL): Processing {Count} bars for {Symbol}, storedLatest={Stored:o}", 
@@ -263,7 +260,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
                                 foreach (var bar in bars.OrderBy(b => b.Timestamp))
                                 {
                                     // Normalize to UTC and truncate to interval boundary
-                                    var normalizedTrunc = NormalizeAndTruncateToInterval(bar.Timestamp);
+                                    var normalizedTrunc = TimestampUtils.NormalizeAndTruncateToInterval(bar.Timestamp, _config.IntervalSeconds);
 
                                     // CRITICAL FIX: Only add if this bar is NEWER than stored latest (not same timestamp)
                                     // Same-timestamp bars should NOT be added - they're updates to the current bar, not new bars
@@ -336,33 +333,6 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         }
     }
 
-    /// <summary>
-    /// Normalizes a DateTime to UTC, handling all DateTimeKind values.
-    /// </summary>
-    private DateTime NormalizeToUtc(DateTime dt)
-    {
-        if (dt.Kind == DateTimeKind.Utc)
-            return dt;
-
-        if (dt.Kind == DateTimeKind.Local)
-            return dt.ToUniversalTime();
-
-        // DateTimeKind.Unspecified - assume it's UTC (IBKR sometimes strips Kind)
-        // If you prefer, you can try to detect local vs utc by heuristics; explicit assumption is safer.
-        return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-    }
-
-    /// <summary>
-    /// Normalizes to UTC and truncates to the nearest interval boundary (floor).
-    /// Result is always DateTimeKind.Utc and aligned to interval boundaries.
-    /// </summary>
-    private DateTime NormalizeAndTruncateToInterval(DateTime dt)
-    {
-        var utc = NormalizeToUtc(dt);
-        var intervalTicks = TimeSpan.FromSeconds(_config.IntervalSeconds).Ticks;
-        var truncatedTicks = (utc.Ticks / intervalTicks) * intervalTicks;
-        return new DateTime(truncatedTicks, DateTimeKind.Utc);
-    }
 
     private string GetIntervalString(int intervalSeconds)
     {
@@ -438,7 +408,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
             foreach (var candle in bars)
             {
                 // Normalize/truncate bar timestamp before adding
-                var trunc = NormalizeAndTruncateToInterval(candle.Timestamp);
+                var trunc = TimestampUtils.NormalizeAndTruncateToInterval(candle.Timestamp, _config.IntervalSeconds);
                 var normalizedBar = candle with { Timestamp = trunc };
                 _candlestickStorage.AddCandlestick(normalizedBar);
             }

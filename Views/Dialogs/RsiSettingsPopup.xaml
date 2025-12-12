@@ -31,9 +31,9 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="6"/>
                 </Border.StrokeShape>
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="380">
+                      MinimumHeightRequest="450">
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Label Text="Length"
                                TextColor="{StaticResource OnSurfaceDark}"
@@ -94,13 +94,38 @@
                     </Grid>
 
                     <Grid Grid.Row="5" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Trailing Stop"
+                        <Label Text="Trailing Stop Mode"
                                TextColor="{StaticResource OnSurfaceDark}"
                                VerticalOptions="Center"/>
-                        <Entry x:Name="TrailingStopEntry"
+                        <Picker x:Name="TrailingStopModePicker"
+                                Grid.Column="1"
+                                Title="Select mode"
+                                TextColor="{StaticResource OnSurfaceDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}">
+                            <Picker.ItemsSource>
+                                <x:Array Type="{x:Type x:String}">
+                                    <x:String>Percentage</x:String>
+                                    <x:String>Price</x:String>
+                                </x:Array>
+                            </Picker.ItemsSource>
+                        </Picker>
+                    </Grid>
+                    
+                    <Grid Grid.Row="6" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                        <Label Text="Trailing Stop Distance"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               VerticalOptions="Center"/>
+                        <Entry x:Name="TrailingStopDistanceEntry"
                                Grid.Column="1"
                                Keyboard="Numeric"
                                Style="{StaticResource FilterEntryStyle}"/>
+                        <Label x:Name="TrailingStopUnitLabel"
+                               Grid.Column="2"
+                               Text="%"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               VerticalOptions="Center"
+                               FontSize="14"
+                               Margin="5,0,0,0"/>
                     </Grid>
                 </Grid>
             </Border>

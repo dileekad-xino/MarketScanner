@@ -45,5 +45,10 @@ public class Trade
     public decimal? CurrentPrice { get; set; }
 
     public double? PeakRsiValue { get; set; }
+    
+    /// <summary>
+    /// Highest price reached since position opened (for trailing stop calculation)
+    /// </summary>
+    public decimal? HighestPrice { get; set; }
 }
 

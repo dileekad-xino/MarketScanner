@@ -424,7 +424,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 Status = TradeStatus.Open,
                 CurrentPrice = currentPrice,
                 AlgorithmName = _algorithm.Name,
-                PeakRsiValue = Result?.RsiValue // Initialize peak RSI with entry RSI if available
+                PeakRsiValue = Result?.RsiValue, // Initialize peak RSI with entry RSI if available
+                HighestPrice = EntryPrice.Value // Initialize highest price with entry price
             };
 
             await _tradeService.SaveTradeAsync(trade);
@@ -524,11 +525,20 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 await _tradeService.UpdateTradeAsync(trade);
                 _logger.LogInformation("Updated peak RSI for {Symbol}: {PeakRsi:F2}", SelectedSymbol.Symbol, currentRsi);
             }
+            
+            // Also update highest price for trailing stop
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            if (!trade.HighestPrice.HasValue || currentPrice > trade.HighestPrice.Value)
+            {
+                trade.HighestPrice = currentPrice;
+                await _tradeService.UpdateTradeAsync(trade);
+                _logger.LogInformation("Updated highest price for {Symbol}: ${HighestPrice:F2}", SelectedSymbol.Symbol, currentPrice);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to update peak RSI for {Symbol}", SelectedSymbol?.Symbol);
-            // Don't throw - allow algo to continue even if peak update fails
+            _logger.LogWarning(ex, "Failed to update peak RSI/highest price for {Symbol}", SelectedSymbol?.Symbol);
+            // Don't throw - allow algo to continue even if update fails
         }
     }
 

@@ -66,12 +66,17 @@ public class TradeService : ITradeService
             // Check if ExitPrice has NOT NULL constraint (old schema) or if Status column is missing
             bool hasStatusColumn = columnInfo.Any(col => col.name.Equals("Status", StringComparison.OrdinalIgnoreCase));
             bool hasPeakRsiColumn = columnInfo.Any(col => col.name.Equals("PeakRsiValue", StringComparison.OrdinalIgnoreCase));
+            bool hasHighestPriceColumn = columnInfo.Any(col => col.name.Equals("HighestPrice", StringComparison.OrdinalIgnoreCase));
+            bool hasInitialStopLossPriceColumn = columnInfo.Any(col => col.name.Equals("InitialStopLossPrice", StringComparison.OrdinalIgnoreCase));
+            bool hasTrailingStopActivationPriceColumn = columnInfo.Any(col => col.name.Equals("TrailingStopActivationPrice", StringComparison.OrdinalIgnoreCase));
+            bool hasTrailingStopPriceColumn = columnInfo.Any(col => col.name.Equals("TrailingStopPrice", StringComparison.OrdinalIgnoreCase));
             bool exitPriceIsNotNull = exitPriceColumn.notnull == 1;
             
-            if (exitPriceIsNotNull || !hasStatusColumn || !hasPeakRsiColumn)
+            if (exitPriceIsNotNull || !hasStatusColumn || !hasPeakRsiColumn || !hasHighestPriceColumn || 
+                !hasInitialStopLossPriceColumn || !hasTrailingStopActivationPriceColumn || !hasTrailingStopPriceColumn)
             {
-                _logger.LogInformation("Old schema detected (ExitPrice NOT NULL={ExitPriceNotNull}, HasStatus={HasStatus}, HasPeakRsi={HasPeakRsi}) - recreating database", 
-                    exitPriceIsNotNull, hasStatusColumn, hasPeakRsiColumn);
+                _logger.LogInformation("Old schema detected (ExitPrice NOT NULL={ExitPriceNotNull}, HasStatus={HasStatus}, HasPeakRsi={HasPeakRsi}, HasHighestPrice={HasHighestPrice}, HasInitialStopLossPrice={HasInitialStopLossPrice}, HasTrailingStopActivationPrice={HasTrailingStopActivationPrice}, HasTrailingStopPrice={HasTrailingStopPrice}) - recreating database", 
+                    exitPriceIsNotNull, hasStatusColumn, hasPeakRsiColumn, hasHighestPriceColumn, hasInitialStopLossPriceColumn, hasTrailingStopActivationPriceColumn, hasTrailingStopPriceColumn);
                 await RecreateDatabaseAsync();
                 return true;
             }

@@ -156,13 +156,32 @@ public class RSIAlgoStrategy : IAlgoStrategy
             bool uptrend = closePrices[^1] >= ema;
             bool downtrend = !uptrend;
 
-            // Check for trailing stop if we have an open position
-            var trailingStopResult = await CheckTrailingStopAsync(symbol.Symbol, currentRsi, settings, ct);
+            var currentPrice = (decimal)symbol.LastPrice;
+            
+            // Check initial stop-loss first (if we have an open position)
+            var initialStopResult = await CheckInitialStopLossAsync(symbol.Symbol, currentPrice, settings, ct);
+            if (initialStopResult != null)
+            {
+                _logger.LogInformation("RSIAlgoStrategy: Initial stop-loss triggered for {Symbol} - Price={Price:F2}, Stop={Stop:F2}", 
+                    symbol.Symbol, currentPrice, initialStopResult.Value);
+                return new AlgoResult(
+                    Symbol: symbol.Symbol,
+                    Action: AlgoAction.Sell,
+                    Price: symbol.LastPrice,
+                    Reason: $"Initial stop-loss triggered: Price ${currentPrice:F2} <= Stop ${initialStopResult.Value:F2}",
+                    Timestamp: DateTime.UtcNow,
+                    RsiValue: currentRsi,
+                    RsiSignal: "STOP-LOSS SELL"
+                );
+            }
+            
+            // Check for trailing stop if we have an open position (price-based)
+            var trailingStopResult = await CheckTrailingStopAsync(symbol.Symbol, currentPrice, settings, ct);
             if (trailingStopResult != null)
             {
-                var (peakRsi, trailingStopReason) = trailingStopResult.Value;
-                _logger.LogInformation("RSIAlgoStrategy: Trailing stop triggered for {Symbol} - RSI={RSI:F2}, Peak={Peak:F2}, Stop={Stop:F2}", 
-                    symbol.Symbol, currentRsi, peakRsi, settings.TrailingStopPoints);
+                var (highestPrice, trailingStopReason) = trailingStopResult.Value;
+                _logger.LogInformation("RSIAlgoStrategy: Trailing stop triggered for {Symbol} - Price={Price:F2}, Highest={Highest:F2}, Mode={Mode}, Distance={Distance}", 
+                    symbol.Symbol, currentPrice, highestPrice, settings.TrailingStopMode, settings.TrailingStopDistance);
                 return new AlgoResult(
                     Symbol: symbol.Symbol,
                     Action: AlgoAction.Sell,
@@ -283,9 +302,47 @@ public class RSIAlgoStrategy : IAlgoStrategy
             $"RSI {currentRsi:F1} is neutral between levels. {priceInfo}");
     }
 
-    private async Task<(double PeakRsi, string Reason)?> CheckTrailingStopAsync(
+    private async Task<decimal?> CheckInitialStopLossAsync(
         string symbol,
-        double currentRsi,
+        decimal currentPrice,
+        RsiSettings settings,
+        CancellationToken ct)
+    {
+        if (_tradeService == null)
+        {
+            return null; // No trade service available
+        }
+
+        try
+        {
+            var openTrades = await _tradeService.GetOpenTradesAsync();
+            var openTrade = openTrades.FirstOrDefault(t => 
+                t.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && 
+                t.AlgorithmName == Name);
+
+            if (openTrade == null || !openTrade.InitialStopLossPrice.HasValue)
+            {
+                return null; // No open position or no initial stop-loss set
+            }
+
+            // Check if initial stop-loss is triggered
+            if (currentPrice <= openTrade.InitialStopLossPrice.Value)
+            {
+                return openTrade.InitialStopLossPrice.Value;
+            }
+
+            return null; // Stop-loss not triggered
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error checking initial stop-loss for {Symbol}", symbol);
+            return null; // Fail gracefully
+        }
+    }
+
+    private async Task<(decimal HighestPrice, string Reason)?> CheckTrailingStopAsync(
+        string symbol,
+        decimal currentPrice,
         RsiSettings settings,
         CancellationToken ct)
     {
@@ -306,23 +363,79 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 return null; // No open position for this symbol
             }
 
-            // Get peak RSI value (or use current RSI if null)
-            var peakRsi = openTrade.PeakRsiValue ?? currentRsi;
-
-            // Update peak if current RSI is higher
-            if (currentRsi > peakRsi)
+            // Check if trailing stop is activated (price reached activation level)
+            if (!openTrade.TrailingStopActivated && openTrade.TrailingStopActivationPrice.HasValue)
             {
-                // Note: We don't update the trade here - AlgoRunnerViewModel will handle that
-                // Just return null to let normal signal evaluation proceed
+                if (currentPrice >= openTrade.TrailingStopActivationPrice.Value)
+                {
+                    // Activate trailing stop
+                    openTrade.TrailingStopActivated = true;
+                    openTrade.HighestPrice = currentPrice; // Initialize highest price
+                    await _tradeService.UpdateTradeAsync(openTrade);
+                    _logger.LogInformation("Trailing stop activated for {Symbol} at price {Price:F2}", symbol, currentPrice);
+                }
+                else
+                {
+                    // Not activated yet - waiting for price to reach activation level
+                    return null;
+                }
+            }
+
+            // If trailing stop not activated, don't check it
+            if (!openTrade.TrailingStopActivated)
+            {
                 return null;
             }
 
-            // Check if trailing stop is triggered
-            var stopLevel = peakRsi - settings.TrailingStopPoints;
-            if (currentRsi < stopLevel)
+            // Get highest price reached (or use entry price if null)
+            var highestPrice = openTrade.HighestPrice ?? openTrade.EntryPrice;
+
+            // FIX RACE CONDITION: Update highest price immediately if current price is higher
+            if (currentPrice > highestPrice)
             {
-                return (peakRsi, 
-                    $"Trailing stop triggered: RSI dropped from peak {peakRsi:F2} to {currentRsi:F2} (stop: {stopLevel:F2}, threshold: {settings.TrailingStopPoints:F2} points)");
+                openTrade.HighestPrice = currentPrice;
+                await _tradeService.UpdateTradeAsync(openTrade);
+                // Return null to let normal signal evaluation proceed
+                return null;
+            }
+
+            // Calculate trailing stop level based on mode
+            decimal stopPrice;
+            if (settings.TrailingStopMode == TrailingStopMode.Percentage)
+            {
+                // Percentage mode: stopPrice = highestPrice * (1 - distance/100)
+                stopPrice = highestPrice * (1 - (decimal)(settings.TrailingStopDistance / 100.0));
+            }
+            else // Price mode
+            {
+                // Price mode: stopPrice = highestPrice - distance
+                stopPrice = highestPrice - (decimal)settings.TrailingStopDistance;
+            }
+
+            // Never move stop backward - ensure stop only moves up
+            var previousStopPrice = openTrade.TrailingStopPrice;
+            if (previousStopPrice.HasValue && stopPrice < previousStopPrice.Value)
+            {
+                stopPrice = previousStopPrice.Value;
+            }
+            
+            // Update trailing stop price in trade (only if it changed)
+            if (!openTrade.TrailingStopPrice.HasValue || openTrade.TrailingStopPrice.Value != stopPrice)
+            {
+                openTrade.TrailingStopPrice = stopPrice;
+                await _tradeService.UpdateTradeAsync(openTrade);
+            }
+
+            // Check if trailing stop is triggered
+            if (currentPrice <= stopPrice)
+            {
+                var modeStr = settings.TrailingStopMode == TrailingStopMode.Percentage ? "%" : "$";
+                var distanceStr = settings.TrailingStopMode == TrailingStopMode.Percentage 
+                    ? $"{settings.TrailingStopDistance:F2}%" 
+                    : $"${settings.TrailingStopDistance:F2}";
+                
+                return (highestPrice, 
+                    $"Trailing stop triggered: Price dropped from ${highestPrice:F2} to ${currentPrice:F2} (stop: ${stopPrice:F2}, mode: {modeStr}, distance: {distanceStr})");
             }
 
             return null; // No trailing stop trigger

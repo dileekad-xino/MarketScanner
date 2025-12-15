@@ -6,6 +6,7 @@ using MarketScanner.Models;
 using MarketScanner.Services;
 using MarketScanner.Services.Ibkr;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MarketScanner.ViewModels;
 
@@ -411,6 +412,19 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100 
                 : 0;
             
+            // Get RSI settings to calculate stop-loss and activation price
+            var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+            var rsiSettingsService = serviceProvider?.GetService<IRsiSettingsService>();
+            var rsiSettings = rsiSettingsService != null ? await rsiSettingsService.GetAsync() : null;
+            
+            // Calculate initial stop-loss price
+            var initialStopLossPercent = rsiSettings?.InitialStopLossPercent ?? 2.0;
+            var initialStopLossPrice = EntryPrice.Value * (1 - (decimal)(initialStopLossPercent / 100.0));
+            
+            // Calculate trailing stop activation price
+            var activationPercent = rsiSettings?.TrailingStopActivationPercent ?? 2.0;
+            var activationPrice = EntryPrice.Value * (1 + (decimal)(activationPercent / 100.0));
+            
             var trade = new Trade
             {
                 Symbol = SelectedSymbol.Symbol,
@@ -424,7 +438,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 Status = TradeStatus.Open,
                 CurrentPrice = currentPrice,
                 AlgorithmName = _algorithm.Name,
-                PeakRsiValue = Result?.RsiValue // Initialize peak RSI with entry RSI if available
+                PeakRsiValue = Result?.RsiValue, // Initialize peak RSI with entry RSI if available
+                HighestPrice = EntryPrice.Value, // Initialize highest price with entry price
+                InitialStopLossPrice = initialStopLossPrice,
+                TrailingStopActivationPrice = activationPrice,
+                TrailingStopActivated = false // Will activate when price reaches activationPrice
             };
 
             await _tradeService.SaveTradeAsync(trade);
@@ -499,6 +517,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    private decimal? _lastUpdatePrice; // Track last price used for update
+    private const decimal UpdateThreshold = 0.002m; // 0.2% threshold for database updates
+
     private async Task UpdatePeakRsiAsync(double currentRsi)
     {
         if (_tradeService == null || SelectedSymbol == null || !_currentTradeId.HasValue)
@@ -508,6 +529,18 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            
+            // OPTIMIZATION: Only update if price changed significantly (>0.2%)
+            if (_lastUpdatePrice.HasValue)
+            {
+                var priceChange = Math.Abs(currentPrice - _lastUpdatePrice.Value) / _lastUpdatePrice.Value;
+                if (priceChange < UpdateThreshold)
+                {
+                    return; // Skip update - price change too small
+                }
+            }
+            
             // Get the existing trade
             var trades = await _tradeService.GetTradesBySymbolAsync(SelectedSymbol.Symbol);
             var trade = trades.FirstOrDefault(t => t.Id == _currentTradeId.Value && t.Status == TradeStatus.Open);
@@ -517,18 +550,32 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 return; // Trade not found or already closed
             }
 
+            bool needsUpdate = false;
+
             // Update peak RSI if current RSI is higher
             if (!trade.PeakRsiValue.HasValue || currentRsi > trade.PeakRsiValue.Value)
             {
                 trade.PeakRsiValue = currentRsi;
+                needsUpdate = true;
+            }
+            
+            // Update highest price for trailing stop (only if trailing stop is activated)
+            // Note: Highest price updates for trailing stop are now handled in CheckTrailingStopAsync
+            // This method only updates RSI tracking
+            
+            // Only update database if something changed
+            if (needsUpdate)
+            {
                 await _tradeService.UpdateTradeAsync(trade);
-                _logger.LogInformation("Updated peak RSI for {Symbol}: {PeakRsi:F2}", SelectedSymbol.Symbol, currentRsi);
+                _lastUpdatePrice = currentPrice; // Track last update price
+                _logger.LogInformation("Updated trade state for {Symbol}: PeakRSI={PeakRsi:F2}", 
+                    SelectedSymbol.Symbol, trade.PeakRsiValue);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to update peak RSI for {Symbol}", SelectedSymbol?.Symbol);
-            // Don't throw - allow algo to continue even if peak update fails
+            // Don't throw - allow algo to continue even if update fails
         }
     }
 

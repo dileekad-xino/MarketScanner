@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Globalization;
+
 
 namespace MarketScanner.Services.Ibkr;
 
@@ -687,7 +689,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     /// <param name="barSizeSeconds">Bar size in seconds (30 or 60)</param>
     /// <param name="count">Number of bars to fetch</param>
     /// <returns>List of candlesticks in chronological order (oldest first)</returns>
-    public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(string symbol, int barSizeSeconds, int count, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(
+    string symbol,
+    int barSizeSeconds,
+    int count,
+    CancellationToken ct = default)
     {
         await EnsureConnectedAsync(ct);
 
@@ -713,15 +719,25 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             Currency = "USD"
         };
 
-        // Calculate duration string based on bar size and count
-        // For 30-second bars, 50 bars = 25 minutes, request 1 hour to be safe
-        // For 60-second bars, 50 bars = 50 minutes, request 2 hours to be safe
-        var durationSeconds = barSizeSeconds * count * 2; // 2x buffer
-        // var durationStr = durationSeconds >= 3600 ? $"{durationSeconds / 3600 + 1} H" : $"{durationSeconds} S";
+        // ----------------------------------------------------
+        // FIX: Use only S or D (hours are NOT supported by IB)
+        // ----------------------------------------------------
+        var durationSeconds = barSizeSeconds * count * 2; // 2× buffer
+        string durationStr;
 
+        if (durationSeconds < 86400)
+        {
+            // Less than 1 day → seconds are REQUIRED
+            var secs = Math.Max(300, durationSeconds);  // minimum 5 minutes
+            durationStr = $"{secs} S";                  // always valid
+        }
+        else
+        {
+            // ≥ 1 day → days are allowed
+            var days = Math.Max(2, (int)Math.Ceiling(durationSeconds / 86400.0));
+            durationStr = $"{days} D";
+        }
 
-        var durationDays = Math.Max(1, (int)Math.Ceiling(durationSeconds / 86400.0));
-        var durationStr = $"{durationDays} D";
         var barSizeStr = barSizeSeconds switch
         {
             15 => "15 secs",
@@ -732,10 +748,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
         try
         {
-            // prepare end date = now UTC (IBKR expects "yyyyMMdd HH:mm:ss <TZ>" or "yyyyMMdd HH:mm:ss")
-            var endDateTime = DateTime.UtcNow.ToString("yyyyMMdd HH:mm:ss");
+            // Explicit UTC timezone — avoids warning 2174
+            var endDateTime = DateTime.UtcNow.ToString("yyyyMMdd HH:mm:ss 'UTC'");
+            _logger.LogInformation("GetHistoricalBarsAsync: endDateTime={End}", endDateTime);
 
-            // Request all trading hours (useRTH = 0) so pre/after market bars are included.
             _client.reqHistoricalData(
                 reqId,
                 contract,
@@ -743,16 +759,15 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 durationStr,
                 barSizeStr,
                 "TRADES",
-                0,     // useRTH = 0 -> include pre/post market
+                0,
                 1,
                 false,
                 null);
 
+            _logger.LogInformation(
+                "GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) {Duration} for {Symbol} (reqId={ReqId})",
+                count, barSizeStr, durationStr, symbol, reqId);
 
-            _logger.LogInformation("GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) for {Symbol} (reqId={ReqId})",
-                count, barSizeStr, symbol, reqId);
-
-            // Register cancellation
             ct.Register(() =>
             {
                 if (_histBarsWaiters.TryRemove(reqId, out var cancelledTcs))
@@ -763,21 +778,19 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 }
             });
 
-            // Wait for results with timeout
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
             try
             {
                 var results = await tcs.Task.WaitAsync(linkedCts.Token);
-                // Return only the requested count, oldest first
                 var sorted = results.OrderBy(c => c.Timestamp).TakeLast(count).ToList();
                 _logger.LogInformation("GetHistoricalBarsAsync: Received {Count} bars for {Symbol}", sorted.Count, symbol);
                 return sorted;
             }
             catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
             {
-                _logger.LogWarning("GetHistoricalBarsAsync: Timed out waiting for historical bars for {Symbol}", symbol);
+                _logger.LogWarning("GetHistoricalBarsAsync: TIMEOUT for {Symbol}", symbol);
                 return Array.Empty<Candlestick>();
             }
         }
@@ -793,6 +806,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histBarsMetadata.TryRemove(reqId, out _);
         }
     }
+
+
 
     #endregion
 
@@ -924,35 +939,54 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             // Parse timestamp from bar.Time (format: "yyyyMMdd HH:mm:ss" or "yyyyMMdd")
             // IBKR sends timestamps in Eastern Time (market time), so parse as ET and convert to UTC
+            // Clean and correct timestamp parsing (IBKR sends UTC-compatible timestamps)
+            // IBKR historical timestamps ARE ALWAYS in Eastern Time
             DateTime timestamp;
-            TimeZoneInfo easternTimeZone = TimestampUtils.GetEasternTimeZone();
 
-            if (DateTime.TryParseExact(bar.Time, "yyyyMMdd  HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out var parsedTime) ||
-                DateTime.TryParseExact(bar.Time, "yyyyMMdd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out parsedTime) ||
-                DateTime.TryParseExact(bar.Time, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out parsedTime))
+            string[] formats =
+                        {
+                "yyyyMMdd  HH:mm:ss",
+                "yyyyMMdd HH:mm:ss",
+                "yyyyMMdd"
+            };
+
+            // IBKR sometimes sends timestamps in the client machine's LOCAL TIME.
+            // Convert parsed time from LOCAL → UTC.
+
+            if (DateTime.TryParseExact(
+                    bar.Time,
+                    formats,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var localTime))
             {
-                // Treat parsed time as Eastern Time and convert to UTC
-                var easternTime = DateTime.SpecifyKind(parsedTime, DateTimeKind.Unspecified);
-                timestamp = TimeZoneInfo.ConvertTimeToUtc(easternTime, easternTimeZone);
+                // Treat as Local Time
+                var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Local);
 
-                var candle = new Candlestick(
-                    Symbol: metadata.Symbol,
-                    Open: (decimal)bar.Open,
-                    High: (decimal)bar.High,
-                    Low: (decimal)bar.Low,
-                    Close: (decimal)bar.Close,
-                    Volume: bar.Volume,
-                    Timestamp: timestamp,
-                    Interval: metadata.Interval
-                );
-                candleBuffer.Add(candle);
-                _logger.LogDebug("historicalData: Added candlestick for {Symbol} at {Time} (ET) -> {UtcTime} (UTC)", metadata.Symbol, bar.Time, timestamp);
+                // Convert Local → UTC
+                timestamp = unspecified.ToUniversalTime();
             }
             else
             {
-                _logger.LogWarning("historicalData: Could not parse timestamp '{Time}' for {Symbol}", bar.Time, metadata.Symbol);
+                _logger.LogWarning("Could not parse timestamp: {Time}", bar.Time);
+                return;
             }
-            return;
+
+
+            var candle = new Candlestick(
+                Symbol: metadata.Symbol,
+                Open: (decimal)bar.Open,
+                High: (decimal)bar.High,
+                Low: (decimal)bar.Low,
+                Close: (decimal)bar.Close,
+                Volume: bar.Volume,
+                Timestamp: timestamp,
+                Interval: metadata.Interval
+            );
+
+            candleBuffer.Add(candle);
+            _logger.LogDebug("historicalData: RAW={Raw} ET → UTC={Utc}", bar.Time, timestamp);
+
         }
 
         // Original logic for average volume / prev close

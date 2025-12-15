@@ -83,6 +83,7 @@ public partial class ScannerViewModel : ObservableObject
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _scannerItems = new();
     [ObservableProperty] private string _debugStatus = "";
+    [ObservableProperty] private string _marketStatus = "Market Closed";
 
     // Filter properties
 
@@ -143,6 +144,9 @@ public partial class ScannerViewModel : ObservableObject
     // Auto-refresh timer fields
     private CancellationTokenSource? _autoCts;
     private Task? _autoTask;
+
+    // Market status update timer
+    private System.Timers.Timer? _marketStatusTimer;
 
     // Property change handlers - all use debounced filtering
     partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
@@ -237,6 +241,10 @@ public partial class ScannerViewModel : ObservableObject
 
         // Wire auto-refresh property changes
         WireAutoRefresh();
+
+        // Initialize market status and set up periodic updates
+        UpdateMarketStatus();
+        SetupMarketStatusTimer();
     }
 
     private void SetProductionDefaults()
@@ -1373,6 +1381,32 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Updates the market status property based on current time.
+    /// </summary>
+    private void UpdateMarketStatus()
+    {
+        var status = MarketHours.GetMarketStatus();
+        MarketStatus = MarketHours.GetMarketStatusString(status);
+    }
+
+    /// <summary>
+    /// Sets up a timer to update market status every 60 seconds.
+    /// </summary>
+    private void SetupMarketStatusTimer()
+    {
+        _marketStatusTimer = new System.Timers.Timer(60000); // 60 seconds
+        _marketStatusTimer.Elapsed += (_, _) =>
+        {
+            _dispatcher.OnUI(() =>
+            {
+                UpdateMarketStatus();
+            });
+        };
+        _marketStatusTimer.AutoReset = true;
+        _marketStatusTimer.Start();
+    }
+
     public void Dispose()
     {
         _disposed = true;
@@ -1440,6 +1474,14 @@ public partial class ScannerViewModel : ObservableObject
         try
         {
             _syncQuotesSemaphore?.Dispose();
+        }
+        catch (ObjectDisposedException) { }
+
+        // Stop market status timer
+        try
+        {
+            _marketStatusTimer?.Stop();
+            _marketStatusTimer?.Dispose();
         }
         catch (ObjectDisposedException) { }
 

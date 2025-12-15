@@ -1,5 +1,6 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Utilities;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 
@@ -12,7 +13,7 @@ public class CandlestickStorage : ICandlestickStorage
 {
     private readonly CandlestickConfig _config;
     private readonly ILogger<CandlestickStorage> _logger;
-    
+
     // Storage: Dictionary key is "{symbol}_{interval}" -> Queue of candlesticks
     private readonly ConcurrentDictionary<string, Queue<Candlestick>> _storage = new();
 
@@ -24,14 +25,29 @@ public class CandlestickStorage : ICandlestickStorage
         _logger = logger;
     }
 
+
     public void AddCandlestick(Candlestick candlestick)
     {
-        var key = GetKey(candlestick.Symbol, candlestick.Interval);
+        // Normalize to UTC and truncate to interval boundary
+        var utc = TimestampUtils.NormalizeToUtc(candlestick.Timestamp);
+        var truncated = TimestampUtils.NormalizeAndTruncateToInterval(utc, _config.IntervalSeconds);
+        
+        // Create new candlestick with truncated UTC timestamp
+        var normalizedCandlestick = candlestick with { Timestamp = truncated };
+
+        // Diagnostic logging
+        _logger.LogDebug(
+            "CandlestickStorage: Add TS TRACE - raw={Raw:o}, utc={Utc:o}, truncated={Trunc:o}",
+            candlestick.Timestamp,
+            utc,
+            truncated);
+
+        var key = GetKey(normalizedCandlestick.Symbol, normalizedCandlestick.Interval);
         var queue = _storage.GetOrAdd(key, _ => new Queue<Candlestick>());
 
         lock (queue)
         {
-            queue.Enqueue(candlestick);
+            queue.Enqueue(normalizedCandlestick);
 
             // Maintain rolling window - remove oldest if exceeds max
             while (queue.Count > _config.MaxCandlesticksToStore)
@@ -40,8 +56,8 @@ public class CandlestickStorage : ICandlestickStorage
             }
         }
 
-        _logger.LogDebug("Added candlestick for {Symbol} ({Interval}). Total stored: {Count}",
-            candlestick.Symbol, candlestick.Interval, queue.Count);
+        _logger.LogInformation("Added candlestick for {Symbol} ({Interval}). Total stored: {Count}, Timestamp={Time:o} (Kind={Kind})",
+            normalizedCandlestick.Symbol, normalizedCandlestick.Interval, queue.Count, normalizedCandlestick.Timestamp, normalizedCandlestick.Timestamp.Kind);
     }
 
     public IReadOnlyList<Candlestick> GetCandlesticks(string symbol, string interval, int count)
@@ -54,19 +70,37 @@ public class CandlestickStorage : ICandlestickStorage
 
         lock (queue)
         {
-            // Return the most recent N candlesticks in chronological order
-            var candlesticks = queue.ToList();
+            // Ensure all timestamps are UTC and truncated (should already be from AddCandlestick, but verify)
+            var candlesticks = queue
+                .Select(c => 
+                {
+                    // Safety check: ensure UTC and truncated (should already be from AddCandlestick)
+                    if (c.Timestamp.Kind != DateTimeKind.Utc || !TimestampUtils.IsTruncated(c.Timestamp, _config.IntervalSeconds))
+                    {
+                        var truncated = TimestampUtils.NormalizeAndTruncateToInterval(c.Timestamp, _config.IntervalSeconds);
+                        return c with { Timestamp = truncated };
+                    }
+                    return c;
+                })
+                .OrderBy(c => c.Timestamp)
+                .ToList();
+            
             if (candlesticks.Count == 0)
                 return Array.Empty<Candlestick>();
 
-            // Take the last N items (most recent)
-            var result = candlesticks
-                .TakeLast(Math.Min(count, candlesticks.Count))
-                .ToList();
+            // Diagnostic logging
+            _logger.LogDebug("GetCandlesticks: Returning {Count} candles for {Symbol} ({Interval}), First={First:o}, Last={Last:o}",
+                candlesticks.Count, symbol, interval,
+                candlesticks.First().Timestamp,
+                candlesticks.Last().Timestamp);
 
-            return result;
+            // *** FIX ***
+            // Always return ALL candles. The strategy will handle trimming.
+            // This ensures live finalized candles are always visible to MACD.
+            return new List<Candlestick>(candlesticks);
         }
     }
+
 
     public Candlestick? GetLatestCandlestick(string symbol, string interval)
     {

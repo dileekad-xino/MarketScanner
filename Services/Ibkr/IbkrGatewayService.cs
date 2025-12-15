@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Globalization;
+
 
 namespace MarketScanner.Services.Ibkr;
 
@@ -41,7 +43,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private int _nextValidId;
     private int _nextReqId = 1;
     private bool _disposed;
-    
+
     /// <summary>
     /// Gets whether the service is connected to IBKR gateway.
     /// Returns true only if connection was successfully established (nextValidId > 0).
@@ -66,7 +68,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, string> _histReqToSymbol = new();
     private readonly ConcurrentDictionary<int, List<long>> _histVolumes = new();
     private readonly ConcurrentDictionary<int, double?> _histClosePrices = new(); // Track most recent close from historical data
-    
+
     // Historical bars tracking for RSI and other technical indicators
     private readonly ConcurrentDictionary<int, List<Bar>> _histBars = new();
     private readonly ConcurrentDictionary<int, TaskCompletionSource<List<Bar>>> _histBarWaiters = new();
@@ -433,7 +435,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // Use different ticker ID ranges: scanner uses 10000-19999, manual subscriptions use 20000+
         var tickerId = isFromScanner ? 10000 : _nextManualTickerId;
         var symbolList = symbols.ToList();
-        _logger.LogInformation("SubscribeToMarketData: Subscribing to {Count} symbols: {Symbols} (isFromScanner={IsFromScanner}, startingTickerId={TickerId})", 
+        _logger.LogInformation("SubscribeToMarketData: Subscribing to {Count} symbols: {Symbols} (isFromScanner={IsFromScanner}, startingTickerId={TickerId})",
             symbolList.Count, string.Join(", ", symbolList), isFromScanner, tickerId);
 
         foreach (var symbol in symbolList)
@@ -566,7 +568,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 null                    // chartOptions
             );
 
-            _logger.LogInformation("GetHistoricalBarsForRSIAsync: Requested {Days} days of {BarSize} bars for {Symbol} (reqId={ReqId})", 
+            _logger.LogInformation("GetHistoricalBarsForRSIAsync: Requested {Days} days of {BarSize} bars for {Symbol} (reqId={ReqId})",
                 days, barSize, symbol, reqId);
 
             // Wait for historicalDataEnd callback with timeout
@@ -597,12 +599,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         catch (Exception ex)
         {
             _logger.LogError(ex, "GetHistoricalBarsForRSIAsync: Error requesting historical data for {Symbol}", symbol);
-            
+
             // Clean up on error
             _histBarWaiters.TryRemove(reqId, out _);
             _histBars.TryRemove(reqId, out _);
             _histReqToSymbol.TryRemove(reqId, out _);
-            
+
             throw;
         }
     }
@@ -687,7 +689,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     /// <param name="barSizeSeconds">Bar size in seconds (30 or 60)</param>
     /// <param name="count">Number of bars to fetch</param>
     /// <returns>List of candlesticks in chronological order (oldest first)</returns>
-    public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(string symbol, int barSizeSeconds, int count, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(
+    string symbol,
+    int barSizeSeconds,
+    int count,
+    CancellationToken ct = default)
     {
         await EnsureConnectedAsync(ct);
 
@@ -713,11 +719,24 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             Currency = "USD"
         };
 
-        // Calculate duration string based on bar size and count
-        // For 30-second bars, 50 bars = 25 minutes, request 1 hour to be safe
-        // For 60-second bars, 50 bars = 50 minutes, request 2 hours to be safe
-        var durationSeconds = barSizeSeconds * count * 2; // 2x buffer
-        var durationStr = durationSeconds >= 3600 ? $"{durationSeconds / 3600 + 1} H" : $"{durationSeconds} S";
+        // ----------------------------------------------------
+        // FIX: Use only S or D (hours are NOT supported by IB)
+        // ----------------------------------------------------
+        var durationSeconds = barSizeSeconds * count * 2; // 2× buffer
+        string durationStr;
+
+        if (durationSeconds < 86400)
+        {
+            // Less than 1 day → seconds are REQUIRED
+            var secs = Math.Max(300, durationSeconds);  // minimum 5 minutes
+            durationStr = $"{secs} S";                  // always valid
+        }
+        else
+        {
+            // ≥ 1 day → days are allowed
+            var days = Math.Max(2, (int)Math.Ceiling(durationSeconds / 86400.0));
+            durationStr = $"{days} D";
+        }
 
         var barSizeStr = barSizeSeconds switch
         {
@@ -729,12 +748,26 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
         try
         {
-            _client.reqHistoricalData(
-                reqId, contract, "", durationStr, barSizeStr, "TRADES", 1, 1, false, null);
-            _logger.LogInformation("GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) for {Symbol} (reqId={ReqId})", 
-                count, barSizeStr, symbol, reqId);
+            // Explicit UTC timezone — avoids warning 2174
+            var endDateTime = DateTime.UtcNow.ToString("yyyyMMdd HH:mm:ss 'UTC'");
+            _logger.LogInformation("GetHistoricalBarsAsync: endDateTime={End}", endDateTime);
 
-            // Register cancellation
+            _client.reqHistoricalData(
+                reqId,
+                contract,
+                endDateTime,
+                durationStr,
+                barSizeStr,
+                "TRADES",
+                0,
+                1,
+                false,
+                null);
+
+            _logger.LogInformation(
+                "GetHistoricalBarsAsync: Requested {Count} bars ({BarSize}) {Duration} for {Symbol} (reqId={ReqId})",
+                count, barSizeStr, durationStr, symbol, reqId);
+
             ct.Register(() =>
             {
                 if (_histBarsWaiters.TryRemove(reqId, out var cancelledTcs))
@@ -745,21 +778,19 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 }
             });
 
-            // Wait for results with timeout
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
             try
             {
                 var results = await tcs.Task.WaitAsync(linkedCts.Token);
-                // Return only the requested count, oldest first
                 var sorted = results.OrderBy(c => c.Timestamp).TakeLast(count).ToList();
                 _logger.LogInformation("GetHistoricalBarsAsync: Received {Count} bars for {Symbol}", sorted.Count, symbol);
                 return sorted;
             }
             catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
             {
-                _logger.LogWarning("GetHistoricalBarsAsync: Timed out waiting for historical bars for {Symbol}", symbol);
+                _logger.LogWarning("GetHistoricalBarsAsync: TIMEOUT for {Symbol}", symbol);
                 return Array.Empty<Candlestick>();
             }
         }
@@ -775,6 +806,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histBarsMetadata.TryRemove(reqId, out _);
         }
     }
+
+
 
     #endregion
 
@@ -901,33 +934,59 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void historicalData(int reqId, Bar bar)
     {
         // Check if this is for candlestick preloading
-        if (_histBarsBuffers.TryGetValue(reqId, out var candleBuffer) && 
+        if (_histBarsBuffers.TryGetValue(reqId, out var candleBuffer) &&
             _histBarsMetadata.TryGetValue(reqId, out var metadata))
         {
             // Parse timestamp from bar.Time (format: "yyyyMMdd HH:mm:ss" or "yyyyMMdd")
+            // IBKR sends timestamps in Eastern Time (market time), so parse as ET and convert to UTC
+            // Clean and correct timestamp parsing (IBKR sends UTC-compatible timestamps)
+            // IBKR historical timestamps ARE ALWAYS in Eastern Time
             DateTime timestamp;
-            if (DateTime.TryParseExact(bar.Time, "yyyyMMdd  HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out timestamp) ||
-                DateTime.TryParseExact(bar.Time, "yyyyMMdd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out timestamp) ||
-                DateTime.TryParseExact(bar.Time, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out timestamp))
+
+            string[] formats =
+                        {
+                "yyyyMMdd  HH:mm:ss",
+                "yyyyMMdd HH:mm:ss",
+                "yyyyMMdd"
+            };
+
+            // IBKR sometimes sends timestamps in the client machine's LOCAL TIME.
+            // Convert parsed time from LOCAL → UTC.
+
+            if (DateTime.TryParseExact(
+                    bar.Time,
+                    formats,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var localTime))
             {
-                var candle = new Candlestick(
-                    Symbol: metadata.Symbol,
-                    Open: (decimal)bar.Open,
-                    High: (decimal)bar.High,
-                    Low: (decimal)bar.Low,
-                    Close: (decimal)bar.Close,
-                    Volume: bar.Volume,
-                    Timestamp: timestamp,
-                    Interval: metadata.Interval
-                );
-                candleBuffer.Add(candle);
-                _logger.LogDebug("historicalData: Added candlestick for {Symbol} at {Time}", metadata.Symbol, bar.Time);
+                // Treat as Local Time
+                var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Local);
+
+                // Convert Local → UTC
+                timestamp = unspecified.ToUniversalTime();
             }
             else
             {
-                _logger.LogWarning("historicalData: Could not parse timestamp '{Time}' for {Symbol}", bar.Time, metadata.Symbol);
+                _logger.LogWarning("Could not parse timestamp: {Time}", bar.Time);
+                return;
             }
-            return;
+
+
+            var candle = new Candlestick(
+                Symbol: metadata.Symbol,
+                Open: (decimal)bar.Open,
+                High: (decimal)bar.High,
+                Low: (decimal)bar.Low,
+                Close: (decimal)bar.Close,
+                Volume: bar.Volume,
+                Timestamp: timestamp,
+                Interval: metadata.Interval
+            );
+
+            candleBuffer.Add(candle);
+            _logger.LogDebug("historicalData: RAW={Raw} ET → UTC={Utc}", bar.Time, timestamp);
+
         }
 
         // Original logic for average volume / prev close
@@ -947,18 +1006,18 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             volumes.Add(bar.Volume);
         }
-        
+
         // Track the most recent close price (historical data comes in reverse chronological order, so first bar is most recent)
         if (_histClosePrices.TryGetValue(reqId, out var currentClose) && !currentClose.HasValue)
         {
             // Store the first (most recent) bar's close price as previous close
             _histClosePrices[reqId] = bar.Close;
-            _logger.LogInformation("historicalData: {Symbol} (reqId={ReqId}) - Stored close price {Close} from historical bar (Time={Time}, Open={Open}, High={High}, Low={Low}, Close={Close}, Volume={Volume})", 
+            _logger.LogInformation("historicalData: {Symbol} (reqId={ReqId}) - Stored close price {Close} from historical bar (Time={Time}, Open={Open}, High={High}, Low={Low}, Close={Close}, Volume={Volume})",
                 symbol, reqId, bar.Close, bar.Time, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume);
         }
         else
         {
-            _logger.LogDebug("historicalData: {Symbol} (reqId={ReqId}) - Received additional bar (Time={Time}, Close={Close}, Volume={Volume})", 
+            _logger.LogDebug("historicalData: {Symbol} (reqId={ReqId}) - Received additional bar (Time={Time}, Close={Close}, Volume={Volume})",
                 symbol, reqId, bar.Time, bar.Close, bar.Volume);
         }
     }
@@ -966,7 +1025,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void historicalDataEnd(int reqId, string startDate, string endDate)
     {
         // Check if this is for candlestick preloading
-        if (_histBarsWaiters.TryGetValue(reqId, out var candleTcs) && 
+        if (_histBarsWaiters.TryGetValue(reqId, out var candleTcs) &&
             _histBarsBuffers.TryGetValue(reqId, out var candleBuffer))
         {
             _logger.LogInformation("historicalDataEnd: Candlestick preload completed for reqId={ReqId}, received {Count} bars", reqId, candleBuffer.Count);
@@ -980,7 +1039,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             return;
         }
 
-        _logger.LogInformation("historicalDataEnd: {Symbol} (reqId={ReqId}) - Historical data request completed (startDate={StartDate}, endDate={EndDate})", 
+        _logger.LogInformation("historicalDataEnd: {Symbol} (reqId={ReqId}) - Historical data request completed (startDate={StartDate}, endDate={EndDate})",
             symbol, reqId, startDate, endDate);
 
         if (_histVolumes.TryGetValue(reqId, out var volumes))
@@ -993,20 +1052,20 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 if (_marketState.TryGetValue(symbol, out var state))
                 {
                     state.AverageVolume = avgVolume;
-                    
+
                     // Set previous close from historical data if available
                     if (_histClosePrices.TryGetValue(reqId, out var closePrice) && closePrice.HasValue)
                     {
                         state.PrevClose = (decimal)closePrice.Value;
-                        _logger.LogInformation("historicalDataEnd: {Symbol} - Setting PrevClose={PrevClose} from historical data, avgVolume={AvgVolume:N0} (received {BarCount} bars)", 
+                        _logger.LogInformation("historicalDataEnd: {Symbol} - Setting PrevClose={PrevClose} from historical data, avgVolume={AvgVolume:N0} (received {BarCount} bars)",
                             symbol, closePrice.Value, avgVolume, volumes.Count);
                     }
                     else
                     {
-                        _logger.LogWarning("historicalDataEnd: {Symbol} - No close price in historical data (received {BarCount} bars, avgVolume={AvgVolume:N0})", 
+                        _logger.LogWarning("historicalDataEnd: {Symbol} - No close price in historical data (received {BarCount} bars, avgVolume={AvgVolume:N0})",
                             symbol, volumes.Count, avgVolume);
                     }
-                    
+
                     EmitTickUpdate(symbol, state);
                 }
                 else
@@ -1070,7 +1129,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 ClosePrice: (double?)state.PrevClose,
                 Volume: state.Volume,
                 FiftyTwoWeekHigh: null,
-                Timestamp: DateTime.UtcNow,
+                Timestamp: TimestampUtils.ConvertUtcNowToMarketTime(),
                 Bid: null,
                 Ask: null,
                 High: (double?)state.High,
@@ -1127,19 +1186,19 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         if (_histBarWaiters.TryRemove(id, out var histBarTcs))
         {
             var symbol = _histReqToSymbol.GetValueOrDefault(id, "unknown");
-            _logger.LogWarning("Historical data request failed for {Symbol} (reqId={ReqId}, errorCode={ErrorCode}): {ErrorMsg}", 
+            _logger.LogWarning("Historical data request failed for {Symbol} (reqId={ReqId}, errorCode={ErrorCode}): {ErrorMsg}",
                 symbol, id, errorCode, errorMsg);
-            
+
             // Clean up tracking dictionaries
             _histBars.TryRemove(id, out _);
             _histReqToSymbol.TryRemove(id, out _);
             _histVolumes.TryRemove(id, out _);
             _histClosePrices.TryRemove(id, out _);
-            
+
             // Complete with exception so the caller knows the request failed
             histBarTcs.TrySetException(new Exception($"IBKR Error {errorCode}: {errorMsg}"));
         }
-        
+
         // Handle scanner-specific errors
         if (_scannerWaiters.TryGetValue(id, out var tcs))
         {

@@ -14,6 +14,10 @@ public class RsiSettings
     // Trailing Stop Configuration
     public TrailingStopMode TrailingStopMode { get; set; } = TrailingStopMode.Percentage;
     public double TrailingStopDistance { get; set; } = 1.0; // Percentage (1.0 = 1%) or Price amount
+    public double TrailingStopActivationPercent { get; set; } = 2.0; // Activation price as % above entry (default 2%)
+    
+    // Risk Management
+    public double InitialStopLossPercent { get; set; } = 2.0; // Initial stop-loss as % below entry (default 2%)
     
     // Deprecated: Use TrailingStopDistance instead. Kept for backward compatibility.
     [Obsolete("Use TrailingStopDistance instead")]
@@ -28,6 +32,8 @@ public class RsiSettings
         BarSize = "1 min",
         TrailingStopMode = TrailingStopMode.Percentage,
         TrailingStopDistance = 1.0,
+        TrailingStopActivationPercent = 2.0,
+        InitialStopLossPercent = 2.0,
         TrailingStopPoints = 4.0 // Deprecated
     };
 
@@ -40,6 +46,8 @@ public class RsiSettings
         BarSize = BarSize,
         TrailingStopMode = TrailingStopMode,
         TrailingStopDistance = TrailingStopDistance,
+        TrailingStopActivationPercent = TrailingStopActivationPercent,
+        InitialStopLossPercent = InitialStopLossPercent,
         TrailingStopPoints = TrailingStopPoints // Deprecated
     };
 }

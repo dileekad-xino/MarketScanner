@@ -8,8 +8,8 @@
             Stroke="{StaticResource BorderDark}"
             StrokeThickness="1"
             Padding="20"
-            WidthRequest="420"
-            MaximumWidthRequest="500"
+            WidthRequest="600"
+            MaximumWidthRequest="700"
             VerticalOptions="Center"
             HorizontalOptions="Center">
         <Border.StrokeShape>
@@ -17,7 +17,7 @@
         </Border.StrokeShape>
         <Grid RowDefinitions="Auto,Auto,Auto,Auto"
               RowSpacing="16"
-              MinimumHeightRequest="540">
+              MinimumHeightRequest="580">
             <Label Text="RSI Settings"
                    FontSize="20"
                    FontAttributes="Bold"
@@ -31,102 +31,163 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="6"/>
                 </Border.StrokeShape>
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="20"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       RowSpacing="16"
-                      MinimumHeightRequest="450">
-                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Length"
+                      MinimumHeightRequest="500">
+                    <!-- Left Column: RSI Parameters -->
+                    <VerticalStackLayout Grid.Column="0" Spacing="16">
+                        <Label Text="RSI Parameters"
                                TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Entry x:Name="PeriodEntry"
-                               Grid.Column="1"
-                               Keyboard="Numeric"
-                               Style="{StaticResource FilterEntryStyle}"/>
-                    </Grid>
-
-                    <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Oversold"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Entry x:Name="OversoldEntry"
-                               Grid.Column="1"
-                               Keyboard="Numeric"
-                               Style="{StaticResource FilterEntryStyle}"/>
-                    </Grid>
-
-                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Overbought"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Entry x:Name="OverboughtEntry"
-                               Grid.Column="1"
-                               Keyboard="Numeric"
-                               Style="{StaticResource FilterEntryStyle}"/>
-                    </Grid>
-
-                    <Grid Grid.Row="3" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Historical Days"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Entry x:Name="DaysEntry"
-                               Grid.Column="1"
-                               Keyboard="Numeric"
-                               Style="{StaticResource FilterEntryStyle}"/>
-                    </Grid>
-
-                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Bar Size"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Picker x:Name="BarSizePicker"
-                                Grid.Column="1"
-                                Title="Select interval"
-                                TextColor="{StaticResource OnSurfaceDark}"
-                                BackgroundColor="{StaticResource SurfaceDark}">
-                            <Picker.ItemsSource>
-                                <x:Array Type="{x:Type x:String}">
-                                    <x:String>15 secs</x:String>
-                                    <x:String>30 secs</x:String>
-                                    <x:String>1 min</x:String>
-                                </x:Array>
-                            </Picker.ItemsSource>
-                        </Picker>
-                    </Grid>
-
-                    <Grid Grid.Row="5" ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Label Text="Trailing Stop Mode"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Picker x:Name="TrailingStopModePicker"
-                                Grid.Column="1"
-                                Title="Select mode"
-                                TextColor="{StaticResource OnSurfaceDark}"
-                                BackgroundColor="{StaticResource SurfaceDark}">
-                            <Picker.ItemsSource>
-                                <x:Array Type="{x:Type x:String}">
-                                    <x:String>Percentage</x:String>
-                                    <x:String>Price</x:String>
-                                </x:Array>
-                            </Picker.ItemsSource>
-                        </Picker>
-                    </Grid>
-                    
-                    <Grid Grid.Row="6" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
-                        <Label Text="Trailing Stop Distance"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"/>
-                        <Entry x:Name="TrailingStopDistanceEntry"
-                               Grid.Column="1"
-                               Keyboard="Numeric"
-                               Style="{StaticResource FilterEntryStyle}"/>
-                        <Label x:Name="TrailingStopUnitLabel"
-                               Grid.Column="2"
-                               Text="%"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               VerticalOptions="Center"
                                FontSize="14"
-                               Margin="5,0,0,0"/>
-                    </Grid>
+                               FontAttributes="Bold"
+                               Margin="0,0,0,4"/>
+                        
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Length"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="PeriodEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Oversold"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="OversoldEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Overbought"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="OverboughtEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Historical Days"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="DaysEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Bar Size"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Picker x:Name="BarSizePicker"
+                                    Grid.Column="1"
+                                    Title="Select interval"
+                                    TextColor="{StaticResource OnSurfaceDark}"
+                                    BackgroundColor="{StaticResource SurfaceDark}">
+                                <Picker.ItemsSource>
+                                    <x:Array Type="{x:Type x:String}">
+                                        <x:String>15 secs</x:String>
+                                        <x:String>30 secs</x:String>
+                                        <x:String>1 min</x:String>
+                                    </x:Array>
+                                </Picker.ItemsSource>
+                            </Picker>
+                        </Grid>
+                    </VerticalStackLayout>
+
+                    <!-- Right Column: Risk Management & Trailing Stop -->
+                    <VerticalStackLayout Grid.Column="1" Spacing="16">
+                        <Label Text="Risk Management"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="14"
+                               FontAttributes="Bold"
+                               Margin="0,0,0,4"/>
+                        
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                            <Label Text="Initial Stop-Loss"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="InitialStopLossEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                            <Label Text="%"
+                                   Grid.Column="2"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"
+                                   FontSize="14"
+                                   Margin="5,0,0,0"/>
+                        </Grid>
+                        
+                        <BoxView HeightRequest="1" 
+                                 BackgroundColor="{StaticResource BorderDark}" 
+                                 Margin="0,8"/>
+                        
+                        <Label Text="Trailing Stop"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="14"
+                               FontAttributes="Bold"
+                               Margin="0,4,0,4"/>
+                        
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                            <Label Text="Mode"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Picker x:Name="TrailingStopModePicker"
+                                    Grid.Column="1"
+                                    Title="Select mode"
+                                    TextColor="{StaticResource OnSurfaceDark}"
+                                    BackgroundColor="{StaticResource SurfaceDark}">
+                                <Picker.ItemsSource>
+                                    <x:Array Type="{x:Type x:String}">
+                                        <x:String>Percentage</x:String>
+                                        <x:String>Price</x:String>
+                                    </x:Array>
+                                </Picker.ItemsSource>
+                            </Picker>
+                        </Grid>
+                        
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                            <Label Text="Distance"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="TrailingStopDistanceEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                            <Label x:Name="TrailingStopUnitLabel"
+                                   Grid.Column="2"
+                                   Text="%"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"
+                                   FontSize="14"
+                                   Margin="5,0,0,0"/>
+                        </Grid>
+                        
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                            <Label Text="Activation Price"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"/>
+                            <Entry x:Name="ActivationPriceEntry"
+                                   Grid.Column="1"
+                                   Keyboard="Numeric"
+                                   Style="{StaticResource FilterEntryStyle}"/>
+                            <Label Text="%"
+                                   Grid.Column="2"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   VerticalOptions="Center"
+                                   FontSize="14"
+                                   Margin="5,0,0,0"/>
+                        </Grid>
+                    </VerticalStackLayout>
                 </Grid>
             </Border>
 

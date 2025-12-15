@@ -32,6 +32,12 @@ public partial class RsiSettingsPopup : Popup
         // Set trailing stop distance
         TrailingStopDistanceEntry.Text = settings.TrailingStopDistance.ToString("0.##");
         
+        // Set initial stop-loss
+        InitialStopLossEntry.Text = settings.InitialStopLossPercent.ToString("0.##");
+        
+        // Set activation price
+        ActivationPriceEntry.Text = settings.TrailingStopActivationPercent.ToString("0.##");
+        
         // Set bar size picker
         var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
         var barSizeIndex = Array.IndexOf(validBarSizes, settings.BarSize);
@@ -118,6 +124,13 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
+        // Validate initial stop-loss
+        if (!double.TryParse(InitialStopLossEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var initialStopLoss) || initialStopLoss <= 0 || initialStopLoss > 10)
+        {
+            error = "Initial stop-loss must be between 0.1 and 10 percent.";
+            return false;
+        }
+
         if (TrailingStopModePicker.SelectedIndex < 0)
         {
             error = "Please select a trailing stop mode.";
@@ -151,6 +164,13 @@ public partial class RsiSettingsPopup : Popup
                 return false;
             }
         }
+        
+        // Validate activation price
+        if (!double.TryParse(ActivationPriceEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var activationPrice) || activationPrice <= 0 || activationPrice > 20)
+        {
+            error = "Activation price must be between 0.1 and 20 percent.";
+            return false;
+        }
 
         var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
         var barSize = validBarSizes[BarSizePicker.SelectedIndex];
@@ -160,8 +180,10 @@ public partial class RsiSettingsPopup : Popup
         settings.Overbought = overbought;
         settings.HistoricalDays = days;
         settings.BarSize = barSize;
+        settings.InitialStopLossPercent = initialStopLoss;
         settings.TrailingStopMode = trailingStopMode;
         settings.TrailingStopDistance = trailingStopDistance;
+        settings.TrailingStopActivationPercent = activationPrice;
         // Keep TrailingStopPoints for backward compatibility (deprecated)
         settings.TrailingStopPoints = trailingStopDistance;
         return true;

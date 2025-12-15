@@ -50,5 +50,25 @@ public class Trade
     /// Highest price reached since position opened (for trailing stop calculation)
     /// </summary>
     public decimal? HighestPrice { get; set; }
+    
+    /// <summary>
+    /// Initial stop-loss price set when position opens
+    /// </summary>
+    public decimal? InitialStopLossPrice { get; set; }
+    
+    /// <summary>
+    /// Activation price for trailing stop (trailing only activates after price reaches this level)
+    /// </summary>
+    public decimal? TrailingStopActivationPrice { get; set; }
+    
+    /// <summary>
+    /// Whether trailing stop has been activated (price reached activation level)
+    /// </summary>
+    public bool TrailingStopActivated { get; set; }
+    
+    /// <summary>
+    /// Current trailing stop price (for tracking - never moves backward)
+    /// </summary>
+    public decimal? TrailingStopPrice { get; set; }
 }
 

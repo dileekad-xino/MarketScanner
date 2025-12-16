@@ -52,5 +52,23 @@ public interface ICandlestickBuilder
     /// <param name="symbol">The symbol to preload candlesticks for</param>
     /// <param name="ct">Cancellation token</param>
     Task PreloadCandlesticksAsync(string symbol, CancellationToken ct = default);
+
+    /// <summary>
+    /// Event fired when an in-progress candlestick is updated with new tick data.
+    /// Fires on every tick to enable live MACD/RSI updates.
+    /// </summary>
+    event Action<string, Candlestick>? OnLiveCandleUpdated;
+
+    /// <summary>
+    /// Event fired on every tick with the price and timestamp.
+    /// Used for live MACD/RSI updates.
+    /// </summary>
+    event Action<string, decimal, DateTime>? OnTickPrice;
+
+    /// <summary>
+    /// Event fired when a candlestick is finalized (interval boundary crossed).
+    /// Used to replace tick-based updates with final candle close price.
+    /// </summary>
+    event Action<string, Candlestick>? OnFinalizedCandle;
 }
 

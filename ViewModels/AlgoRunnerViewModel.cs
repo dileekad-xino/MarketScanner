@@ -7,6 +7,7 @@ using MarketScanner.Services;
 using MarketScanner.Services.Ibkr;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using MarketScanner.Services.Impl;
 
 namespace MarketScanner.ViewModels;
 
@@ -17,17 +18,29 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly ICandlestickBuilder? _candlestickBuilder;
     private readonly IbkrGatewayService? _ibkrGatewayService;
     private readonly ITradeService? _tradeService;
+    private readonly Services.Impl.MacdStrategy? _macdStrategy;
+    private readonly Services.Impl.LiveRsiService? _liveRsiService;
+    private readonly Services.Impl.MacdEngine? _macdEngine;
+    private readonly Services.Impl.RsiEngine? _rsiEngine;
+
+    private readonly IRsiSettingsService? _rsiSettingsService;
+    private readonly ICandlestickStorage? _candlestickStorage;
+    private readonly Config.CandlestickConfig? _config;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
     private IDisposable? _candlestickSubscription;
+    private Action<string, Candlestick>? _liveCandleUpdateHandler;
+    private Action<string, decimal, DateTime>? _tickPriceHandler;
+    private Action<string, Candlestick>? _finalizedCandleHandler;
     private DateTime? _entryTime;
     private int? _currentTradeId; // Track the current open trade ID
+    private bool _previousWasBullish;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private string _errorMessage = string.Empty;
-    
+
     // Quantity and P/L tracking
     [ObservableProperty] private int _quantity = 100;
     [ObservableProperty] private decimal? _entryPrice;
@@ -38,7 +51,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     [ObservableProperty] private bool _hasPosition;
     [ObservableProperty] private bool _positionClosed;
     [ObservableProperty] private string _plCalculation = string.Empty;
-    
+
     // MACD display properties
     [ObservableProperty] private decimal _macdLine;
     [ObservableProperty] private decimal _signalLine;
@@ -48,18 +61,35 @@ public partial class AlgoRunnerViewModel : ObservableObject
     [ObservableProperty] private bool _hasCrossedUp;
     [ObservableProperty] private bool _hasCrossedDown;
 
+    // Live RSI display property (updates on every tick)
+    [ObservableProperty] private double? _liveRsiValue;
+
     public AlgoRunnerViewModel(
         IAlgoStrategy algorithm,
         ILogger<AlgoRunnerViewModel> logger,
         ICandlestickBuilder? candlestickBuilder = null,
         IbkrGatewayService? ibkrGatewayService = null,
-        ITradeService? tradeService = null)
+        ITradeService? tradeService = null,
+        Services.Impl.MacdStrategy? macdStrategy = null,
+        Services.Impl.LiveRsiService? liveRsiService = null,
+        Services.Impl.MacdEngine? macdEngine = null,
+        Services.Impl.RsiEngine? rsiEngine = null,
+        IRsiSettingsService? rsiSettingsService = null,
+        ICandlestickStorage? candlestickStorage = null,
+        Config.CandlestickConfig? config = null)
     {
         _algorithm = algorithm;
         _logger = logger;
         _candlestickBuilder = candlestickBuilder;
         _ibkrGatewayService = ibkrGatewayService;
         _tradeService = tradeService;
+        _macdStrategy = macdStrategy;
+        _liveRsiService = liveRsiService;
+        _macdEngine = macdEngine;
+        _rsiEngine = rsiEngine;
+        _rsiSettingsService = rsiSettingsService;
+        _candlestickStorage = candlestickStorage;
+        _config = config;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -72,7 +102,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // Subscribe to live tick updates for this symbol
         SubscribeToTickUpdates();
 
-        _logger.LogInformation("AlgoRunner initialized for symbol {Symbol} with algorithm {AlgorithmName}", 
+        _logger.LogInformation("AlgoRunner initialized for symbol {Symbol} with algorithm {AlgorithmName}",
             symbol.Symbol, _algorithm.Name);
     }
 
@@ -116,8 +146,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
         ExitPrice = currentPrice;
         PositionValue = currentPrice * Quantity;
         ProfitLoss = (currentPrice - EntryPrice.Value) * Quantity;
-        ProfitLossPercent = EntryPrice.Value > 0 
-            ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100 
+        ProfitLossPercent = EntryPrice.Value > 0
+            ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100
             : 0;
         PlCalculation = $"({currentPrice:C2} - {EntryPrice.Value:C2}) × {Quantity} = {ProfitLoss:C2}";
     }
@@ -140,11 +170,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource = new CancellationTokenSource();
 
-            _logger.LogInformation("Starting continuous monitoring for {Symbol} with algorithm {AlgorithmName}", 
+            _logger.LogInformation("Starting continuous monitoring for {Symbol} with algorithm {AlgorithmName}",
                 SelectedSymbol.Symbol, _algorithm.Name);
 
             // Run initial algo execution
             await ExecuteAlgoOnceAsync();
+
+            // Initialize RSI state for live updates
+            await InitializeRsiStateAsync();
 
             // Subscribe to candlestick stream for continuous updates
             SubscribeToCandlestickStream();
@@ -183,7 +216,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 await UpdatePeakRsiAsync(Result.RsiValue.Value);
             }
 
-            _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}", 
+            _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}",
                 Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);
 
             // Ensure we only buy when we don't have a position, and only sell when we have a position
@@ -209,7 +242,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 HasPosition = true;
                 PositionClosed = false;
                 _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
-                
+
                 // Save trade as open position
                 await SaveTradeAsync();
             }
@@ -219,7 +252,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 PositionClosed = true;
                 HasPosition = false; // Position is now closed
                 _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
-                
+
                 // Update trade to mark as closed
                 await UpdateTradeAsync();
             }
@@ -252,6 +285,102 @@ public partial class AlgoRunnerViewModel : ObservableObject
             .Where(c => c.Symbol == SelectedSymbol.Symbol)
             .Subscribe(OnNewCandlestick);
 
+        // Subscribe to live candle updates for real-time RSI (MACD only updates on finalized candles)
+        _liveCandleUpdateHandler = (symbol, candle) =>
+        {
+            if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
+                return;
+
+            // RSI live update (MACD updates only on finalized candles via MacdEngine)
+            if (_liveRsiService != null && SelectedSymbol != null)
+            {
+                var interval = candle.Interval;
+                var rsi = _liveRsiService.LiveUpdate(symbol, interval, (double)candle.Close, candle.Timestamp);
+                if (rsi.HasValue)
+                {
+                    UpdateLiveRsiDisplay(symbol, rsi.Value);
+                }
+            }
+        };
+        
+        _candlestickBuilder.OnLiveCandleUpdated += _liveCandleUpdateHandler;
+
+        // Subscribe to tick price and finalized candle events for MacdEngine
+        if (_macdEngine != null && _rsiEngine != null && _config != null)
+        {
+            var interval = GetIntervalString(_config.IntervalSeconds);
+
+            // TICK UPDATE (RSI + MACD)
+            _tickPriceHandler = (symbol, price, ts) =>
+            {
+                if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
+                    return;
+
+                // RSI updates every tick (pass timestamp)
+                _rsiEngine.UpdateLive(symbol, interval, price, ts);
+                
+                // MACD updates every tick
+                _macdEngine.UpdateOnTick(symbol, interval, price, ts);
+                
+                // Update UI with latest MACD values from engine
+                var macdResult = _macdEngine.GetLastMacd(symbol, interval);
+                if (macdResult.HasValue)
+                {
+                    var (macd, signal, hist) = macdResult.Value;
+                    var macdData = new MacdData(
+                        Symbol: symbol,
+                        MacdLine: (decimal)macd,
+                        SignalLine: (decimal)signal,
+                        Histogram: (decimal)hist,
+                        Timestamp: ts,
+                        Interval: interval
+                    );
+                    UpdateMacdDisplayFromLive(macdData);
+                }
+                
+                // Update RSI display (update LiveRsiValue property for UI binding)
+                var rsi = _rsiEngine.GetRsi(symbol, interval);
+                if (rsi.HasValue)
+                {
+                    LiveRsiValue = rsi.Value; // Update live property for UI
+                    UpdateLiveRsiDisplay(symbol, rsi.Value); // Keep existing for SelectedSymbol
+                }
+            };
+
+            // FINALIZED CANDLE UPDATE (RSI + MACD)
+            _finalizedCandleHandler = (symbol, candle) =>
+            {
+                if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
+                    return;
+
+                // MACD updates when a candle closes
+                _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle);
+
+                // RSI also updates on finalized close (pass candle timestamp)
+                _rsiEngine.UpdateLive(symbol, candle.Interval, candle.Close, candle.Timestamp);
+
+                // Update UI with latest MACD values from engine
+                var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
+                if (macdResult.HasValue)
+                {
+                    var (macd, signal, hist) = macdResult.Value;
+                    var macdData = new MacdData(
+                        Symbol: symbol,
+                        MacdLine: (decimal)macd,
+                        SignalLine: (decimal)signal,
+                        Histogram: (decimal)hist,
+                        Timestamp: candle.Timestamp,
+                        Interval: candle.Interval
+                    );
+                    UpdateMacdDisplayFromLive(macdData);
+                }
+            };
+
+            _candlestickBuilder.OnTickPrice += _tickPriceHandler;
+            _candlestickBuilder.OnFinalizedCandle += _finalizedCandleHandler;
+        }
+
+
         _logger.LogInformation("Subscribed to candlestick stream for continuous RSI/MACD updates on {Symbol}", SelectedSymbol.Symbol);
     }
 
@@ -268,14 +397,36 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private void StopAlgo()
     {
         _logger.LogInformation("Stopping algorithm monitoring for {Symbol}", SelectedSymbol?.Symbol);
-        
+
         // Stop candlestick subscription
         _candlestickSubscription?.Dispose();
         _candlestickSubscription = null;
-        
+
+        // Unsubscribe from live updates
+        if (_candlestickBuilder != null)
+        {
+            if (_liveCandleUpdateHandler != null)
+            {
+                _candlestickBuilder.OnLiveCandleUpdated -= _liveCandleUpdateHandler;
+                _liveCandleUpdateHandler = null;
+            }
+
+            if (_tickPriceHandler != null)
+            {
+                _candlestickBuilder.OnTickPrice -= _tickPriceHandler;
+                _tickPriceHandler = null;
+            }
+
+            if (_finalizedCandleHandler != null)
+            {
+                _candlestickBuilder.OnFinalizedCandle -= _finalizedCandleHandler;
+                _finalizedCandleHandler = null;
+            }
+        }
+
         // Cancel any pending execution
         _cancellationTokenSource?.Cancel();
-        
+
         IsRunning = false;
     }
 
@@ -285,7 +436,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // NOTE: Do NOT stop the algo when closing - it keeps running in background
         // Only close the page UI
         _logger.LogInformation("Closing algo runner window (algo continues running in background)");
-        
+
         // Close the page
         if (Application.Current?.MainPage != null)
         {
@@ -300,6 +451,26 @@ public partial class AlgoRunnerViewModel : ObservableObject
             try
             {
                 _candlestickBuilder.UnsubscribeSymbol(SelectedSymbol.Symbol);
+
+                // Unsubscribe from live updates
+                if (_liveCandleUpdateHandler != null)
+                {
+                    _candlestickBuilder.OnLiveCandleUpdated -= _liveCandleUpdateHandler;
+                    _liveCandleUpdateHandler = null;
+                }
+
+                if (_tickPriceHandler != null)
+                {
+                    _candlestickBuilder.OnTickPrice -= _tickPriceHandler;
+                    _tickPriceHandler = null;
+                }
+
+                if (_finalizedCandleHandler != null)
+                {
+                    _candlestickBuilder.OnFinalizedCandle -= _finalizedCandleHandler;
+                    _finalizedCandleHandler = null;
+                }
+
                 _logger.LogInformation("Unsubscribed {Symbol} from candlestick builder", SelectedSymbol.Symbol);
             }
             catch (Exception ex)
@@ -327,12 +498,93 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // Update crossover status
         HasCrossedUp = Result.Crossover == Models.CrossoverStatus.CrossedUp;
         HasCrossedDown = Result.Crossover == Models.CrossoverStatus.CrossedDown;
-        
+
         CrossoverStatus = Result.Crossover switch
         {
             Models.CrossoverStatus.CrossedUp => "↑ Crossed Up",
             Models.CrossoverStatus.CrossedDown => "↓ Crossed Down",
             _ => "No Crossover"
+        };
+    }
+
+    private void UpdateMacdDisplayFromLive(MacdData macd)
+    {
+        MacdLine = macd.MacdLine;
+        SignalLine = macd.SignalLine;
+        Histogram = macd.Histogram;
+        IsHistogramPositive = macd.HasPositiveHistogram;
+
+        // Update crossover status (compare with previous values)
+        bool isBullish = macd.IsBullish;
+        HasCrossedUp = isBullish && !_previousWasBullish;
+        HasCrossedDown = !isBullish && _previousWasBullish;
+        _previousWasBullish = isBullish;
+
+        CrossoverStatus = isBullish ? "↑ Bullish" : "↓ Bearish";
+    }
+
+    private void UpdateLiveRsiDisplay(string symbol, double rsi)
+    {
+        if (SelectedSymbol?.Symbol == symbol)
+        {
+            SelectedSymbol.RsiValue = rsi;
+            // RSI signal logic can be added here if needed
+            // For now, just update the value
+        }
+    }
+
+    private async Task InitializeRsiStateAsync()
+    {
+        if (_liveRsiService == null || _rsiSettingsService == null || _candlestickStorage == null ||
+            _config == null || SelectedSymbol == null)
+        {
+            _logger.LogDebug("AlgoRunnerViewModel: Skipping RSI state initialization - required services not available");
+            return;
+        }
+
+        try
+        {
+            var settings = await _rsiSettingsService.GetAsync();
+            var interval = GetIntervalString(_config.IntervalSeconds);
+
+            // Get historical candlesticks from storage
+            var candlesticks = _candlestickStorage.GetCandlesticks(SelectedSymbol.Symbol, interval, int.MaxValue)
+                .OrderBy(c => c.Timestamp)
+                .ToList();
+
+            if (candlesticks.Count >= settings.Period + 1)
+            {
+                _liveRsiService.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
+                
+                // Also initialize RsiEngine if available
+                if (_rsiEngine != null)
+                {
+                    _rsiEngine.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
+                }
+                
+                _logger.LogInformation("AlgoRunnerViewModel: Initialized RSI state for {Symbol} with {Count} candlesticks",
+                    SelectedSymbol.Symbol, candlesticks.Count);
+            }
+            else
+            {
+                _logger.LogWarning("AlgoRunnerViewModel: Insufficient candlesticks for RSI initialization. Need {Required}, got {Actual}",
+                    settings.Period + 1, candlesticks.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AlgoRunnerViewModel: Error initializing RSI state for {Symbol}", SelectedSymbol?.Symbol);
+        }
+    }
+
+    private string GetIntervalString(int intervalSeconds)
+    {
+        return intervalSeconds switch
+        {
+            15 => "15s",
+            30 => "30s",
+            60 => "1min",
+            _ => $"{intervalSeconds}s"
         };
     }
 
@@ -342,14 +594,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
             return;
 
         var currentPrice = (decimal)SelectedSymbol.LastPrice;
-        
+
         // Don't auto-open position - wait for BUY signal from algorithm
         // Only update exit price if we have an open position
         if (HasPosition && !PositionClosed)
         {
             ExitPrice = currentPrice;
         }
-        
+
         // Calculate position value only if we have a position
         if (HasPosition && EntryPrice.HasValue)
         {
@@ -359,7 +611,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             PositionValue = 0;
         }
-        
+
         // Calculate P/L if we have a position (open or closed)
         if (HasPosition && EntryPrice.HasValue && EntryPrice.Value > 0)
         {
@@ -367,7 +619,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             var priceForPL = PositionClosed && ExitPrice.HasValue ? ExitPrice.Value : currentPrice;
             ProfitLoss = (priceForPL - EntryPrice.Value) * Quantity;
             ProfitLossPercent = ((priceForPL - EntryPrice.Value) / EntryPrice.Value) * 100;
-            
+
             if (PositionClosed)
             {
                 PlCalculation = $"({priceForPL:C2} - {EntryPrice.Value:C2}) × {Quantity} = {ProfitLoss:C2}";
@@ -413,23 +665,23 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             var currentPrice = (decimal)SelectedSymbol.LastPrice;
             var profitLoss = (currentPrice - EntryPrice.Value) * Quantity;
-            var profitLossPercent = EntryPrice.Value > 0 
-                ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100 
+            var profitLossPercent = EntryPrice.Value > 0
+                ? ((currentPrice - EntryPrice.Value) / EntryPrice.Value) * 100
                 : 0;
-            
+
             // Get RSI settings to calculate stop-loss and activation price
             var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
             var rsiSettingsService = serviceProvider?.GetService<IRsiSettingsService>();
             var rsiSettings = rsiSettingsService != null ? await rsiSettingsService.GetAsync() : null;
-            
+
             // Calculate initial stop-loss price
             var initialStopLossPercent = rsiSettings?.InitialStopLossPercent ?? 2.0;
             var initialStopLossPrice = EntryPrice.Value * (1 - (decimal)(initialStopLossPercent / 100.0));
-            
+
             // Calculate trailing stop activation price
             var activationPercent = rsiSettings?.TrailingStopActivationPercent ?? 2.0;
             var activationPrice = EntryPrice.Value * (1 + (decimal)(activationPercent / 100.0));
-            
+
             var trade = new Trade
             {
                 Symbol = SelectedSymbol.Symbol,
@@ -451,13 +703,13 @@ public partial class AlgoRunnerViewModel : ObservableObject
             };
 
             await _tradeService.SaveTradeAsync(trade);
-            
+
             // Query for the trade ID after insertion (SQLite-net should update Id, but query to be safe)
             if (trade.Id == 0)
             {
                 var openTrades = await _tradeService.GetOpenTradesAsync();
                 var latestTrade = openTrades
-                    .Where(t => t.Symbol == SelectedSymbol.Symbol && 
+                    .Where(t => t.Symbol == SelectedSymbol.Symbol &&
                                Math.Abs((t.EntryTime - _entryTime.Value).TotalSeconds) < 1) // Match within 1 second
                     .OrderByDescending(t => t.EntryTime)
                     .FirstOrDefault();
@@ -470,7 +722,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             {
                 _currentTradeId = trade.Id;
             }
-            
+
             _logger.LogInformation("Trade saved (OPEN): {Symbol} Entry={EntryPrice:C2} Status={Status} TradeId={TradeId}",
                 trade.Symbol, trade.EntryPrice, trade.Status, _currentTradeId);
         }
@@ -512,7 +764,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             await _tradeService.UpdateTradeAsync(trade);
             _logger.LogInformation("Trade updated (CLOSED): {Symbol} Entry={EntryPrice:C2} Exit={ExitPrice:C2} P/L={PL:C2}",
                 trade.Symbol, trade.EntryPrice, trade.ExitPrice, trade.ProfitLoss);
-            
+
             _currentTradeId = null; // Clear the trade ID
         }
         catch (Exception ex)
@@ -535,7 +787,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         try
         {
             var currentPrice = (decimal)SelectedSymbol.LastPrice;
-            
+
             // OPTIMIZATION: Only update if price changed significantly (>0.2%)
             if (_lastUpdatePrice.HasValue)
             {
@@ -545,7 +797,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     return; // Skip update - price change too small
                 }
             }
-            
+
             // Get the existing trade
             var trades = await _tradeService.GetTradesBySymbolAsync(SelectedSymbol.Symbol);
             var trade = trades.FirstOrDefault(t => t.Id == _currentTradeId.Value && t.Status == TradeStatus.Open);
@@ -563,17 +815,17 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 trade.PeakRsiValue = currentRsi;
                 needsUpdate = true;
             }
-            
+
             // Update highest price for trailing stop (only if trailing stop is activated)
             // Note: Highest price updates for trailing stop are now handled in CheckTrailingStopAsync
             // This method only updates RSI tracking
-            
+
             // Only update database if something changed
             if (needsUpdate)
             {
                 await _tradeService.UpdateTradeAsync(trade);
                 _lastUpdatePrice = currentPrice; // Track last update price
-                _logger.LogInformation("Updated trade state for {Symbol}: PeakRSI={PeakRsi:F2}", 
+                _logger.LogInformation("Updated trade state for {Symbol}: PeakRSI={PeakRsi:F2}",
                     SelectedSymbol.Symbol, trade.PeakRsiValue);
             }
         }
@@ -589,14 +841,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // Stop algo monitoring
         _candlestickSubscription?.Dispose();
         _candlestickSubscription = null;
-        
+
         // Unsubscribe from tick stream
         _tickSubscription?.Dispose();
         _tickSubscription = null;
-        
+
         // Unsubscribe from candlestick builder on disposal to ensure cleanup
         UnsubscribeFromCandlestickBuilder();
-        
+
         _cancellationTokenSource?.Cancel();
         _cancellationTokenSource?.Dispose();
     }

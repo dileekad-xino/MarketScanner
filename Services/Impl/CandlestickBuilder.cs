@@ -39,6 +39,10 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
     private readonly ConcurrentDictionary<string, DateTime> _lastIntervalBoundary = new();
 
     public IObservable<Candlestick> CandlestickStream => _candlestickSubject.AsObservable();
+    
+    public event Action<string, Candlestick>? OnLiveCandleUpdated;
+    public event Action<string, decimal, DateTime>? OnTickPrice;
+    public event Action<string, Candlestick>? OnFinalizedCandle;
 
     public CandlestickBuilder(
         IbkrGatewayService ibkrGatewayService,
@@ -108,6 +112,9 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         // --- Normalize tick timestamp to UTC immediately (critical) ---
         var timestamp = TimestampUtils.NormalizeToUtc(tick.Timestamp);
 
+        // Emit tick price event for live MACD/RSI updates
+        OnTickPrice?.Invoke(symbol, price, timestamp);
+
         // Calculate the interval boundary for this tick (truncated to interval)
         var intervalBoundary = TimestampUtils.NormalizeAndTruncateToInterval(timestamp, _config.IntervalSeconds);
 
@@ -156,6 +163,19 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         inProgress.Volume += volume;
         inProgress.LastUpdate = timestamp;
 
+        // Emit live candle update event for real-time MACD/RSI updates
+        var liveCandle = new Candlestick(
+            Symbol: symbol,
+            Open: inProgress.Open ?? price,
+            High: inProgress.High ?? price,
+            Low: inProgress.Low ?? price,
+            Close: price,
+            Volume: inProgress.Volume,
+            Timestamp: intervalBoundary,
+            Interval: inProgress.Interval
+        );
+        OnLiveCandleUpdated?.Invoke(symbol, liveCandle);
+
         // Update interval boundary
         _lastIntervalBoundary[symbol] = intervalBoundary;
     }
@@ -198,6 +218,9 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
 
         // Publish to observable stream for subscribers
         _candlestickSubject.OnNext(candlestick);
+
+        // Emit finalized candle event for MACD engine to replace tick updates
+        OnFinalizedCandle?.Invoke(symbol, candlestick);
     }
 
     /// <summary>

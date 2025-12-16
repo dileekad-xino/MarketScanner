@@ -161,9 +161,9 @@
                            VerticalOptions="Center"/>
                 </Grid>
 
-                <!-- RSI Value -->
+                <!-- RSI Value (Live updates on every tick) -->
                 <Grid ColumnDefinitions="Auto,*"
-                      IsVisible="{Binding Result.RsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}">
+                      IsVisible="{Binding LiveRsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}">
                     <Label Grid.Column="0"
                            Text="RSI:"
                            TextColor="{StaticResource OnSurfaceVariantDark}"
@@ -171,7 +171,7 @@
                            VerticalOptions="Center"
                            Margin="0,0,10,0"/>
                     <Label Grid.Column="1"
-                           Text="{Binding Result.RsiValue, StringFormat='{0:F2}'}"
+                           Text="{Binding LiveRsiValue, StringFormat='{0:F2}'}"
                            TextColor="{StaticResource OnSurfaceDark}"
                            FontSize="16"
                            FontFamily="Cascadia Mono, Consolas, Menlo"

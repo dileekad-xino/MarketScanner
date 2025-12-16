@@ -38,19 +38,6 @@ public partial class RsiSettingsPopup : Popup
         // Set activation price
         ActivationPriceEntry.Text = settings.TrailingStopActivationPercent.ToString("0.##");
         
-        // Set bar size picker
-        var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
-        var barSizeIndex = Array.IndexOf(validBarSizes, settings.BarSize);
-        if (barSizeIndex >= 0)
-        {
-            BarSizePicker.SelectedIndex = barSizeIndex;
-        }
-        else
-        {
-            // Default to "1 min" if not found
-            BarSizePicker.SelectedIndex = 2;
-        }
-        
         ErrorLabel.IsVisible = false;
     }
     
@@ -118,12 +105,6 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
-        if (BarSizePicker.SelectedIndex < 0)
-        {
-            error = "Please select a bar size interval.";
-            return false;
-        }
-
         // Validate initial stop-loss
         if (!double.TryParse(InitialStopLossEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var initialStopLoss) || initialStopLoss <= 0 || initialStopLoss > 10)
         {
@@ -172,14 +153,10 @@ public partial class RsiSettingsPopup : Popup
             return false;
         }
 
-        var validBarSizes = new[] { "15 secs", "30 secs", "1 min" };
-        var barSize = validBarSizes[BarSizePicker.SelectedIndex];
-
         settings.Period = period;
         settings.Oversold = oversold;
         settings.Overbought = overbought;
         settings.HistoricalDays = days;
-        settings.BarSize = barSize;
         settings.InitialStopLossPercent = initialStopLoss;
         settings.TrailingStopMode = trailingStopMode;
         settings.TrailingStopDistance = trailingStopDistance;

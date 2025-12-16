@@ -242,12 +242,17 @@ public partial class AlgoRunnerViewModel : ObservableObject
         if (_candlestickBuilder == null || SelectedSymbol == null)
             return;
 
+        // CRITICAL: Subscribe symbol to candlestick builder
+        // This tells CandlestickBuilder to process ticks for this symbol and generate candlesticks
+        _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
+        _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
+
         _candlestickSubscription?.Dispose();
         _candlestickSubscription = _candlestickBuilder.CandlestickStream
             .Where(c => c.Symbol == SelectedSymbol.Symbol)
             .Subscribe(OnNewCandlestick);
 
-        _logger.LogInformation("Subscribed to candlestick stream for continuous MACD updates on {Symbol}", SelectedSymbol.Symbol);
+        _logger.LogInformation("Subscribed to candlestick stream for continuous RSI/MACD updates on {Symbol}", SelectedSymbol.Symbol);
     }
 
     private async void OnNewCandlestick(Candlestick candlestick)

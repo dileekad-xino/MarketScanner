@@ -1,7 +1,6 @@
-using IBApi;
+using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.Services;
-using MarketScanner.Services.Ibkr;
 using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
@@ -12,10 +11,12 @@ namespace MarketScanner.Services.Impl;
 /// <summary>
 /// RSI-based trading algorithm strategy.
 /// Uses Relative Strength Index (RSI) to generate buy/sell/hold signals.
+/// Uses real-time candlesticks from CandlestickStorage for continuous updates.
 /// </summary>
 public class RSIAlgoStrategy : IAlgoStrategy
 {
-    private readonly IbkrGatewayService _ibkrService;
+    private readonly ICandlestickStorage _candlestickStorage;
+    private readonly CandlestickConfig _config;
     private readonly IRsiSettingsService _settingsService;
     private readonly ITradeService? _tradeService;
     private readonly ILogger<RSIAlgoStrategy> _logger;
@@ -27,12 +28,14 @@ public class RSIAlgoStrategy : IAlgoStrategy
                                "Buy when RSI crosses above 50 with uptrend. Uses trailing stop for position management.";
 
     public RSIAlgoStrategy(
-        IbkrGatewayService ibkrService,
+        ICandlestickStorage candlestickStorage,
+        CandlestickConfig config,
         IRsiSettingsService settingsService,
         ILogger<RSIAlgoStrategy> logger,
         ITradeService? tradeService = null)
     {
-        _ibkrService = ibkrService;
+        _candlestickStorage = candlestickStorage;
+        _config = config;
         _settingsService = settingsService;
         _tradeService = tradeService;
         _logger = logger;
@@ -46,60 +49,34 @@ public class RSIAlgoStrategy : IAlgoStrategy
 
             var settings = await _settingsService.GetAsync(ct).ConfigureAwait(false);
 
-            // Step 1: Get historical bars from IBKR
-            IReadOnlyList<Bar> bars;
-            try
-            {
-                bars = await _ibkrService.GetHistoricalBarsForRSIAsync(
-                    symbol.Symbol,
-                    days: settings.HistoricalDays,
-                    barSize: settings.BarSize,
-                    ct: ct);
+            // Step 1: Get candlesticks from storage (same pattern as MACD)
+            var interval = GetIntervalString(_config.IntervalSeconds);
+            var minRequired = settings.Period + 1; // RSI needs period + 1 data points
+            
+            // Get all available candlesticks from storage
+            var candlesticks = _candlestickStorage.GetCandlesticks(symbol.Symbol, interval, int.MaxValue)
+                .OrderBy(c => c.Timestamp)
+                .ToList();
 
-                if (bars == null || bars.Count == 0)
-                {
-                    return new AlgoResult(
-                        Symbol: symbol.Symbol,
-                        Action: AlgoAction.Hold,
-                        Price: symbol.LastPrice,
-                        Reason: "No historical data available for RSI calculation",
-                        Timestamp: DateTime.UtcNow,
-                        RsiValue: null,
-                        RsiSignal: "NEUTRAL"
-                    );
-                }
-
-                _logger.LogInformation("RSIAlgoStrategy: Received {Count} historical bars for {Symbol}", bars.Count, symbol.Symbol);
-            }
-            catch (TimeoutException ex)
+            if (candlesticks == null || candlesticks.Count == 0)
             {
-                _logger.LogWarning(ex, "RSIAlgoStrategy: Historical data request timed out for {Symbol}", symbol.Symbol);
+                _logger.LogWarning("RSIAlgoStrategy: No candlesticks available for {Symbol} (interval={Interval})", symbol.Symbol, interval);
                 return new AlgoResult(
                     Symbol: symbol.Symbol,
                     Action: AlgoAction.Hold,
                     Price: symbol.LastPrice,
-                    Reason: $"Historical data request timed out: {ex.Message}",
-                    Timestamp: DateTime.UtcNow,
-                    RsiValue: null,
-                    RsiSignal: "NEUTRAL"
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "RSIAlgoStrategy: Failed to get historical data for {Symbol}", symbol.Symbol);
-                return new AlgoResult(
-                    Symbol: symbol.Symbol,
-                    Action: AlgoAction.Hold,
-                    Price: symbol.LastPrice,
-                    Reason: $"Error retrieving historical data: {ex.Message}",
+                    Reason: $"No candlestick data available for RSI calculation (interval: {interval})",
                     Timestamp: DateTime.UtcNow,
                     RsiValue: null,
                     RsiSignal: "NEUTRAL"
                 );
             }
 
-            // Step 2: Extract close prices from bars
-            var closePrices = bars.Select(b => (double)b.Close).ToArray();
+            _logger.LogInformation("RSIAlgoStrategy: Retrieved {Count} candlesticks for {Symbol} (interval={Interval})", 
+                candlesticks.Count, symbol.Symbol, interval);
+
+            // Step 2: Extract close prices from candlesticks
+            var closePrices = candlesticks.Select(c => (double)c.Close).ToArray();
 
             if (closePrices.Length < settings.Period + 1)
             {
@@ -116,11 +93,11 @@ public class RSIAlgoStrategy : IAlgoStrategy
                 );
             }
 
-            // Step 3: Calculate RSI series
+            // Step 3: Calculate RSI series from candlesticks
             double[] rsiSeries;
             try
             {
-                rsiSeries = RSICalculator.CalculateSeries(closePrices, settings.Period);
+                rsiSeries = RSICalculator.CalculateSeriesFromCandlesticks(candlesticks, settings.Period);
             }
             catch (Exception ex)
             {
@@ -445,6 +422,20 @@ public class RSIAlgoStrategy : IAlgoStrategy
             _logger.LogWarning(ex, "Error checking trailing stop for {Symbol}", symbol);
             return null; // Fail gracefully - don't block signal evaluation
         }
+    }
+
+    /// <summary>
+    /// Converts interval seconds to interval string format used by CandlestickStorage.
+    /// </summary>
+    private string GetIntervalString(int intervalSeconds)
+    {
+        return intervalSeconds switch
+        {
+            15 => "15s",
+            30 => "30s",
+            60 => "1min",
+            _ => $"{intervalSeconds}s"
+        };
     }
 }
 

@@ -82,25 +82,6 @@
                                    Keyboard="Numeric"
                                    Style="{StaticResource FilterEntryStyle}"/>
                         </Grid>
-
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                            <Label Text="Bar Size"
-                                   TextColor="{StaticResource OnSurfaceDark}"
-                                   VerticalOptions="Center"/>
-                            <Picker x:Name="BarSizePicker"
-                                    Grid.Column="1"
-                                    Title="Select interval"
-                                    TextColor="{StaticResource OnSurfaceDark}"
-                                    BackgroundColor="{StaticResource SurfaceDark}">
-                                <Picker.ItemsSource>
-                                    <x:Array Type="{x:Type x:String}">
-                                        <x:String>15 secs</x:String>
-                                        <x:String>30 secs</x:String>
-                                        <x:String>1 min</x:String>
-                                    </x:Array>
-                                </Picker.ItemsSource>
-                            </Picker>
-                        </Grid>
                     </VerticalStackLayout>
 
                     <!-- Right Column: Risk Management & Trailing Stop -->

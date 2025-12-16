@@ -1,4 +1,5 @@
 using System.Linq;
+using MarketScanner.Models;
 
 namespace MarketScanner.Utilities;
 
@@ -144,6 +145,38 @@ public static class RSICalculator
 
         var prices = closePrices.Select(p => (double)p).ToArray();
         return Calculate(prices, period);
+    }
+
+    /// <summary>
+    /// Calculates RSI from a list of candlesticks.
+    /// Extracts close prices and calculates RSI using the standard Wilder's smoothing method.
+    /// </summary>
+    /// <param name="candlesticks">List of candlesticks in chronological order (oldest to newest)</param>
+    /// <param name="period">RSI period (default 14)</param>
+    /// <returns>RSI value between 0 and 100</returns>
+    public static double CalculateFromCandlesticks(IEnumerable<Candlestick> candlesticks, int period = 14)
+    {
+        if (candlesticks == null)
+            throw new ArgumentNullException(nameof(candlesticks));
+
+        var closePrices = candlesticks.Select(c => (double)c.Close).ToArray();
+        return Calculate(closePrices, period);
+    }
+
+    /// <summary>
+    /// Calculates RSI series from a list of candlesticks.
+    /// Returns RSI value for each point (aligned with candlesticks length - 1).
+    /// </summary>
+    /// <param name="candlesticks">List of candlesticks in chronological order (oldest to newest)</param>
+    /// <param name="period">RSI period (default 14)</param>
+    /// <returns>Array of RSI values</returns>
+    public static double[] CalculateSeriesFromCandlesticks(IEnumerable<Candlestick> candlesticks, int period = 14)
+    {
+        if (candlesticks == null)
+            throw new ArgumentNullException(nameof(candlesticks));
+
+        var closePrices = candlesticks.Select(c => (double)c.Close).ToArray();
+        return CalculateSeries(closePrices, period);
     }
 
     /// <summary>

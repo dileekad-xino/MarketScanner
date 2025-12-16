@@ -135,7 +135,8 @@ namespace MarketScanner
             builder.Services.AddSingleton<MarketScanner.Services.Impl.RSIAlgoStrategy>(sp =>
             {
                 return new MarketScanner.Services.Impl.RSIAlgoStrategy(
-                    sp.GetRequiredService<MarketScanner.Services.Ibkr.IbkrGatewayService>(),
+                    sp.GetRequiredService<ICandlestickStorage>(),
+                    sp.GetRequiredService<CandlestickConfig>(),
                     sp.GetRequiredService<IRsiSettingsService>(),
                     sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.RSIAlgoStrategy>>(),
                     sp.GetService<ITradeService>()); // Optional dependency

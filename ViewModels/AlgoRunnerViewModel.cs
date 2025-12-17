@@ -35,6 +35,10 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private DateTime? _entryTime;
     private int? _currentTradeId; // Track the current open trade ID
     private bool _previousWasBullish;
+    private int _macdRecalcCounter;
+    private readonly object _macdRecalcLock = new();
+    private const MacdMode LiveMode = MacdMode.Live;
+    private const MacdMode CandleMode = MacdMode.Candle;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
@@ -310,7 +314,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // TICK UPDATE (RSI + MACD)
+            // TICK UPDATE (RSI + MACD live preview)
             _tickPriceHandler = (symbol, price, ts) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
@@ -319,11 +323,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // RSI updates every tick (pass timestamp)
                 _rsiEngine.UpdateLive(symbol, interval, price, ts);
                 
-                // MACD updates every tick
-                _macdEngine.UpdateOnTick(symbol, interval, price, ts);
+                // MACD live preview updates on every tick (if enabled)
+                if (_config.EnableLiveMacdPreview)
+                {
+                    _macdEngine.UpdateOnTick(symbol, interval, price, ts, LiveMode);
+                }
                 
                 // Update UI with latest MACD values from engine
-                var macdResult = _macdEngine.GetLastMacd(symbol, interval);
+                var macdResult = _config.EnableLiveMacdPreview
+                    ? _macdEngine.GetLastMacd(symbol, interval, LiveMode)
+                    : _macdEngine.GetLastMacd(symbol, interval, CandleMode);
                 if (macdResult.HasValue)
                 {
                     var (macd, signal, hist) = macdResult.Value;
@@ -347,20 +356,26 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 }
             };
 
-            // FINALIZED CANDLE UPDATE (RSI + MACD)
+            // FINALIZED CANDLE UPDATE (RSI + MACD authoritative)
             _finalizedCandleHandler = (symbol, candle) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
                     return;
 
-                // MACD updates when a candle closes
-                _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle);
+                // MACD authoritative update when a candle closes
+                _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle, CandleMode);
+
+                // After close, reset live preview state to authoritative candle state
+                if (_config.EnableLiveMacdPreview)
+                {
+                    _macdEngine.SyncState(symbol, candle.Interval, CandleMode, LiveMode);
+                }
 
                 // RSI also updates on finalized close (pass candle timestamp)
                 _rsiEngine.UpdateLive(symbol, candle.Interval, candle.Close, candle.Timestamp);
 
-                // Update UI with latest MACD values from engine
-                var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
+                // Update UI with latest MACD values from authoritative (candle) engine
+                var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval, CandleMode);
                 if (macdResult.HasValue)
                 {
                     var (macd, signal, hist) = macdResult.Value;
@@ -374,6 +389,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     );
                     UpdateMacdDisplayFromLive(macdData);
                 }
+
+                // Periodic MACD reconciliation to mitigate drift during long sessions
+                ReconcileMacdIfNeeded(symbol, candle.Interval);
             };
 
             _candlestickBuilder.OnTickPrice += _tickPriceHandler;
@@ -382,6 +400,60 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
 
         _logger.LogInformation("Subscribed to candlestick stream for continuous RSI/MACD updates on {Symbol}", SelectedSymbol.Symbol);
+    }
+
+    private void ReconcileMacdIfNeeded(string symbol, string interval)
+    {
+        if (_config == null || _macdEngine == null || _candlestickStorage == null)
+            return;
+
+        var every = _config.MacdRecalcEveryNCandles;
+        if (every <= 0)
+            return;
+
+        _macdRecalcCounter++;
+        if (_macdRecalcCounter < every)
+            return;
+
+        lock (_macdRecalcLock)
+        {
+            // Double-check after acquiring the lock
+            if (_macdRecalcCounter < every)
+                return;
+
+            var candles = _candlestickStorage
+                .GetCandlesticks(symbol, interval, int.MaxValue)
+                .OrderBy(c => c.Timestamp)
+                .ToList();
+
+            if (candles.Count == 0)
+            {
+                _logger.LogWarning("MACD reconciliation skipped for {Symbol}: no candles available", symbol);
+                _macdRecalcCounter = 0;
+                return;
+            }
+
+            _macdEngine.Initialize(
+                symbol,
+                interval,
+                candles,
+                _config.Macd.FastPeriod,
+                _config.Macd.SlowPeriod,
+                _config.Macd.SignalPeriod,
+                CandleMode);
+
+            if (_config.EnableLiveMacdPreview)
+            {
+                _macdEngine.SyncState(symbol, interval, CandleMode, LiveMode);
+            }
+
+            _macdRecalcCounter = 0;
+            _logger.LogInformation(
+                "MACD reconciliation complete for {Symbol} using {Count} candles (every {Every} finalized candles). Live preview reset from candle state.",
+                symbol,
+                candles.Count,
+                every);
+        }
     }
 
     private async void OnNewCandlestick(Candlestick candlestick)

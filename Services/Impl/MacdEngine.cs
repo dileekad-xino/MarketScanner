@@ -3,25 +3,35 @@ using System.Collections.Concurrent;
 
 namespace MarketScanner.Services.Impl;
 
+public enum MacdMode
+{
+    Candle, // authoritative, candle-close only
+    Live    // tick-preview state
+}
+
 /// <summary>
-/// Correct TradingView-accurate MACD engine:
+/// Correct TradingView-accurate MACD engine with dual-mode support:
 /// ✔ SMA seeding for historical
 /// ✔ EMA updates only from PRICE
 /// ✔ Signal EMA updated from MACD
 /// ✔ Tracks previous MACD & Signal values
+/// ✔ Separate states for candle-close (authoritative) vs live tick preview
 /// </summary>
 public class MacdEngine
 {
-    private readonly ConcurrentDictionary<(string Symbol, string Interval), MacdState> _states = new();
-    private readonly ConcurrentDictionary<(string Symbol, string Interval), object> _locks = new();
-    private readonly ConcurrentDictionary<(string Symbol, string Interval), (int Fast, int Slow, int Signal)> _periods = new();
+    private readonly ConcurrentDictionary<(string Symbol, string Interval, MacdMode Mode), MacdState> _states = new();
+    private readonly ConcurrentDictionary<(string Symbol, string Interval, MacdMode Mode), object> _locks = new();
+    private readonly ConcurrentDictionary<(string Symbol, string Interval, MacdMode Mode), (int Fast, int Slow, int Signal)> _periods = new();
+
+    private (string Symbol, string Interval, MacdMode Mode) Key(string symbol, string interval, MacdMode mode) =>
+        (symbol, interval, mode);
 
 
     // ----------------------------------------
     //  HISTORICAL INITIALIZATION
     // ----------------------------------------
     public void Initialize(string symbol, string interval, IEnumerable<Candlestick> candles,
-                           int fast = 12, int slow = 26, int signal = 9)
+                           int fast = 12, int slow = 26, int signal = 9, MacdMode mode = MacdMode.Candle)
     {
         var candleList = candles.OrderBy(c => c.Timestamp).ToList();
         var closes = candleList.Select(c => (double)c.Close).ToList();
@@ -29,7 +39,7 @@ public class MacdEngine
         if (closes.Count < slow + signal + 10)
             return;
 
-        var key = (symbol, interval);
+        var key = Key(symbol, interval, mode);
         var lockObj = _locks.GetOrAdd(key, _ => new object());
 
         lock (lockObj)
@@ -79,11 +89,11 @@ public class MacdEngine
 
 
     // ----------------------------------------
-    //  LIVE TICK UPDATE
+    //  LIVE TICK UPDATE (mode-aware)
     // ----------------------------------------
-    public void UpdateOnTick(string symbol, string interval, decimal price, DateTime timestamp)
+    public void UpdateOnTick(string symbol, string interval, decimal price, DateTime timestamp, MacdMode mode = MacdMode.Candle)
     {
-        var key = (symbol, interval);
+        var key = Key(symbol, interval, mode);
         
         if (!_states.TryGetValue(key, out var state))
             return;
@@ -120,11 +130,11 @@ public class MacdEngine
 
 
     // ----------------------------------------
-    //  FINALIZED CANDLE UPDATE
+    //  FINALIZED CANDLE UPDATE (mode-aware)
     // ----------------------------------------
-    public void UpdateOnFinalizedCandle(string symbol, string interval, decimal close, DateTime ts)
+    public void UpdateOnFinalizedCandle(string symbol, string interval, decimal close, DateTime ts, MacdMode mode = MacdMode.Candle)
     {
-        var key = (symbol, interval);
+        var key = Key(symbol, interval, mode);
 
         if (!_states.TryGetValue(key, out var state))
             return;
@@ -165,16 +175,16 @@ public class MacdEngine
         }
     }
 
-    public void UpdateOnFinalizedCandle(string symbol, string interval, Candlestick candle) =>
-        UpdateOnFinalizedCandle(symbol, interval, candle.Close, candle.Timestamp);
+    public void UpdateOnFinalizedCandle(string symbol, string interval, Candlestick candle, MacdMode mode = MacdMode.Candle) =>
+        UpdateOnFinalizedCandle(symbol, interval, candle.Close, candle.Timestamp, mode);
 
 
     // ----------------------------------------
     //  GET CURRENT MACD VALUES
     // ----------------------------------------
-    public (double macd, double signal, double hist)? GetLastMacd(string symbol, string interval)
+    public (double macd, double signal, double hist)? GetLastMacd(string symbol, string interval, MacdMode mode = MacdMode.Candle)
     {
-        if (!_states.TryGetValue((symbol, interval), out var s))
+        if (!_states.TryGetValue(Key(symbol, interval, mode), out var s))
             return null;
 
         double macd = s.FastEma.Value - s.SlowEma.Value;
@@ -187,9 +197,9 @@ public class MacdEngine
     // ----------------------------------------
     //  GET PREVIOUS (needed for crossover detection)
     // ----------------------------------------
-    public (double Macd, double Signal)? GetPreviousMacd(string symbol, string interval)
+    public (double Macd, double Signal)? GetPreviousMacd(string symbol, string interval, MacdMode mode = MacdMode.Candle)
     {
-        if (!_states.TryGetValue((symbol, interval), out var s))
+        if (!_states.TryGetValue(Key(symbol, interval, mode), out var s))
             return null;
 
         if (s.PreviousMacd == null || s.PreviousSignal == null)
@@ -199,8 +209,42 @@ public class MacdEngine
     }
 
 
-    public bool TryGetState(string symbol, string interval, out MacdState state)
+    public bool TryGetState(string symbol, string interval, out MacdState state, MacdMode mode = MacdMode.Candle)
     {
-        return _states.TryGetValue((symbol, interval), out state!);
+        return _states.TryGetValue(Key(symbol, interval, mode), out state!);
+    }
+
+    /// <summary>
+    /// Synchronize state from one mode to another (e.g., authoritative candle -> live preview).
+    /// </summary>
+    public void SyncState(string symbol, string interval, MacdMode fromMode, MacdMode toMode)
+    {
+        var fromKey = Key(symbol, interval, fromMode);
+        var toKey = Key(symbol, interval, toMode);
+
+        if (!_states.TryGetValue(fromKey, out var fromState))
+            return;
+        if (!_periods.TryGetValue(fromKey, out var periods))
+            return;
+
+        var lockObj = _locks.GetOrAdd(toKey, _ => new object());
+
+        lock (lockObj)
+        {
+            _states[toKey] = new MacdState
+            {
+                Symbol = symbol,
+                Interval = interval,
+                FastEma = fromState.FastEma,
+                SlowEma = fromState.SlowEma,
+                Signal = fromState.Signal,
+                PreviousMacd = fromState.PreviousMacd,
+                PreviousSignal = fromState.PreviousSignal,
+                LastPrice = fromState.LastPrice,
+                LastTimestamp = fromState.LastTimestamp
+            };
+
+            _periods[toKey] = periods;
+        }
     }
 }

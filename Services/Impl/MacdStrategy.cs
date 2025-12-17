@@ -32,28 +32,15 @@ public class MacdStrategy : IAlgoStrategy
         try
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
-
-            var candles = _candlestickStorage
-                .GetCandlesticks(symbol.Symbol, interval, int.MaxValue)
-                .OrderBy(c => c.Timestamp)
-                .ToList();
-
-            var min = _config.Macd.SlowPeriod + _config.Macd.SignalPeriod;
-
-            if (candles.Count < min)
-            {
-                return new AlgoResult(
-                    symbol.Symbol,
-                    AlgoAction.Hold,
-                    symbol.LastPrice,
-                    $"Need {min} candles, got {candles.Count}",
-                    DateTime.UtcNow
-                );
-            }
-
+            // Live-only: initialize once from historical warmup (if needed), then read tick-updated engine state
             if (!_macdEngine.TryGetState(symbol.Symbol, interval, out _))
             {
-                _logger.LogInformation("Initializing MACD engine for {Symbol}", symbol.Symbol);
+                var candles = _candlestickStorage
+                    .GetCandlesticks(symbol.Symbol, interval, int.MaxValue)
+                    .OrderBy(c => c.Timestamp)
+                    .ToList();
+
+                _logger.LogInformation("Initializing MACD engine for {Symbol} (warm-up from {Count} candles)", symbol.Symbol, candles.Count);
                 _macdEngine.Initialize(
                     symbol.Symbol,
                     interval,
@@ -65,7 +52,7 @@ public class MacdStrategy : IAlgoStrategy
 
             var result = _macdEngine.GetLastMacd(symbol.Symbol, interval);
             if (result == null)
-                return Hold(symbol, "MACD unavailable");
+                return Hold(symbol, "MACD unavailable (engine not initialized yet)");
 
             var (macd, signal, hist) = result.Value;
 
@@ -100,10 +87,10 @@ public class MacdStrategy : IAlgoStrategy
 
     private (AlgoAction, string, CrossoverStatus) DetectSignals(MacdData m)
     {
-        const decimal EPS = 0.0000001m;
+        const decimal EPS = 0.000001m;
 
-        bool above = (m.MacdLine - m.SignalLine) > EPS;
-        bool below = (m.SignalLine - m.MacdLine) > EPS;
+        bool above = m.MacdLine > m.SignalLine + EPS;
+        bool below = m.MacdLine < m.SignalLine - EPS;
 
         var prev = _macdEngine.GetPreviousMacd(m.Symbol, m.Interval);
 
@@ -133,6 +120,15 @@ public class MacdStrategy : IAlgoStrategy
         return (AlgoAction.Hold,
             $"Monitoring: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
             CrossoverStatus.None);
+    }
+
+    /// <summary>
+    /// Evaluate MACD signals from a supplied MacdData snapshot (live or candle).
+    /// </summary>
+    public (AlgoAction action, string reason, CrossoverStatus cross) EvaluateFromMacdData(MacdData macdData)
+    {
+        var (a, r, c) = DetectSignals(macdData);
+        return (a, r, c);
     }
 
     private AlgoResult Hold(ScannerRowViewModel s, string reason) =>

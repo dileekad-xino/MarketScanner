@@ -9,20 +9,23 @@ public class MacdState
     public string Symbol { get; set; } = string.Empty;
     public string Interval { get; set; } = string.Empty;
 
-    public double? FastEma { get; set; }
-    public double? SlowEma { get; set; }
-    public double? Signal { get; set; }
+    // Committed (candle-close) state
+    public double FastEma { get; set; }
+    public double SlowEma { get; set; }
+    public double Signal { get; set; }
 
     public double LastPrice { get; set; }
     public DateTime LastTimestamp { get; set; }
 
-    // NEW — needed for crossover detection
+    // Previous preview values (for tick crossover detection)
     public double? PreviousMacd { get; set; }
     public double? PreviousSignal { get; set; }
 
-    // Computed MACD
-    public double? Macd =>
-        (FastEma.HasValue && SlowEma.HasValue)
-            ? FastEma.Value - SlowEma.Value
-            : null;
+    // Latest tick preview (NOT committed)
+    public double? LiveMacd { get; set; }
+    public double? LiveSignal { get; set; }
+    public double? LiveHist { get; set; }
+
+    // Computed committed MACD
+    public double Macd => FastEma - SlowEma;
 }

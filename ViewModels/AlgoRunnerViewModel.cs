@@ -19,7 +19,6 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly IbkrGatewayService? _ibkrGatewayService;
     private readonly ITradeService? _tradeService;
     private readonly Services.Impl.MacdStrategy? _macdStrategy;
-    private readonly Services.Impl.LiveRsiService? _liveRsiService;
     private readonly Services.Impl.MacdEngine? _macdEngine;
     private readonly Services.Impl.RsiEngine? _rsiEngine;
 
@@ -28,17 +27,15 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly Config.CandlestickConfig? _config;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
-    private IDisposable? _candlestickSubscription;
-    private Action<string, Candlestick>? _liveCandleUpdateHandler;
+    // Live-only: no candle stream subscription for strategy evaluation
     private Action<string, decimal, DateTime>? _tickPriceHandler;
     private Action<string, Candlestick>? _finalizedCandleHandler;
     private DateTime? _entryTime;
     private int? _currentTradeId; // Track the current open trade ID
     private bool _previousWasBullish;
-    private int _macdRecalcCounter;
-    private readonly object _macdRecalcLock = new();
-    private const MacdMode LiveMode = MacdMode.Live;
-    private const MacdMode CandleMode = MacdMode.Candle;
+    // Live-only pipeline: remove MACD reconciliation + mode flags
+    private int _tickEvalInFlight;
+    private int _tickEvalPending;
 
     [ObservableProperty] private ScannerRowViewModel? _selectedSymbol;
     [ObservableProperty] private AlgoResult? _result;
@@ -75,7 +72,6 @@ public partial class AlgoRunnerViewModel : ObservableObject
         IbkrGatewayService? ibkrGatewayService = null,
         ITradeService? tradeService = null,
         Services.Impl.MacdStrategy? macdStrategy = null,
-        Services.Impl.LiveRsiService? liveRsiService = null,
         Services.Impl.MacdEngine? macdEngine = null,
         Services.Impl.RsiEngine? rsiEngine = null,
         IRsiSettingsService? rsiSettingsService = null,
@@ -88,7 +84,6 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _ibkrGatewayService = ibkrGatewayService;
         _tradeService = tradeService;
         _macdStrategy = macdStrategy;
-        _liveRsiService = liveRsiService;
         _macdEngine = macdEngine;
         _rsiEngine = rsiEngine;
         _rsiSettingsService = rsiSettingsService;
@@ -183,7 +178,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             // Initialize RSI state for live updates
             await InitializeRsiStateAsync();
 
-            // Subscribe to candlestick stream for continuous updates
+            // Subscribe to tick-driven evaluation/indicator updates
             SubscribeToCandlestickStream();
         }
         catch (OperationCanceledException)
@@ -238,6 +233,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
             // Update MACD display
             UpdateMacdDisplay();
 
+            // Align Reason with current indicator values after strategy run
+            UpdateReasonWithIndicatorValues();
+
             // Handle position opening/closing based on algo action (only if action wasn't filtered out)
             if (Result.Action == AlgoAction.Buy && !HasPosition)
             {
@@ -284,37 +282,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
         _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
 
-        _candlestickSubscription?.Dispose();
-        _candlestickSubscription = _candlestickBuilder.CandlestickStream
-            .Where(c => c.Symbol == SelectedSymbol.Symbol)
-            .Subscribe(OnNewCandlestick);
+        // Live-only pipeline: no candle-derived RSI updates
 
-        // Subscribe to live candle updates for real-time RSI (MACD only updates on finalized candles)
-        _liveCandleUpdateHandler = (symbol, candle) =>
-        {
-            if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
-                return;
-
-            // RSI live update (MACD updates only on finalized candles via MacdEngine)
-            if (_liveRsiService != null && SelectedSymbol != null)
-            {
-                var interval = candle.Interval;
-                var rsi = _liveRsiService.LiveUpdate(symbol, interval, (double)candle.Close, candle.Timestamp);
-                if (rsi.HasValue)
-                {
-                    UpdateLiveRsiDisplay(symbol, rsi.Value);
-                }
-            }
-        };
-        
-        _candlestickBuilder.OnLiveCandleUpdated += _liveCandleUpdateHandler;
-
-        // Subscribe to tick price and finalized candle events for MacdEngine
+        // Subscribe to tick price events for live-only MACD/RSI + strategy evaluation
         if (_macdEngine != null && _rsiEngine != null && _config != null)
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // TICK UPDATE (RSI + MACD live preview)
+            // TICK UPDATE (RSI + MACD live-only)
             _tickPriceHandler = (symbol, price, ts) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
@@ -323,16 +298,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // RSI updates every tick (pass timestamp)
                 _rsiEngine.UpdateLive(symbol, interval, price, ts);
                 
-                // MACD live preview updates on every tick (if enabled)
-                if (_config.EnableLiveMacdPreview)
-                {
-                    _macdEngine.UpdateOnTick(symbol, interval, price, ts, LiveMode);
-                }
+                // MACD updates on every tick (live-only)
+                _macdEngine.UpdateOnTick(symbol, interval, price, ts);
                 
                 // Update UI with latest MACD values from engine
-                var macdResult = _config.EnableLiveMacdPreview
-                    ? _macdEngine.GetLastMacd(symbol, interval, LiveMode)
-                    : _macdEngine.GetLastMacd(symbol, interval, CandleMode);
+                var macdResult = _macdEngine.GetLastMacd(symbol, interval);
                 if (macdResult.HasValue)
                 {
                     var (macd, signal, hist) = macdResult.Value;
@@ -354,47 +324,80 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     LiveRsiValue = rsi.Value; // Update live property for UI
                     UpdateLiveRsiDisplay(symbol, rsi.Value); // Keep existing for SelectedSymbol
                 }
+
+                ScheduleTickEvaluation();
             };
 
-            // FINALIZED CANDLE UPDATE (RSI + MACD authoritative)
+            _candlestickBuilder.OnTickPrice += _tickPriceHandler;
+
+            // Commit MACD baseline on each finalized candle close (prevents long-run drift while keeping tick preview)
             _finalizedCandleHandler = (symbol, candle) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
                     return;
 
-                // MACD authoritative update when a candle closes
-                _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle, CandleMode);
-
-                // After close, reset live preview state to authoritative candle state
-                if (_config.EnableLiveMacdPreview)
+                // Optional MACD debug snapshot: preview (last tick) vs committed (candle close)
+                double? previewMacdBefore = null;
+                double? previewSignalBefore = null;
+                double? previewHistBefore = null;
+                double committedMacdBefore = 0;
+                double committedSignalBefore = 0;
+                if (_config.EnableMacdDebugLogging && _macdEngine.TryGetState(symbol, candle.Interval, out var stateBefore))
                 {
-                    _macdEngine.SyncState(symbol, candle.Interval, CandleMode, LiveMode);
+                    previewMacdBefore = stateBefore.LiveMacd;
+                    previewSignalBefore = stateBefore.LiveSignal;
+                    previewHistBefore = stateBefore.LiveHist;
+                    committedMacdBefore = stateBefore.Macd;
+                    committedSignalBefore = stateBefore.Signal;
                 }
 
-                // RSI also updates on finalized close (pass candle timestamp)
-                _rsiEngine.UpdateLive(symbol, candle.Interval, candle.Close, candle.Timestamp);
+                _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.Close, candle.Timestamp);
 
-                // Update UI with latest MACD values from authoritative (candle) engine
-                var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval, CandleMode);
+                // Update UI immediately to the committed close snapshot
+                var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
                 if (macdResult.HasValue)
                 {
                     var (macd, signal, hist) = macdResult.Value;
-                    var macdData = new MacdData(
+                    UpdateMacdDisplayFromLive(new MacdData(
                         Symbol: symbol,
                         MacdLine: (decimal)macd,
                         SignalLine: (decimal)signal,
                         Histogram: (decimal)hist,
                         Timestamp: candle.Timestamp,
                         Interval: candle.Interval
-                    );
-                    UpdateMacdDisplayFromLive(macdData);
+                    ));
                 }
 
-                // Periodic MACD reconciliation to mitigate drift during long sessions
-                ReconcileMacdIfNeeded(symbol, candle.Interval);
+                if (_config.EnableMacdDebugLogging && _macdEngine.TryGetState(symbol, candle.Interval, out var stateAfter))
+                {
+                    var committedMacdAfter = stateAfter.Macd;
+                    var committedSignalAfter = stateAfter.Signal;
+                    var committedHistAfter = committedMacdAfter - committedSignalAfter;
+
+                    // Compare last preview vs committed close (helps verify TV-style intrabar preview)
+                    var dm = previewMacdBefore.HasValue ? Math.Abs(previewMacdBefore.Value - committedMacdAfter) : (double?)null;
+                    var ds = previewSignalBefore.HasValue ? Math.Abs(previewSignalBefore.Value - committedSignalAfter) : (double?)null;
+
+                    _logger.LogInformation(
+                        "MACD Debug [{Symbol} {Interval}] CloseTs={Ts:o} Close={Close:F4} | PreviewBefore M={PM:F6} S={PS:F6} H={PH:F6} | CommittedBefore M={CBM:F6} S={CBS:F6} | CommittedAfter M={CAM:F6} S={CAS:F6} H={CAH:F6} | ΔPreviewVsClose M={DM:F6} S={DS:F6}",
+                        symbol,
+                        candle.Interval,
+                        candle.Timestamp,
+                        candle.Close,
+                        previewMacdBefore ?? double.NaN,
+                        previewSignalBefore ?? double.NaN,
+                        previewHistBefore ?? double.NaN,
+                        committedMacdBefore,
+                        committedSignalBefore,
+                        committedMacdAfter,
+                        committedSignalAfter,
+                        committedHistAfter,
+                        dm ?? double.NaN,
+                        ds ?? double.NaN
+                    );
+                }
             };
 
-            _candlestickBuilder.OnTickPrice += _tickPriceHandler;
             _candlestickBuilder.OnFinalizedCandle += _finalizedCandleHandler;
         }
 
@@ -402,119 +405,35 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _logger.LogInformation("Subscribed to candlestick stream for continuous RSI/MACD updates on {Symbol}", SelectedSymbol.Symbol);
     }
 
-    private void ReconcileMacdIfNeeded(string symbol, string interval)
+    private void ScheduleTickEvaluation()
     {
-        if (_config == null || _macdEngine == null || _candlestickStorage == null)
+        if (!IsRunning || SelectedSymbol == null)
             return;
 
-        var every = _config.MacdRecalcEveryNCandles;
-        if (every <= 0)
+        // Mark that we need to run (or rerun) evaluation.
+        Interlocked.Exchange(ref _tickEvalPending, 1);
+
+        // If already running, we'll be picked up when the current run finishes.
+        if (Interlocked.CompareExchange(ref _tickEvalInFlight, 1, 0) != 0)
             return;
 
-        _macdRecalcCounter++;
-        if (_macdRecalcCounter < every)
-            return;
-
-        lock (_macdRecalcLock)
+        _ = Task.Run(async () =>
         {
-            // Double-check after acquiring the lock
-            if (_macdRecalcCounter < every)
-                return;
-
-            var candles = _candlestickStorage
-                .GetCandlesticks(symbol, interval, int.MaxValue)
-                .OrderBy(c => c.Timestamp)
-                .ToList();
-
-            if (candles.Count == 0)
+            try
             {
-                _logger.LogWarning("MACD reconciliation skipped for {Symbol}: no candles available", symbol);
-                _macdRecalcCounter = 0;
-                return;
+                while (Interlocked.Exchange(ref _tickEvalPending, 0) == 1)
+                {
+                    await ExecuteAlgoOnceAsync();
+                }
             }
-
-            _macdEngine.Initialize(
-                symbol,
-                interval,
-                candles,
-                _config.Macd.FastPeriod,
-                _config.Macd.SlowPeriod,
-                _config.Macd.SignalPeriod,
-                CandleMode);
-
-            if (_config.EnableLiveMacdPreview)
+            finally
             {
-                _macdEngine.SyncState(symbol, interval, CandleMode, LiveMode);
+                Interlocked.Exchange(ref _tickEvalInFlight, 0);
             }
-
-            _macdRecalcCounter = 0;
-            _logger.LogInformation(
-                "MACD reconciliation complete for {Symbol} using {Count} candles (every {Every} finalized candles). Live preview reset from candle state.",
-                symbol,
-                candles.Count,
-                every);
-        }
+        });
     }
 
-    private async void OnNewCandlestick(Candlestick candlestick)
-    {
-        if (!IsRunning || SelectedSymbol == null || candlestick.Symbol != SelectedSymbol.Symbol)
-            return;
-
-        _logger.LogInformation("New candlestick for {Symbol}, re-running algorithm", candlestick.Symbol);
-        await ExecuteAlgoOnceAsync();
-    }
-
-    [RelayCommand]
-    private void StopAlgo()
-    {
-        _logger.LogInformation("Stopping algorithm monitoring for {Symbol}", SelectedSymbol?.Symbol);
-
-        // Stop candlestick subscription
-        _candlestickSubscription?.Dispose();
-        _candlestickSubscription = null;
-
-        // Unsubscribe from live updates
-        if (_candlestickBuilder != null)
-        {
-            if (_liveCandleUpdateHandler != null)
-            {
-                _candlestickBuilder.OnLiveCandleUpdated -= _liveCandleUpdateHandler;
-                _liveCandleUpdateHandler = null;
-            }
-
-            if (_tickPriceHandler != null)
-            {
-                _candlestickBuilder.OnTickPrice -= _tickPriceHandler;
-                _tickPriceHandler = null;
-            }
-
-            if (_finalizedCandleHandler != null)
-            {
-                _candlestickBuilder.OnFinalizedCandle -= _finalizedCandleHandler;
-                _finalizedCandleHandler = null;
-            }
-        }
-
-        // Cancel any pending execution
-        _cancellationTokenSource?.Cancel();
-
-        IsRunning = false;
-    }
-
-    [RelayCommand]
-    private async Task CloseAsync()
-    {
-        // NOTE: Do NOT stop the algo when closing - it keeps running in background
-        // Only close the page UI
-        _logger.LogInformation("Closing algo runner window (algo continues running in background)");
-
-        // Close the page
-        if (Application.Current?.MainPage != null)
-        {
-            await Application.Current.MainPage.Navigation.PopModalAsync();
-        }
-    }
+    // Live-only pipeline: no periodic MACD reconciliation
 
     private void UnsubscribeFromCandlestickBuilder()
     {
@@ -523,13 +442,6 @@ public partial class AlgoRunnerViewModel : ObservableObject
             try
             {
                 _candlestickBuilder.UnsubscribeSymbol(SelectedSymbol.Symbol);
-
-                // Unsubscribe from live updates
-                if (_liveCandleUpdateHandler != null)
-                {
-                    _candlestickBuilder.OnLiveCandleUpdated -= _liveCandleUpdateHandler;
-                    _liveCandleUpdateHandler = null;
-                }
 
                 if (_tickPriceHandler != null)
                 {
@@ -593,6 +505,35 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _previousWasBullish = isBullish;
 
         CrossoverStatus = isBullish ? "↑ Bullish" : "↓ Bearish";
+
+        // Keep Reason in sync with the same values shown in the indicator
+        UpdateReasonWithIndicatorValues();
+    }
+
+    private void UpdateReasonWithIndicatorValues()
+    {
+        if (Result == null)
+            return;
+
+        // Prefer live display values; fallback to candle/strategy
+        var macdPart = $"MACD={MacdLine:F4}, Signal={SignalLine:F4}, Hist={Histogram:F4}";
+        string rsiPart;
+        if (LiveRsiValue.HasValue)
+            rsiPart = $"RSI={LiveRsiValue.Value:F2}";
+        else if (Result.RsiValue.HasValue)
+            rsiPart = $"RSI={Result.RsiValue.Value:F2}";
+        else
+            rsiPart = "RSI=N/A";
+
+        var baseReason = Result.Reason ?? string.Empty;
+        var idxMon = baseReason.IndexOf("Monitoring:", StringComparison.OrdinalIgnoreCase);
+        if (idxMon >= 0)
+            baseReason = baseReason[..idxMon].TrimEnd();
+
+        var monitoringPart = $"Monitoring: {macdPart}; {rsiPart}";
+        var combined = string.IsNullOrWhiteSpace(baseReason) ? monitoringPart : $"{baseReason} | {monitoringPart}";
+
+        Result = Result with { Reason = combined };
     }
 
     private void UpdateLiveRsiDisplay(string symbol, double rsi)
@@ -607,7 +548,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     private async Task InitializeRsiStateAsync()
     {
-        if (_liveRsiService == null || _rsiSettingsService == null || _candlestickStorage == null ||
+        if (_rsiSettingsService == null || _candlestickStorage == null ||
             _config == null || SelectedSymbol == null)
         {
             _logger.LogDebug("AlgoRunnerViewModel: Skipping RSI state initialization - required services not available");
@@ -626,13 +567,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             if (candlesticks.Count >= settings.Period + 1)
             {
-                _liveRsiService.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
-                
-                // Also initialize RsiEngine if available
-                if (_rsiEngine != null)
-                {
-                    _rsiEngine.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
-                }
+                // Initialize RsiEngine from historical warmup once
+                _rsiEngine?.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
                 
                 _logger.LogInformation("AlgoRunnerViewModel: Initialized RSI state for {Symbol} with {Count} candlesticks",
                     SelectedSymbol.Symbol, candlesticks.Count);
@@ -911,9 +847,6 @@ public partial class AlgoRunnerViewModel : ObservableObject
     public void Dispose()
     {
         // Stop algo monitoring
-        _candlestickSubscription?.Dispose();
-        _candlestickSubscription = null;
-
         // Unsubscribe from tick stream
         _tickSubscription?.Dispose();
         _tickSubscription = null;

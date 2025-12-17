@@ -40,16 +40,10 @@ public class CandlestickConfig
     public int PollingBarsToFetch { get; set; } = 3;
 
     /// <summary>
-    /// Recalculate MACD state from historical candles every N finalized candles
-    /// to mitigate drift during long live sessions. Set to 0 to disable.
+    /// When enabled, logs MACD debug snapshots at each finalized candle:
+    /// preview (last tick) vs committed (candle close) values.
     /// </summary>
-    public int MacdRecalcEveryNCandles { get; set; } = 50;
-
-    /// <summary>
-    /// Enable live tick MACD preview (live state) in addition to authoritative
-    /// candle-close MACD. If false, only candle-close MACD is used/displayed.
-    /// </summary>
-    public bool EnableLiveMacdPreview { get; set; } = true;
+    public bool EnableMacdDebugLogging { get; set; } = false;
 }
 
 /// <summary>

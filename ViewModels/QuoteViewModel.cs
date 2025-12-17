@@ -804,7 +804,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
             var tradeService = _serviceProvider.GetService<ITradeService>();
             var macdStrategy = _serviceProvider.GetService<MarketScanner.Services.Impl.MacdStrategy>();
-            var liveRsiService = _serviceProvider.GetService<MarketScanner.Services.Impl.LiveRsiService>();
             var macdEngine = _serviceProvider.GetService<MarketScanner.Services.Impl.MacdEngine>();
             var rsiEngine = _serviceProvider.GetService<MarketScanner.Services.Impl.RsiEngine>();
             var rsiSettingsService = _serviceProvider.GetService<IRsiSettingsService>();
@@ -817,7 +816,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 _ibkrService,
                 tradeService,
                 macdStrategy,
-                liveRsiService,
                 macdEngine,
                 rsiEngine,
                 rsiSettingsService,

@@ -195,6 +195,58 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private void StopAlgo()
+    {
+        try
+        {
+            _logger.LogInformation("Stopping algorithm for {Symbol}", SelectedSymbol?.Symbol);
+            
+            // Cancel execution
+            _cancellationTokenSource?.Cancel();
+            
+            // Unsubscribe from updates
+            UnsubscribeFromCandlestickBuilder();
+            _tickSubscription?.Dispose();
+            _tickSubscription = null;
+            
+            // Update state
+            IsRunning = false;
+            ErrorMessage = string.Empty;
+            
+            _logger.LogInformation("Algorithm stopped successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping algorithm");
+            ErrorMessage = $"Error stopping algorithm: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task Close()
+    {
+        try
+        {
+            _logger.LogInformation("Closing AlgoRunner page for {Symbol} (algo continues in background: {IsRunning})", 
+                SelectedSymbol?.Symbol, IsRunning);
+            
+            // Navigate back (dismiss modal)
+            if (Application.Current?.MainPage != null)
+            {
+                await Application.Current.MainPage.Navigation.PopModalAsync();
+            }
+            
+            // Note: Dispose() is NOT called here - algorithm keeps running in background
+            _logger.LogInformation("AlgoRunner page closed, algorithm still running: {IsRunning}", IsRunning);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing AlgoRunner page");
+            ErrorMessage = $"Error closing page: {ex.Message}";
+        }
+    }
+
     private async Task ExecuteAlgoOnceAsync()
     {
         if (SelectedSymbol == null || _cancellationTokenSource?.IsCancellationRequested == true)

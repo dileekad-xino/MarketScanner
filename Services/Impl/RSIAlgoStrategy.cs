@@ -8,9 +8,10 @@ using System.Linq;
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
-/// Live-only RSI strategy:
-/// - RSI is computed by RsiEngine on each tick (Wilder smoothing)
-/// - Strategy evaluates on each tick using the current RSI value only
+/// RSI strategy with dual-state engine:
+/// - RSI preview updates on each tick (for live UI display)
+/// - RSI committed state updates on candle close (matches TradingView)
+/// - Strategy evaluates using current RSI (preview during intrabar, committed after close)
 /// - Historical candles are used only for initial warm-up (engine init)
 /// </summary>
 public class RSIAlgoStrategy : IAlgoStrategy
@@ -22,7 +23,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
     private readonly ILogger<RSIAlgoStrategy> _logger;
 
     public string Name => "RSI Strategy";
-    public string Description => "Live-only RSI strategy using tick-updated RSI (Wilder smoothing).";
+    public string Description => "RSI strategy using dual-state engine: preview on ticks, committed on candle close (matches TradingView).";
 
     public RSIAlgoStrategy(
         ICandlestickStorage candlestickStorage,

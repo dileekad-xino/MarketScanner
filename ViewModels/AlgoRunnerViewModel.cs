@@ -341,16 +341,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // TICK UPDATE (RSI + MACD live-only)
+            // TICK UPDATE (RSI preview + MACD preview)
             _tickPriceHandler = (symbol, price, ts) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
                     return;
 
-                // RSI updates every tick (pass timestamp)
-                _rsiEngine.UpdateLive(symbol, interval, price, ts);
+                // RSI preview updates every tick (doesn't modify committed state)
+                _rsiEngine.UpdateOnTick(symbol, interval, price, ts);
                 
-                // MACD updates on every tick (live-only)
+                // MACD updates on every tick (live-only preview)
                 _macdEngine.UpdateOnTick(symbol, interval, price, ts);
                 
                 // Update UI with latest MACD values from engine
@@ -369,11 +369,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     UpdateMacdDisplayFromLive(macdData);
                 }
                 
-                // Update RSI display (update LiveRsiValue property for UI binding)
+                // Update RSI display (shows preview RSI for live intrabar updates)
                 var rsi = _rsiEngine.GetRsi(symbol, interval);
                 if (rsi.HasValue)
                 {
-                    LiveRsiValue = rsi.Value; // Update live property for UI
+                    LiveRsiValue = rsi.Value; // Update live property for UI (preview RSI)
                     UpdateLiveRsiDisplay(symbol, rsi.Value); // Keep existing for SelectedSymbol
                 }
 
@@ -382,7 +382,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             _candlestickBuilder.OnTickPrice += _tickPriceHandler;
 
-            // Commit MACD baseline on each finalized candle close (prevents long-run drift while keeping tick preview)
+            // Commit RSI and MACD baseline on each finalized candle close (prevents long-run drift while keeping tick preview)
             _finalizedCandleHandler = (symbol, candle) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
@@ -403,6 +403,10 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     committedSignalBefore = stateBefore.Signal;
                 }
 
+                // Commit RSI on candle close (matches TradingView - authoritative update)
+                _rsiEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.Close, candle.Timestamp);
+
+                // Commit MACD on candle close
                 _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.Close, candle.Timestamp);
 
                 // Update UI immediately to the committed close snapshot
@@ -418,6 +422,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
                         Timestamp: candle.Timestamp,
                         Interval: candle.Interval
                     ));
+                }
+
+                // Update RSI display to committed value (matches TradingView)
+                var rsi = _rsiEngine.GetRsi(symbol, candle.Interval);
+                if (rsi.HasValue)
+                {
+                    LiveRsiValue = rsi.Value; // Now shows committed RSI (matches TradingView)
+                    UpdateLiveRsiDisplay(symbol, rsi.Value);
                 }
 
                 if (_config.EnableMacdDebugLogging && _macdEngine.TryGetState(symbol, candle.Interval, out var stateAfter))

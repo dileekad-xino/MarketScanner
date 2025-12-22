@@ -27,8 +27,10 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly Config.CandlestickConfig? _config;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
+    private IDisposable? _streamingBarSubscription;
     // Live-only: no candle stream subscription for strategy evaluation
     private Action<string, decimal, DateTime>? _tickPriceHandler;
+    private Action<string, Candlestick>? _streamingBarHandler;
     private Action<string, Candlestick>? _finalizedCandleHandler;
     private DateTime? _entryTime;
     private int? _currentTradeId; // Track the current open trade ID
@@ -202,6 +204,12 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             _logger.LogInformation("Stopping algorithm for {Symbol}", SelectedSymbol?.Symbol);
             
+            // Cancel streaming historical bars
+            if (SelectedSymbol != null && _ibkrGatewayService != null)
+            {
+                _ibkrGatewayService.CancelStreamingHistoricalBars(SelectedSymbol.Symbol);
+            }
+            
             // Cancel execution
             _cancellationTokenSource?.Cancel();
             
@@ -209,6 +217,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
             UnsubscribeFromCandlestickBuilder();
             _tickSubscription?.Dispose();
             _tickSubscription = null;
+            _streamingBarSubscription?.Dispose();
+            _streamingBarSubscription = null;
             
             // Update state
             IsRunning = false;
@@ -330,29 +340,39 @@ public partial class AlgoRunnerViewModel : ObservableObject
             return;
 
         // CRITICAL: Subscribe symbol to candlestick builder
-        // This tells CandlestickBuilder to process ticks for this symbol and generate candlesticks
+        // This tells CandlestickBuilder to process ticks/bars for this symbol and generate candlesticks
         _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
         _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
 
-        // Live-only pipeline: no candle-derived RSI updates
+        // Request streaming historical bars for MACD (more stable than tick-by-tick)
+        if (_ibkrGatewayService != null)
+        {
+            // Use 5-second bars for live updates (adjust based on your needs)
+            _ibkrGatewayService.RequestStreamingHistoricalBars(
+                SelectedSymbol.Symbol,
+                barSizeSeconds: 5,  // 5-second bars
+                days: 1             // Get 1 day of history + live updates
+            );
+            _logger.LogInformation("Requested streaming historical bars for {Symbol} (5-second bars)", SelectedSymbol.Symbol);
+        }
 
-        // Subscribe to tick price events for live-only MACD/RSI + strategy evaluation
+        // Start candlestick builder with streaming bars enabled
+        _candlestickBuilder.Start(useStreamingBars: true);
+
+        // Subscribe to streaming bars for MACD updates
         if (_macdEngine != null && _rsiEngine != null && _config != null)
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // TICK UPDATE (RSI preview + MACD preview)
-            _tickPriceHandler = (symbol, price, ts) =>
+            // STREAMING BAR UPDATE (MACD preview from bar close prices)
+            _streamingBarHandler = (symbol, bar) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
                     return;
 
-                // RSI preview updates every tick (doesn't modify committed state)
-                _rsiEngine.UpdateOnTick(symbol, interval, price, ts);
-                
-                // MACD updates on every tick (live-only preview)
-                _macdEngine.UpdateOnTick(symbol, interval, price, ts);
-                
+                // MACD updates on every bar close (more stable than tick-by-tick)
+                _macdEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
+
                 // Update UI with latest MACD values from engine
                 var macdResult = _macdEngine.GetLastMacd(symbol, interval);
                 if (macdResult.HasValue)
@@ -363,11 +383,28 @@ public partial class AlgoRunnerViewModel : ObservableObject
                         MacdLine: (decimal)macd,
                         SignalLine: (decimal)signal,
                         Histogram: (decimal)hist,
-                        Timestamp: ts,
+                        Timestamp: bar.Timestamp,
                         Interval: interval
                     );
                     UpdateMacdDisplayFromLive(macdData);
                 }
+
+                ScheduleTickEvaluation();
+            };
+
+            // Subscribe to streaming bars for MACD
+            _streamingBarSubscription = _ibkrGatewayService?.StreamingBarStream
+                .Where(bar => bar.Symbol == SelectedSymbol.Symbol)
+                .Subscribe(bar => _streamingBarHandler?.Invoke(bar.Symbol, bar));
+
+            // TICK UPDATE (RSI preview only - MACD removed)
+            _tickPriceHandler = (symbol, price, ts) =>
+            {
+                if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
+                    return;
+
+                // RSI preview updates every tick (doesn't modify committed state)
+                _rsiEngine.UpdateOnTick(symbol, interval, price, ts);
                 
                 // Update RSI display (shows preview RSI for live intrabar updates)
                 var rsi = _rsiEngine.GetRsi(symbol, interval);
@@ -511,6 +548,13 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 {
                     _candlestickBuilder.OnTickPrice -= _tickPriceHandler;
                     _tickPriceHandler = null;
+                }
+
+                if (_streamingBarSubscription != null)
+                {
+                    _streamingBarSubscription.Dispose();
+                    _streamingBarSubscription = null;
+                    _streamingBarHandler = null;
                 }
 
                 if (_finalizedCandleHandler != null)

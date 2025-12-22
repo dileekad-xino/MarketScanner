@@ -6,7 +6,8 @@ namespace MarketScanner.Services.Impl;
 /// <summary>
 /// MACD engine with TradingView-style behavior:
 /// - Committed OnFinalizedCandle() updates (authoritative, matches TV long-run)
-/// - UpdateOnTick() provides intrabar preview WITHOUT compounding state (prevents drift)
+/// - UpdateOnBar() provides intrabar preview from streaming bars WITHOUT compounding state (prevents drift)
+/// - UpdateOnTick() is deprecated for MACD (kept for backward compatibility)
 /// </summary>
 public class MacdEngine
 {
@@ -88,8 +89,61 @@ public class MacdEngine
 
 
     // ----------------------------------------
+    //  LIVE BAR UPDATE (preview-only, no state compounding)
+    // ----------------------------------------
+    /// <summary>
+    /// Updates MACD preview state with a streaming bar close price.
+    /// Computes preview from committed state but does NOT modify committed EMAs (prevents drift).
+    /// This is the preferred method for MACD updates using streaming historical bars.
+    /// </summary>
+    public void UpdateOnBar(string symbol, string interval, decimal close, DateTime timestamp)
+    {
+        var key = Key(symbol, interval);
+        
+        if (!_states.TryGetValue(key, out var state))
+            return;
+        
+        if (!_periods.TryGetValue(key, out var periods))
+            return;
+        
+        var lockObj = _locks.GetOrAdd(key, _ => new object());
+        
+        lock (lockObj)
+        {
+            double p = (double)close;
+            
+            double alphaFast = 2.0 / (periods.Fast + 1.0);
+            double alphaSlow = 2.0 / (periods.Slow + 1.0);
+            double alphaSignal = 2.0 / (periods.Signal + 1.0);
+
+            // Save previous preview values BEFORE updating (bar-based)
+            state.PreviousMacd = state.LiveMacd;
+            state.PreviousSignal = state.LiveSignal;
+
+            // TradingView-style intrabar preview: compute from committed state but DO NOT write back EMAs
+            var previewFast = state.FastEma + alphaFast * (p - state.FastEma);
+            var previewSlow = state.SlowEma + alphaSlow * (p - state.SlowEma);
+            var previewMacd = previewFast - previewSlow;
+            var previewSignal = state.Signal + alphaSignal * (previewMacd - state.Signal);
+
+            state.LiveMacd = previewMacd;
+            state.LiveSignal = previewSignal;
+            state.LiveHist = previewMacd - previewSignal;
+            
+            state.LastPrice = p;
+            state.LastTimestamp = timestamp;
+        }
+    }
+
+    // ----------------------------------------
     //  LIVE TICK UPDATE (preview-only, no state compounding)
     // ----------------------------------------
+    /// <summary>
+    /// Updates MACD preview state with a tick price.
+    /// Deprecated for MACD - use UpdateOnBar() instead for better accuracy.
+    /// Kept for backward compatibility.
+    /// </summary>
+    [Obsolete("Use UpdateOnBar() instead for MACD updates. This method is kept for backward compatibility.")]
     public void UpdateOnTick(string symbol, string interval, decimal price, DateTime timestamp)
     {
         var key = Key(symbol, interval);

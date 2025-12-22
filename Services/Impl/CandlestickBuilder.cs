@@ -23,6 +23,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
     private readonly ILogger<CandlestickBuilder> _logger;
     private readonly Subject<Candlestick> _candlestickSubject = new();
     private IDisposable? _tickSubscription;
+    private IDisposable? _streamingBarSubscription;
     private bool _disposed;
 
     // Polling
@@ -56,19 +57,31 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
         _logger = logger;
     }
 
-    public void Start()
+    public void Start(bool useStreamingBars = false)
     {
-        if (_tickSubscription != null)
+        if (_tickSubscription != null || _streamingBarSubscription != null)
         {
             _logger.LogWarning("CandlestickBuilder is already started");
             return;
         }
 
-        _logger.LogInformation("Starting CandlestickBuilder with interval: {IntervalSeconds}s", _config.IntervalSeconds);
+        _logger.LogInformation("Starting CandlestickBuilder with interval: {IntervalSeconds}s, useStreamingBars={UseBars}",
+            _config.IntervalSeconds, useStreamingBars);
 
-        // Subscribe to live ticks
-        _tickSubscription = _ibkrGatewayService.TickStream
-            .Subscribe(OnTick);
+        if (useStreamingBars)
+        {
+            // Subscribe to streaming historical bars instead of ticks
+            _streamingBarSubscription = _ibkrGatewayService.StreamingBarStream
+                .Subscribe(OnStreamingBar);
+            _logger.LogInformation("CandlestickBuilder: Using streaming historical bars for updates");
+        }
+        else
+        {
+            // Original tick-based approach
+            _tickSubscription = _ibkrGatewayService.TickStream
+                .Subscribe(OnTick);
+            _logger.LogInformation("CandlestickBuilder: Using tick data for updates");
+        }
 
         // Start polling fallback if enabled in config (or default to false)
         var enablePolling = TryGetConfigValue(nameof(_config.EnablePollingFallback), defaultValue: false);
@@ -91,6 +104,8 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
     {
         _tickSubscription?.Dispose();
         _tickSubscription = null;
+        _streamingBarSubscription?.Dispose();
+        _streamingBarSubscription = null;
         StopPolling();
         _logger.LogInformation("CandlestickBuilder stopped");
     }
@@ -178,6 +193,67 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
 
         // Update interval boundary
         _lastIntervalBoundary[symbol] = intervalBoundary;
+    }
+
+    private void OnStreamingBar(Candlestick bar)
+    {
+        var symbol = bar.Symbol;
+
+        if (!_subscribedSymbols.ContainsKey(symbol))
+            return;
+
+        var timestamp = TimestampUtils.NormalizeToUtc(bar.Timestamp);
+
+        // Emit bar close price for RSI compatibility (RSI still uses ticks via OnTickPrice)
+        OnTickPrice?.Invoke(symbol, bar.Close, timestamp);
+
+        // The bar already represents a complete candlestick, so we can use it directly
+        // Check if this bar belongs to a new interval
+        var intervalBoundary = TimestampUtils.NormalizeAndTruncateToInterval(timestamp, _config.IntervalSeconds);
+
+        if (_lastIntervalBoundary.TryGetValue(symbol, out var lastBoundary))
+        {
+            if (intervalBoundary > lastBoundary)
+            {
+                // New interval - finalize previous candlestick if exists
+                FinalizeCandlestick(symbol, lastBoundary);
+            }
+        }
+        else
+        {
+            _lastIntervalBoundary[symbol] = intervalBoundary;
+        }
+
+        // For streaming bars, we can use the bar directly as the in-progress candlestick
+        // or aggregate multiple bars if bar size < candlestick interval
+        var inProgress = _inProgress.GetOrAdd(symbol, _ => new InProgressCandlestick
+        {
+            Symbol = symbol,
+            Interval = GetIntervalString(_config.IntervalSeconds),
+            StartTime = intervalBoundary
+        });
+
+        // Update in-progress candlestick with bar data
+        if (inProgress.Open == null)
+            inProgress.Open = bar.Open; // First bar sets open
+        inProgress.High = Math.Max(inProgress.High ?? bar.High, bar.High);
+        inProgress.Low = inProgress.Low == null ? bar.Low : Math.Min(inProgress.Low.Value, bar.Low);
+        inProgress.Close = bar.Close; // Latest bar close
+        inProgress.Volume += bar.Volume;
+        inProgress.LastUpdate = timestamp;
+
+        // Emit live update
+        var liveCandle = new Candlestick(
+            Symbol: symbol,
+            Open: inProgress.Open ?? bar.Open,
+            High: inProgress.High ?? bar.High,
+            Low: inProgress.Low ?? bar.Low,
+            Close: inProgress.Close ?? bar.Close,
+            Volume: inProgress.Volume,
+            Timestamp: intervalBoundary,
+            Interval: inProgress.Interval
+        );
+        OnLiveCandleUpdated?.Invoke(symbol, liveCandle);
     }
 
     private void FinalizeCandlestick(string symbol, DateTime intervalBoundary)

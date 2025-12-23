@@ -31,7 +31,8 @@ public class RsiState
     {
         get
         {
-            if (CommittedAvgLoss == 0) return 100.0;
+            if (CommittedAvgLoss == 0) return 100.0;  // All gains, no losses
+            if (CommittedAvgGain == 0) return 0.0;    // All losses, no gains
             double rs = CommittedAvgGain / CommittedAvgLoss;
             return 100.0 - (100.0 / (1.0 + rs));
         }
@@ -44,7 +45,8 @@ public class RsiState
         {
             if (!PreviewAvgGain.HasValue || !PreviewAvgLoss.HasValue)
                 return null;
-            if (PreviewAvgLoss.Value == 0) return 100.0;
+            if (PreviewAvgLoss.Value == 0) return 100.0;  // All gains, no losses
+            if (PreviewAvgGain.Value == 0) return 0.0;    // All losses, no gains
             double rs = PreviewAvgGain.Value / PreviewAvgLoss.Value;
             return 100.0 - (100.0 / (1.0 + rs));
         }

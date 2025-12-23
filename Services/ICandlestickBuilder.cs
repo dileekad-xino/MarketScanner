@@ -15,9 +15,10 @@ public interface ICandlestickBuilder
     IObservable<Candlestick> CandlestickStream { get; }
 
     /// <summary>
-    /// Starts the candlestick builder by subscribing to tick stream.
+    /// Starts the candlestick builder by subscribing to tick stream or streaming bars.
     /// </summary>
-    void Start();
+    /// <param name="useStreamingBars">If true, uses streaming historical bars instead of tick data</param>
+    void Start(bool useStreamingBars = false);
 
     /// <summary>
     /// Stops the candlestick builder.

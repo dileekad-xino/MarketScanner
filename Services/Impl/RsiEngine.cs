@@ -6,7 +6,8 @@ namespace MarketScanner.Services.Impl;
 /// <summary>
 /// RSI engine with TradingView-style behavior:
 /// - Committed UpdateOnFinalizedCandle() updates (authoritative, matches TV long-run)
-/// - UpdateOnTick() provides intrabar preview WITHOUT compounding state (prevents drift)
+/// - UpdateOnBar() provides intrabar preview from streaming bars WITHOUT compounding state (prevents drift)
+/// - UpdateOnTick() is deprecated for RSI (kept for backward compatibility)
 /// </summary>
 public class RsiEngine
 {
@@ -40,17 +41,33 @@ public class RsiEngine
         var gains = changes.Select(x => x > 0 ? x : 0).ToArray();
         var losses = changes.Select(x => x < 0 ? -x : 0).ToArray();
 
-        double avgGain = gains.Take(period).Average();
-        double avgLoss = losses.Take(period).Average();
-
         var key = Key(symbol, interval);
         var lockObj = _locks.GetOrAdd(key, _ => new object());
 
         lock (lockObj)
         {
-            // Apply Wilder's smoothing for remaining periods
-            for (int i = period; i < changes.Length; i++)
+            // TradingView ta.rma() equivalent: incremental processing
+            // First period: simple average (accumulate sum, then divide)
+            double sumGain = 0;
+            double sumLoss = 0;
+            
+            // Accumulate first 'period' values
+            for (int i = 0; i < period && i < gains.Length; i++)
             {
+                sumGain += gains[i];
+                sumLoss += losses[i];
+            }
+            
+            // Convert to average (first RMA value = simple average)
+            // This matches TradingView's ta.rma() behavior for initial period
+            double avgGain = sumGain / period;
+            double avgLoss = sumLoss / period;
+            
+            // Apply Wilder's smoothing (RMA) for remaining periods
+            // This matches TradingView's ta.rma() incremental behavior
+            for (int i = period; i < gains.Length; i++)
+            {
+                // RMA formula: ((RMA_prev * (length - 1)) + current) / length
                 avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
                 avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
             }
@@ -76,12 +93,57 @@ public class RsiEngine
     }
 
     // ----------------------------------------
+    //  LIVE BAR UPDATE (preview-only, no state compounding)
+    // ----------------------------------------
+    /// <summary>
+    /// Updates RSI preview state with a streaming bar close price.
+    /// Computes preview from committed state but does NOT modify committed averages (prevents drift).
+    /// This is the preferred method for RSI updates using streaming historical bars.
+    /// </summary>
+    public void UpdateOnBar(string symbol, string interval, decimal close, DateTime timestamp)
+    {
+        var key = Key(symbol, interval);
+        
+        if (!_states.TryGetValue(key, out var state))
+            return;
+        
+        if (!_periods.TryGetValue(key, out var period))
+            return;
+        
+        var lockObj = _locks.GetOrAdd(key, _ => new object());
+        
+        lock (lockObj)
+        {
+            double p = (double)close;
+            
+            // Save previous preview value BEFORE updating (for crossover detection)
+            state.PreviousRsi = state.PreviewRsi;
+
+            // TradingView-style intrabar preview: compute from committed state but DO NOT write back
+            double change = p - state.CommittedLastClose;
+            double gain = change > 0 ? change : 0;
+            double loss = change < 0 ? -change : 0;
+
+            // Calculate preview averages from committed state (doesn't modify committed)
+            double previewAvgGain = ((state.CommittedAvgGain * (period - 1)) + gain) / period;
+            double previewAvgLoss = ((state.CommittedAvgLoss * (period - 1)) + loss) / period;
+
+            // Store preview (doesn't affect committed state)
+            state.PreviewAvgGain = previewAvgGain;
+            state.PreviewAvgLoss = previewAvgLoss;
+            state.PreviewLastClose = p;
+        }
+    }
+
+    // ----------------------------------------
     //  LIVE TICK UPDATE (preview-only, no state compounding)
     // ----------------------------------------
     /// <summary>
     /// Updates RSI preview state with a live tick price.
-    /// Computes preview from committed state but does NOT modify committed averages (prevents drift).
+    /// Deprecated for RSI - use UpdateOnBar() instead for better accuracy.
+    /// Kept for backward compatibility.
     /// </summary>
+    [Obsolete("Use UpdateOnBar() instead for RSI updates. This method is kept for backward compatibility.")]
     public void UpdateOnTick(string symbol, string interval, decimal price, DateTime timestamp)
     {
         var key = Key(symbol, interval);

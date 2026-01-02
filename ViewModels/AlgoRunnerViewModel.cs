@@ -344,7 +344,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
         _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
 
-        // Request streaming historical bars for MACD (more stable than tick-by-tick)
+        // Request streaming historical bars for MACD and RSI (more stable than tick-by-tick)
         if (_ibkrGatewayService != null)
         {
             // Use 5-second bars for live updates (adjust based on your needs)
@@ -353,18 +353,18 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 barSizeSeconds: 5,  // 5-second bars
                 days: 1             // Get 1 day of history + live updates
             );
-            _logger.LogInformation("Requested streaming historical bars for {Symbol} (5-second bars)", SelectedSymbol.Symbol);
+            _logger.LogInformation("Requested streaming historical bars for {Symbol} (5-second bars) for MACD and RSI", SelectedSymbol.Symbol);
         }
 
         // Start candlestick builder with streaming bars enabled
         _candlestickBuilder.Start(useStreamingBars: true);
 
-        // Subscribe to streaming bars for MACD updates
+        // Subscribe to streaming bars for MACD and RSI updates
         if (_macdEngine != null && _rsiEngine != null && _config != null)
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // STREAMING BAR UPDATE (MACD preview from bar close prices)
+            // STREAMING BAR UPDATE (MACD + RSI preview from bar close prices)
             _streamingBarHandler = (symbol, bar) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
@@ -372,6 +372,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
                 // MACD updates on every bar close (more stable than tick-by-tick)
                 _macdEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
+
+                // RSI updates on every bar close (more stable than tick-by-tick)
+                _rsiEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
 
                 // Update UI with latest MACD values from engine
                 var macdResult = _macdEngine.GetLastMacd(symbol, interval);
@@ -389,37 +392,39 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     UpdateMacdDisplayFromLive(macdData);
                 }
 
-                ScheduleTickEvaluation();
-            };
-
-            // Subscribe to streaming bars for MACD
-            _streamingBarSubscription = _ibkrGatewayService?.StreamingBarStream
-                .Where(bar => bar.Symbol == SelectedSymbol.Symbol)
-                .Subscribe(bar => _streamingBarHandler?.Invoke(bar.Symbol, bar));
-
-            // TICK UPDATE (RSI preview only - MACD removed)
-            _tickPriceHandler = (symbol, price, ts) =>
-            {
-                if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
-                    return;
-
-                // RSI preview updates every tick (doesn't modify committed state)
-                _rsiEngine.UpdateOnTick(symbol, interval, price, ts);
-                
                 // Update RSI display (shows preview RSI for live intrabar updates)
                 var rsi = _rsiEngine.GetRsi(symbol, interval);
                 if (rsi.HasValue)
                 {
                     LiveRsiValue = rsi.Value; // Update live property for UI (preview RSI)
-                    UpdateLiveRsiDisplay(symbol, rsi.Value); // Keep existing for SelectedSymbol
+                    UpdateLiveRsiDisplay(symbol, rsi.Value);
                 }
+
+                ScheduleTickEvaluation();
+            };
+
+            // Subscribe to streaming bars for MACD and RSI
+            _streamingBarSubscription = _ibkrGatewayService?.StreamingBarStream
+                .Where(bar => bar.Symbol == SelectedSymbol.Symbol)
+                .Subscribe(bar => _streamingBarHandler?.Invoke(bar.Symbol, bar));
+
+            // TICK UPDATE (Optional fallback - both MACD and RSI now use streaming bars)
+            // Keep minimal tick handler for potential fallback scenarios
+            _tickPriceHandler = (symbol, price, ts) =>
+            {
+                if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)
+                    return;
+
+                // Note: MACD and RSI now use streaming bars via _streamingBarHandler
+                // This tick handler can be used for other tick-based logic if needed
+                // or removed entirely if not needed
 
                 ScheduleTickEvaluation();
             };
 
             _candlestickBuilder.OnTickPrice += _tickPriceHandler;
 
-            // Commit RSI and MACD baseline on each finalized candle close (prevents long-run drift while keeping tick preview)
+            // Commit RSI and MACD baseline on each finalized candle close (prevents long-run drift while keeping bar preview)
             _finalizedCandleHandler = (symbol, candle) =>
             {
                 if (!IsRunning || SelectedSymbol == null || symbol != SelectedSymbol.Symbol)

@@ -41,17 +41,33 @@ public class RsiEngine
         var gains = changes.Select(x => x > 0 ? x : 0).ToArray();
         var losses = changes.Select(x => x < 0 ? -x : 0).ToArray();
 
-        double avgGain = gains.Take(period).Average();
-        double avgLoss = losses.Take(period).Average();
-
         var key = Key(symbol, interval);
         var lockObj = _locks.GetOrAdd(key, _ => new object());
 
         lock (lockObj)
         {
-            // Apply Wilder's smoothing for remaining periods
-            for (int i = period; i < changes.Length; i++)
+            // TradingView ta.rma() equivalent: incremental processing
+            // First period: simple average (accumulate sum, then divide)
+            double sumGain = 0;
+            double sumLoss = 0;
+            
+            // Accumulate first 'period' values
+            for (int i = 0; i < period && i < gains.Length; i++)
             {
+                sumGain += gains[i];
+                sumLoss += losses[i];
+            }
+            
+            // Convert to average (first RMA value = simple average)
+            // This matches TradingView's ta.rma() behavior for initial period
+            double avgGain = sumGain / period;
+            double avgLoss = sumLoss / period;
+            
+            // Apply Wilder's smoothing (RMA) for remaining periods
+            // This matches TradingView's ta.rma() incremental behavior
+            for (int i = period; i < gains.Length; i++)
+            {
+                // RMA formula: ((RMA_prev * (length - 1)) + current) / length
                 avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
                 avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
             }

@@ -23,7 +23,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
     private readonly ILogger<RSIAlgoStrategy> _logger;
 
     public string Name => "RSI Strategy";
-    public string Description => "RSI strategy using dual-state engine: preview on ticks, committed on candle close (matches TradingView).";
+    public string Description => "Professional intraday RSI scalping: momentum (50-75), pullback (40-50), exhaustion (>=75), exit (<40). Auto-adjusts period by timeframe.";
 
     public RSIAlgoStrategy(
         ICandlestickStorage candlestickStorage,
@@ -47,6 +47,9 @@ public class RSIAlgoStrategy : IAlgoStrategy
             var settings = await _settingsService.GetAsync(ct).ConfigureAwait(false);
             var interval = GetIntervalString(_config.IntervalSeconds);
 
+            // Calculate RSI period based on timeframe (professional intraday scalping)
+            var rsiPeriod = CalculateRsiPeriod(_config.IntervalSeconds);
+
             // Initialize once if needed (historical warm-up)
             if (!_rsiEngine.TryGetState(symbol.Symbol, interval, out _))
             {
@@ -55,7 +58,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
                     .OrderBy(c => c.Timestamp)
                     .ToList();
 
-                _rsiEngine.Initialize(symbol.Symbol, interval, candles, settings.Period);
+                _rsiEngine.Initialize(symbol.Symbol, interval, candles, rsiPeriod);
             }
 
             var rsi = _rsiEngine.GetRsi(symbol.Symbol, interval);
@@ -76,23 +79,36 @@ public class RSIAlgoStrategy : IAlgoStrategy
             string signal;
             string reason;
 
-            if (rsi.Value <= settings.Oversold)
+            // Professional intraday RSI decision tree
+            if (rsi.Value >= 50 && rsi.Value < 75)
             {
                 action = AlgoAction.Buy;
                 signal = "BUY";
-                reason = $"RSI oversold: {rsi.Value:F2} <= {settings.Oversold:F2}";
+                reason = $"RSI momentum above 50 (bullish regime): {rsi.Value:F2}";
             }
-            else if (rsi.Value >= settings.Overbought)
+            else if (rsi.Value >= 40 && rsi.Value < 50)
+            {
+                action = AlgoAction.Buy;
+                signal = "BUY";
+                reason = $"RSI pullback holding above 40 (trend support): {rsi.Value:F2}";
+            }
+            else if (rsi.Value >= 75)
             {
                 action = AlgoAction.Sell;
                 signal = "SELL";
-                reason = $"RSI overbought: {rsi.Value:F2} >= {settings.Overbought:F2}";
+                reason = $"RSI exhaustion zone >= 75: {rsi.Value:F2}";
+            }
+            else if (rsi.Value < 40)
+            {
+                action = AlgoAction.Sell;
+                signal = "SELL";
+                reason = $"RSI lost bullish structure (<40): {rsi.Value:F2}";
             }
             else
             {
                 action = AlgoAction.Hold;
                 signal = "NEUTRAL";
-                reason = $"RSI {rsi.Value:F2} is neutral between levels";
+                reason = $"RSI neutral consolidation: {rsi.Value:F2}";
             }
 
             return new AlgoResult(
@@ -128,6 +144,21 @@ public class RSIAlgoStrategy : IAlgoStrategy
             60 => "1min",
             _ => $"{intervalSeconds}s"
         };
+
+    /// <summary>
+    /// Calculates RSI period based on candlestick interval for professional intraday scalping.
+    /// Lower timeframe = shorter RSI period for faster response.
+    /// </summary>
+    private int CalculateRsiPeriod(int intervalSeconds)
+    {
+        return intervalSeconds switch
+        {
+            15 => 8,   // 15s: period 7-9, use 8 (middle)
+            30 => 10,  // 30s: period 9-12, use 10 (middle)
+            60 => 14,  // 1m: period 14 (standard)
+            _ => intervalSeconds <= 20 ? 8 : intervalSeconds <= 45 ? 10 : 14  // Fallback logic
+        };
+    }
 }
 
 

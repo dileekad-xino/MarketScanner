@@ -51,6 +51,7 @@ namespace MarketScanner
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
+            builder.Services.AddSingleton<Services.AlgoRunnerManagerService>();
 
             // Register database tables after DatabaseInitializer is registered
             builder.Services.AddSingleton<IWatchlistService>(sp =>
@@ -168,7 +169,8 @@ namespace MarketScanner
                     sp.GetRequiredService<IWatchlistService>(),
                     sp.GetRequiredService<ITradeService>(),
                     sp.GetRequiredService<IRsiSettingsService>(),
-                    sp.GetRequiredService<IAlgoStrategy>());
+                    sp.GetRequiredService<IAlgoStrategy>(),
+                    sp.GetRequiredService<Services.AlgoRunnerManagerService>());
             });
             // WatchlistViewModel is created on-demand by ScannerViewModel
 

@@ -257,6 +257,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    // Command for closing tile (used when embedded as tile)
+    // The actual removal will be handled by AlgoRunnerManagerService
+    public event EventHandler? CloseTileRequested;
+
+    [RelayCommand]
+    private void CloseTile()
+    {
+        CloseTileRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private async Task ExecuteAlgoOnceAsync()
     {
         if (SelectedSymbol == null || _cancellationTokenSource?.IsCancellationRequested == true)

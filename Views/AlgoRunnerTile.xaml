@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:converters="clr-namespace:MarketScanner.Converters"
+             xmlns:models="clr-namespace:MarketScanner.Models"
+             x:Class="MarketScanner.Views.AlgoRunnerTile"
+             BackgroundColor="{StaticResource BackgroundDark}">
+
+    <ContentView.Resources>
+        <ResourceDictionary>
+            <converters:StringToBoolConverter x:Key="StringToBoolConverter"/>
+            <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
+            <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
+            <converters:AlgoActionToColorConverter x:Key="AlgoActionToColorConverter"/>
+            <converters:BoolToGreenRedConverter x:Key="BoolToGreenRedConverter"/>
+            <converters:RsiSignalToColorConverter x:Key="RsiSignalToColorConverter"/>
+            <converters:NullableDoubleToBoolConverter x:Key="NullableDoubleToBoolConverter"/>
+        </ResourceDictionary>
+    </ContentView.Resources>
+
+    <Border StrokeThickness="1"
+            Stroke="{StaticResource BorderDark}"
+            BackgroundColor="{StaticResource BackgroundDark}"
+            Padding="10">
+        <Border.StrokeShape>
+            <RoundRectangle CornerRadius="4"/>
+        </Border.StrokeShape>
+        
+        <Grid RowDefinitions="Auto,*">
+            <!-- Header with Symbol and Close Button -->
+            <Grid Grid.Row="0"
+                  ColumnDefinitions="*,Auto"
+                  Margin="0,0,0,10"
+                  Padding="5,0">
+                <Label Grid.Column="0"
+                       Text="{Binding SelectedSymbol.Symbol, StringFormat='Algo: {0}'}"
+                       TextColor="{StaticResource OnSurfaceDark}"
+                       FontSize="14"
+                       FontAttributes="Bold"
+                       VerticalOptions="Center"/>
+                <Button Grid.Column="1"
+                        Text="×"
+                        Command="{Binding CloseTileCommand}"
+                        BackgroundColor="Transparent"
+                        TextColor="{StaticResource OnSurfaceDark}"
+                        FontSize="18"
+                        WidthRequest="30"
+                        HeightRequest="30"
+                        Padding="0"
+                        Margin="0"/>
+            </Grid>
+
+            <!-- Content -->
+            <ScrollView Grid.Row="1"
+                        Orientation="Vertical"
+                        VerticalScrollBarVisibility="Default">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                      Padding="5"
+                      BackgroundColor="{StaticResource BackgroundDark}">
+
+                    <!-- Price Information -->
+                    <Grid Grid.Row="0"
+                          ColumnDefinitions="*,*,*"
+                          ColumnSpacing="8"
+                          Margin="0,0,0,10">
+                        <Border Grid.Column="0"
+                                StrokeThickness="1"
+                                Stroke="{StaticResource BorderDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}"
+                                Padding="10">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="4"/>
+                            </Border.StrokeShape>
+                            <VerticalStackLayout>
+                                <Label Text="Price"
+                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                       FontSize="10"/>
+                                <Label Text="{Binding SelectedSymbol.LastPrice, StringFormat='{0:C2}'}"
+                                       TextColor="{StaticResource OnSurfaceDark}"
+                                       FontSize="13"
+                                       FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="1"
+                                StrokeThickness="1"
+                                Stroke="{StaticResource BorderDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}"
+                                Padding="10">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="4"/>
+                            </Border.StrokeShape>
+                            <VerticalStackLayout>
+                                <Label Text="Change %"
+                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                       FontSize="10"/>
+                                <Label Text="{Binding SelectedSymbol.ChangePercent, StringFormat='{0:+#0.00;-#0.00;0.00}%'}"
+                                       TextColor="{Binding SelectedSymbol.ChangePercent, Converter={StaticResource ChangeToColorConverter}}"
+                                       FontSize="13"
+                                       FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="2"
+                                StrokeThickness="1"
+                                Stroke="{StaticResource BorderDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}"
+                                Padding="10">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="4"/>
+                            </Border.StrokeShape>
+                            <VerticalStackLayout>
+                                <Label Text="RSI"
+                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                       FontSize="10"/>
+                                <Label Text="{Binding LiveRsiValue, StringFormat='{0:F2}'}"
+                                       TextColor="{StaticResource OnSurfaceDark}"
+                                       FontSize="13"
+                                       FontFamily="Cascadia Mono, Consolas, Menlo"
+                                       IsVisible="{Binding LiveRsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}"/>
+                                <Label Text="N/A"
+                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                       FontSize="13">
+                                    <Label.Triggers>
+                                        <DataTrigger TargetType="Label" Binding="{Binding LiveRsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}" Value="False">
+                                            <Setter Property="IsVisible" Value="True"/>
+                                        </DataTrigger>
+                                    </Label.Triggers>
+                                </Label>
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+
+                    <!-- Action Display -->
+                    <Border Grid.Row="1"
+                            StrokeThickness="2"
+                            Stroke="{Binding Result.Action, Converter={StaticResource AlgoActionToColorConverter}}"
+                            BackgroundColor="{StaticResource SurfaceDark}"
+                            Padding="12"
+                            Margin="0,0,0,10"
+                            IsVisible="{Binding Result, Converter={StaticResource StringToBoolConverter}}">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="4"/>
+                        </Border.StrokeShape>
+                        
+                        <VerticalStackLayout Spacing="8">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <Label Grid.Column="0"
+                                       Text="Action:"
+                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                       FontSize="12"
+                                       VerticalOptions="Center"
+                                       Margin="0,0,8,0"/>
+                                <Label Grid.Column="1"
+                                       Text="{Binding Result.Action}"
+                                       TextColor="{Binding Result.Action, Converter={StaticResource AlgoActionToColorConverter}}"
+                                       FontSize="16"
+                                       FontAttributes="Bold"
+                                       VerticalOptions="Center"/>
+                            </Grid>
+
+                            <Label Text="{Binding Result.Reason}"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   FontSize="11"
+                                   LineBreakMode="WordWrap"
+                                   IsVisible="{Binding Result.Reason, Converter={StaticResource StringToBoolConverter}}"/>
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- MACD Indicator -->
+                    <Grid Grid.Row="2"
+                          ColumnDefinitions="*,*,*,*"
+                          ColumnSpacing="8"
+                          Margin="0,0,0,10"
+                          IsVisible="{Binding Result, Converter={StaticResource StringToBoolConverter}}">
+                        <VerticalStackLayout Grid.Column="0">
+                            <Label Text="MACD"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding MacdLine, StringFormat='{0:F4}'}"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1">
+                            <Label Text="Signal"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding SignalLine, StringFormat='{0:F4}'}"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="2">
+                            <Label Text="Hist"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding Histogram, StringFormat='{0:+0.0000;-0.0000;0.0000}'}"
+                                   TextColor="{Binding IsHistogramPositive, Converter={StaticResource BoolToGreenRedConverter}}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="3">
+                            <Label Text="Cross"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding CrossoverStatus}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo">
+                                <Label.Triggers>
+                                    <DataTrigger TargetType="Label" Binding="{Binding HasCrossedUp}" Value="True">
+                                        <Setter Property="TextColor" Value="{StaticResource PositiveGreen}"/>
+                                    </DataTrigger>
+                                    <DataTrigger TargetType="Label" Binding="{Binding HasCrossedDown}" Value="True">
+                                        <Setter Property="TextColor" Value="{StaticResource NegativeRed}"/>
+                                    </DataTrigger>
+                                </Label.Triggers>
+                            </Label>
+                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- P/L Section -->
+                    <Grid Grid.Row="3"
+                          ColumnDefinitions="*,*,*"
+                          ColumnSpacing="8"
+                          Margin="0,0,0,10"
+                          IsVisible="{Binding HasPosition}">
+                        <VerticalStackLayout Grid.Column="0">
+                            <Label Text="P/L"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding ProfitLoss, StringFormat='{0:+$#,##0.00;-$#,##0.00;$0.00}'}"
+                                   TextColor="{Binding ProfitLoss, Converter={StaticResource ChangeToColorConverter}}"
+                                   FontSize="12"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1">
+                            <Label Text="P/L %"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding ProfitLossPercent, StringFormat='{0:+#0.00;-#0.00;0.00}%'}"
+                                   TextColor="{Binding ProfitLossPercent, Converter={StaticResource ChangeToColorConverter}}"
+                                   FontSize="12"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="2">
+                            <Label Text="Qty"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Entry Text="{Binding Quantity}"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   FontSize="12"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"
+                                   Keyboard="Numeric"
+                                   BackgroundColor="Transparent"
+                                   HeightRequest="28"/>
+                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- Buttons -->
+                    <Grid Grid.Row="4"
+                          ColumnDefinitions="*,*"
+                          ColumnSpacing="8">
+                        <Button Grid.Column="0"
+                                Text="Run"
+                                Command="{Binding RunAlgoCommand}"
+                                BackgroundColor="{StaticResource PrimaryDark}"
+                                TextColor="{StaticResource TextOnAccent}"
+                                IsVisible="{Binding IsRunning, Converter={StaticResource InvertedBoolConverter}}"
+                                HeightRequest="32"
+                                FontSize="12"/>
+                        <Button Grid.Column="0"
+                                Text="Stop"
+                                Command="{Binding StopAlgoCommand}"
+                                BackgroundColor="#EF5350"
+                                TextColor="White"
+                                IsVisible="{Binding IsRunning}"
+                                HeightRequest="32"
+                                FontSize="12"/>
+                        <Button Grid.Column="1"
+                                Text="Reset"
+                                Command="{Binding ResetPositionCommand}"
+                                BackgroundColor="{StaticResource SurfaceDark}"
+                                TextColor="{StaticResource OnSurfaceDark}"
+                                HeightRequest="32"
+                                FontSize="12"
+                                IsVisible="{Binding HasPosition}"/>
+                    </Grid>
+
+                    <!-- Error Message -->
+                    <Label Grid.Row="4"
+                           Text="{Binding ErrorMessage}"
+                           IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
+                           TextColor="{StaticResource ErrorColor}"
+                           FontSize="11"
+                           LineBreakMode="WordWrap"
+                           Margin="0,8,0,0"/>
+
+                    <!-- Loading Indicator -->
+                    <ActivityIndicator Grid.Row="4"
+                                       IsRunning="{Binding IsRunning}"
+                                       IsVisible="{Binding IsRunning}"
+                                       Color="{StaticResource PrimaryDark}"
+                                       VerticalOptions="Center"
+                                       HorizontalOptions="Center"/>
+                </Grid>
+            </ScrollView>
+        </Grid>
+    </Border>
+</ContentView>
+

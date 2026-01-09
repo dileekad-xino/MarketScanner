@@ -684,7 +684,6 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
             if (string.IsNullOrWhiteSpace(symbol))
             {
-                ErrorMessage = "Please enter a symbol";
                 return;
             }
 

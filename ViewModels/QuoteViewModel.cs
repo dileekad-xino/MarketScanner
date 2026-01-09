@@ -592,7 +592,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
             if (string.IsNullOrWhiteSpace(symbol))
             {
-                ErrorMessage = "Please enter a symbol";
                 return;
             }
 

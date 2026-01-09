@@ -19,7 +19,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private readonly IDispatcherService _dispatcher;
     private readonly IWatchlistService _watchlistService;
     private readonly ILogger<QuoteViewModel> _logger;
-    private readonly ISymbolSearchService? _symbolSearchService;
+    private ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _quoteItems = new();
     [ObservableProperty] private string _newSymbolText = "";
@@ -879,10 +879,27 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
             
-            if (_symbolSearchService == null)
+            // Try to get symbol search service if not already set
+            var symbolSearchService = _symbolSearchService;
+            if (symbolSearchService == null)
             {
-                _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
-                return;
+                var serviceProvider = _serviceProvider ?? 
+                    Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+                
+                if (serviceProvider != null)
+                {
+                    symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
+                    if (symbolSearchService != null)
+                    {
+                        _symbolSearchService = symbolSearchService; // Cache it for future use
+                    }
+                }
+                
+                if (symbolSearchService == null)
+                {
+                    _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
+                    return;
+                }
             }
             
             if (_searchCts.Token.IsCancellationRequested)
@@ -891,7 +908,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
                 
             IsSearching = true;
-            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
             
             if (!_searchCts.Token.IsCancellationRequested)
             {

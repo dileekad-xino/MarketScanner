@@ -17,7 +17,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     private readonly IbkrGatewayService _ibkrService;
     private readonly IDispatcherService _dispatcher;
     private readonly ILogger<WatchlistViewModel> _logger;
-    private readonly ISymbolSearchService? _symbolSearchService;
+    private ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<Watchlist> _watchlists = new();
     [ObservableProperty] private Watchlist? _selectedWatchlist;
@@ -512,10 +512,26 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
             
-            if (_symbolSearchService == null)
+            // Try to get symbol search service if not already set
+            var symbolSearchService = _symbolSearchService;
+            if (symbolSearchService == null)
             {
-                _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
-                return;
+                var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+                
+                if (serviceProvider != null)
+                {
+                    symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
+                    if (symbolSearchService != null)
+                    {
+                        _symbolSearchService = symbolSearchService; // Cache it for future use
+                    }
+                }
+                
+                if (symbolSearchService == null)
+                {
+                    _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
+                    return;
+                }
             }
             
             if (_searchCts.Token.IsCancellationRequested)
@@ -524,7 +540,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             }
                 
             IsSearching = true;
-            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
             
             if (!_searchCts.Token.IsCancellationRequested)
             {

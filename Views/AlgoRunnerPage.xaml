@@ -15,6 +15,7 @@
             <converters:AlgoActionToColorConverter x:Key="AlgoActionToColorConverter"/>
             <converters:BoolToGreenRedConverter x:Key="BoolToGreenRedConverter"/>
             <converters:RsiSignalToColorConverter x:Key="RsiSignalToColorConverter"/>
+            <converters:CciSignalToColorConverter x:Key="CciSignalToColorConverter"/>
             <converters:NullableDoubleToBoolConverter x:Key="NullableDoubleToBoolConverter"/>
         </ResourceDictionary>
     </ContentPage.Resources>
@@ -178,11 +179,11 @@
                            VerticalOptions="Center"/>
                 </Grid>
 
-                <!-- Signal -->
+                <!-- RSI Signal -->
                 <Grid ColumnDefinitions="Auto,*"
                       IsVisible="{Binding Result.RsiSignal, Converter={StaticResource StringToBoolConverter}}">
                     <Label Grid.Column="0"
-                           Text="Signal:"
+                           Text="RSI Signal:"
                            TextColor="{StaticResource OnSurfaceVariantDark}"
                            FontSize="14"
                            VerticalOptions="Center"
@@ -190,6 +191,40 @@
                     <Label Grid.Column="1"
                            Text="{Binding Result.RsiSignal}"
                            TextColor="{Binding Result.RsiSignal, Converter={StaticResource RsiSignalToColorConverter}}"
+                           FontSize="16"
+                           FontAttributes="Bold"
+                           VerticalOptions="Center"/>
+                </Grid>
+
+                <!-- CCI Value (Live updates on every tick) -->
+                <Grid ColumnDefinitions="Auto,*"
+                      IsVisible="{Binding LiveCciValue, Converter={StaticResource NullableDoubleToBoolConverter}}">
+                    <Label Grid.Column="0"
+                           Text="CCI:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="14"
+                           VerticalOptions="Center"
+                           Margin="0,0,10,0"/>
+                    <Label Grid.Column="1"
+                           Text="{Binding LiveCciValue, StringFormat='{0:F2}'}"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="16"
+                           FontFamily="Cascadia Mono, Consolas, Menlo"
+                           VerticalOptions="Center"/>
+                </Grid>
+
+                <!-- CCI Signal -->
+                <Grid ColumnDefinitions="Auto,*"
+                      IsVisible="{Binding Result.CciSignal, Converter={StaticResource StringToBoolConverter}}">
+                    <Label Grid.Column="0"
+                           Text="CCI Signal:"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="14"
+                           VerticalOptions="Center"
+                           Margin="0,0,10,0"/>
+                    <Label Grid.Column="1"
+                           Text="{Binding Result.CciSignal}"
+                           TextColor="{Binding Result.CciSignal, Converter={StaticResource CciSignalToColorConverter}}"
                            FontSize="16"
                            FontAttributes="Bold"
                            VerticalOptions="Center"/>

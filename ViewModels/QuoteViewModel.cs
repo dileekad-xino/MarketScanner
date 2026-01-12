@@ -809,6 +809,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var rsiSettingsService = _serviceProvider.GetService<IRsiSettingsService>();
             var candlestickStorage = _serviceProvider.GetService<ICandlestickStorage>();
             var config = _serviceProvider.GetService<MarketScanner.Config.CandlestickConfig>();
+            var cciEngine = _serviceProvider.GetService<Services.Impl.CciEngine>();
+            var cciSettingsService = _serviceProvider.GetService<ICciSettingsService>();
+            
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
@@ -820,7 +823,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 rsiEngine,
                 rsiSettingsService,
                 candlestickStorage,
-                config);
+                config,
+                cciEngine,
+                cciSettingsService);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);

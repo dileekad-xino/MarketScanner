@@ -79,6 +79,10 @@ public class AlgoStrategy : IAlgoStrategy
         var rsiValue = results.FirstOrDefault(r => r.RsiValue.HasValue)?.RsiValue;
         var rsiSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.RsiSignal))?.RsiSignal;
 
+        // Get CCI data from results (take first non-null)
+        var cciValue = results.FirstOrDefault(r => r.CciValue.HasValue)?.CciValue;
+        var cciSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.CciSignal))?.CciSignal;
+
         // Decision logic: require unanimous agreement
         var total = results.Count;
 
@@ -110,7 +114,9 @@ public class AlgoStrategy : IAlgoStrategy
             Macd: macdData,
             Crossover: crossover,
             RsiValue: rsiValue,
-            RsiSignal: rsiSignal
+            RsiSignal: rsiSignal,
+            CciValue: cciValue,
+            CciSignal: cciSignal
         );
     }
 }

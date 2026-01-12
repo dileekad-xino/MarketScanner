@@ -25,6 +25,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly IRsiSettingsService? _rsiSettingsService;
     private readonly ICandlestickStorage? _candlestickStorage;
     private readonly Config.CandlestickConfig? _config;
+    private readonly Services.Impl.CciEngine? _cciEngine;
+    private readonly ICciSettingsService? _cciSettingsService;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
     private IDisposable? _streamingBarSubscription;
@@ -67,6 +69,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
     // Live RSI display property (updates on every tick)
     [ObservableProperty] private double? _liveRsiValue;
 
+    // Live CCI display property (updates on every tick)
+    [ObservableProperty] private double? _liveCciValue;
+
     public AlgoRunnerViewModel(
         IAlgoStrategy algorithm,
         ILogger<AlgoRunnerViewModel> logger,
@@ -78,7 +83,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
         Services.Impl.RsiEngine? rsiEngine = null,
         IRsiSettingsService? rsiSettingsService = null,
         ICandlestickStorage? candlestickStorage = null,
-        Config.CandlestickConfig? config = null)
+        Config.CandlestickConfig? config = null,
+        Services.Impl.CciEngine? cciEngine = null,
+        ICciSettingsService? cciSettingsService = null)
     {
         _algorithm = algorithm;
         _logger = logger;
@@ -91,6 +98,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _rsiSettingsService = rsiSettingsService;
         _candlestickStorage = candlestickStorage;
         _config = config;
+        _cciEngine = cciEngine;
+        _cciSettingsService = cciSettingsService;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -179,6 +188,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             // Initialize RSI state for live updates
             await InitializeRsiStateAsync();
+
+            // Initialize CCI state for live updates
+            await InitializeCciStateAsync();
 
             // Subscribe to tick-driven evaluation/indicator updates
             SubscribeToCandlestickStream();
@@ -269,6 +281,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
             {
                 SelectedSymbol.RsiValue = Result.RsiValue;
                 SelectedSymbol.RsiSignal = Result.RsiSignal;
+                SelectedSymbol.CciValue = Result.CciValue;
+                SelectedSymbol.CciSignal = Result.CciSignal;
             }
 
             // Update peak RSI for open positions
@@ -376,6 +390,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // RSI updates on every bar close (more stable than tick-by-tick)
                 _rsiEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
 
+                // CCI updates on every bar close (needs High, Low, Close)
+                _cciEngine?.UpdateOnBar(symbol, interval, bar.High, bar.Low, bar.Close, bar.Timestamp);
+
                 // Update UI with latest MACD values from engine
                 var macdResult = _macdEngine.GetLastMacd(symbol, interval);
                 if (macdResult.HasValue)
@@ -398,6 +415,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 {
                     LiveRsiValue = rsi.Value; // Update live property for UI (preview RSI)
                     UpdateLiveRsiDisplay(symbol, rsi.Value);
+                }
+
+                // Update CCI display (shows preview CCI for live intrabar updates)
+                var cci = _cciEngine?.GetCci(symbol, interval);
+                if (cci.HasValue)
+                {
+                    LiveCciValue = cci.Value; // Update live property for UI (preview CCI)
+                    UpdateLiveCciDisplay(symbol, cci.Value);
                 }
 
                 ScheduleTickEvaluation();
@@ -451,6 +476,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // Commit MACD on candle close
                 _macdEngine.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.Close, candle.Timestamp);
 
+                // Commit CCI on candle close (needs High, Low, Close)
+                _cciEngine?.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.High, candle.Low, candle.Close, candle.Timestamp);
+
                 // Update UI immediately to the committed close snapshot
                 var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
                 if (macdResult.HasValue)
@@ -472,6 +500,14 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 {
                     LiveRsiValue = rsi.Value; // Now shows committed RSI (matches TradingView)
                     UpdateLiveRsiDisplay(symbol, rsi.Value);
+                }
+
+                // Update CCI display to committed value (matches TradingView)
+                var cci = _cciEngine?.GetCci(symbol, candle.Interval);
+                if (cci.HasValue)
+                {
+                    LiveCciValue = cci.Value; // Now shows committed CCI (matches TradingView)
+                    UpdateLiveCciDisplay(symbol, cci.Value);
                 }
 
                 if (_config.EnableMacdDebugLogging && _macdEngine.TryGetState(symbol, candle.Interval, out var stateAfter))
@@ -638,12 +674,20 @@ public partial class AlgoRunnerViewModel : ObservableObject
         else
             rsiPart = "RSI=N/A";
 
+        string cciPart;
+        if (LiveCciValue.HasValue)
+            cciPart = $"CCI={LiveCciValue.Value:F2}";
+        else if (Result.CciValue.HasValue)
+            cciPart = $"CCI={Result.CciValue.Value:F2}";
+        else
+            cciPart = "CCI=N/A";
+
         var baseReason = Result.Reason ?? string.Empty;
         var idxMon = baseReason.IndexOf("Monitoring:", StringComparison.OrdinalIgnoreCase);
         if (idxMon >= 0)
             baseReason = baseReason[..idxMon].TrimEnd();
 
-        var monitoringPart = $"Monitoring: {macdPart}; {rsiPart}";
+        var monitoringPart = $"Monitoring: {macdPart}; {rsiPart}; {cciPart}";
         var combined = string.IsNullOrWhiteSpace(baseReason) ? monitoringPart : $"{baseReason} | {monitoringPart}";
 
         Result = Result with { Reason = combined };
@@ -655,6 +699,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             SelectedSymbol.RsiValue = rsi;
             // RSI signal logic can be added here if needed
+            // For now, just update the value
+        }
+    }
+
+    private void UpdateLiveCciDisplay(string symbol, double cci)
+    {
+        if (SelectedSymbol?.Symbol == symbol)
+        {
+            SelectedSymbol.CciValue = cci;
+            // CCI signal logic can be added here if needed
             // For now, just update the value
         }
     }
@@ -695,6 +749,45 @@ public partial class AlgoRunnerViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogError(ex, "AlgoRunnerViewModel: Error initializing RSI state for {Symbol}", SelectedSymbol?.Symbol);
+        }
+    }
+
+    private async Task InitializeCciStateAsync()
+    {
+        if (_cciSettingsService == null || _candlestickStorage == null ||
+            _config == null || SelectedSymbol == null)
+        {
+            _logger.LogDebug("AlgoRunnerViewModel: Skipping CCI state initialization - required services not available");
+            return;
+        }
+
+        try
+        {
+            var settings = await _cciSettingsService.GetAsync();
+            var interval = GetIntervalString(_config.IntervalSeconds);
+
+            // Get historical candlesticks from storage
+            var candlesticks = _candlestickStorage.GetCandlesticks(SelectedSymbol.Symbol, interval, int.MaxValue)
+                .OrderBy(c => c.Timestamp)
+                .ToList();
+
+            if (candlesticks.Count >= settings.Period)
+            {
+                // Initialize CciEngine from historical warmup once
+                _cciEngine?.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
+                
+                _logger.LogInformation("AlgoRunnerViewModel: Initialized CCI state for {Symbol} with {Count} candlesticks",
+                    SelectedSymbol.Symbol, candlesticks.Count);
+            }
+            else
+            {
+                _logger.LogWarning("AlgoRunnerViewModel: Insufficient candlesticks for CCI initialization. Need {Required}, got {Actual}",
+                    settings.Period, candlesticks.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AlgoRunnerViewModel: Error initializing CCI state for {Symbol}", SelectedSymbol?.Symbol);
         }
     }
 

@@ -15,7 +15,7 @@ public class CciSignalToColorConverter : IValueConverter
         {
             "BUY MOMENTUM" => Color.FromArgb("#00c853"),
             "BUY PULLBACK" => Color.FromArgb("#4caf50"),
-            "OVERSOLD SCALP" => Color.FromArgb("#4caf50"),
+            "OVERSOLD SCALP" => Color.FromArgb("#00c853"),
             "SELL MOMENTUM" => Color.FromArgb("#d50000"),
             "TAKE PROFIT" => Color.FromArgb("#ff5252"),
             "EXIT WEAKNESS" => Color.FromArgb("#ff5252"),

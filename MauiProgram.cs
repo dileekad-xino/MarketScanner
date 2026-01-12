@@ -50,6 +50,7 @@ namespace MarketScanner
             // Services
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
+            builder.Services.AddSingleton<ICciSettingsService, CciSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
             builder.Services.AddSingleton<Services.AlgoRunnerManagerService>();
 
@@ -143,19 +144,31 @@ namespace MarketScanner
                     sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.RSIAlgoStrategy>>(),
                     sp.GetService<ITradeService>()); // Optional dependency
             });
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.CciAlgoStrategy>(sp =>
+            {
+                return new MarketScanner.Services.Impl.CciAlgoStrategy(
+                    sp.GetRequiredService<ICandlestickStorage>(),
+                    sp.GetRequiredService<CandlestickConfig>(),
+                    sp.GetRequiredService<ICciSettingsService>(),
+                    sp.GetRequiredService<MarketScanner.Services.Impl.CciEngine>(),
+                    sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.CciAlgoStrategy>>(),
+                    sp.GetService<ITradeService>()); // Optional dependency
+            });
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdEngine>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.RsiEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.CciEngine>();
 
-            // Register composite strategy that combines both RSI and MACD
+            // Register composite strategy that combines RSI, MACD, and CCI
             builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
             {
                 var rsiStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.RSIAlgoStrategy>();
                 var macdStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.MacdStrategy>();
+                var cciStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.CciAlgoStrategy>();
                 var logger = sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.AlgoStrategy>>();
                 
                 return new MarketScanner.Services.Impl.AlgoStrategy(
-                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy },
+                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy },
                     logger);
             });
 

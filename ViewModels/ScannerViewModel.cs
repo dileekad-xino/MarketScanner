@@ -1392,6 +1392,8 @@ public partial class ScannerViewModel : ObservableObject
             {
                 row.RsiValue = result.RsiValue;
                 row.RsiSignal = result.RsiSignal;
+                row.CciValue = result.CciValue;
+                row.CciSignal = result.CciSignal;
             }
         }
         catch (Exception ex)

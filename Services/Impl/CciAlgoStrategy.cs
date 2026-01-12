@@ -23,7 +23,7 @@ public class CciAlgoStrategy : IAlgoStrategy
     private readonly ILogger<CciAlgoStrategy> _logger;
 
     public string Name => "CCI Strategy";
-    public string Description => "Professional intraday CCI: overbought (>=100), oversold (<=-100), bullish (>0), bearish (<0). Auto-adjusts period by timeframe.";
+    public string Description => "Professional intraday CCI scalping: momentum (+50 to +200), pullback (0 to +50), exhaustion (>=+200), oversold bounce (<=-200), bearish (<-50). Auto-adjusts period by timeframe.";
 
     public CciAlgoStrategy(
         ICandlestickStorage candlestickStorage,
@@ -79,36 +79,48 @@ public class CciAlgoStrategy : IAlgoStrategy
             string signal;
             string reason;
 
-            // Professional intraday CCI decision tree
-            if (cci.Value >= settings.Overbought)
+            // Professional intraday CCI decision tree (scalping-optimized)
+            if (cci.Value >= 200)
             {
                 action = AlgoAction.Sell;
-                signal = "SELL";
-                reason = $"CCI overbought >= {settings.Overbought}: {cci.Value:F2}";
+                signal = "TAKE_PROFIT";
+                reason = $"CCI exhaustion >= +200: {cci.Value:F2}";
             }
-            else if (cci.Value <= settings.Oversold)
+            else if (cci.Value >= 50 && cci.Value < 200)
             {
                 action = AlgoAction.Buy;
-                signal = "BUY";
-                reason = $"CCI oversold <= {settings.Oversold}: {cci.Value:F2}";
+                signal = "BUY_MOMENTUM";
+                reason = $"CCI strong bullish momentum > +50: {cci.Value:F2}";
             }
-            else if (cci.Value > 0)
+            else if (cci.Value > 0 && cci.Value < 50)
             {
                 action = AlgoAction.Buy;
-                signal = "BUY";
-                reason = $"CCI bullish momentum above 0: {cci.Value:F2}";
+                signal = "BUY_PULLBACK";
+                reason = $"CCI bullish pullback holding above 0: {cci.Value:F2}";
             }
-            else if (cci.Value < 0)
+            else if (cci.Value <= -200)
+            {
+                action = AlgoAction.Buy;
+                signal = "OVERSOLD_SCALP";
+                reason = $"CCI capitulation <= -200 (fast scalp): {cci.Value:F2}";
+            }
+            else if (cci.Value <= -50 && cci.Value > -200)
             {
                 action = AlgoAction.Sell;
-                signal = "SELL";
-                reason = $"CCI bearish momentum below 0: {cci.Value:F2}";
+                signal = "SELL_MOMENTUM";
+                reason = $"CCI bearish momentum < -50: {cci.Value:F2}";
+            }
+            else if (cci.Value < 0 && cci.Value > -50)
+            {
+                action = AlgoAction.Sell;
+                signal = "EXIT_WEAKNESS";
+                reason = $"CCI lost bullish structure (<0): {cci.Value:F2}";
             }
             else
             {
                 action = AlgoAction.Hold;
                 signal = "NEUTRAL";
-                reason = $"CCI neutral at zero: {cci.Value:F2}";
+                reason = $"CCI consolidation near zero: {cci.Value:F2}";
             }
 
             return new AlgoResult(

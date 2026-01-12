@@ -62,11 +62,6 @@ public class AlgoStrategy : IAlgoStrategy
             );
         }
 
-        // Count actions
-        var buyCount = results.Count(r => r.Action == AlgoAction.Buy);
-        var sellCount = results.Count(r => r.Action == AlgoAction.Sell);
-        var holdCount = results.Count(r => r.Action == AlgoAction.Hold);
-
         // Get average price from results, fallback to symbol price
         var prices = results.Where(r => r.Price.HasValue).Select(r => r.Price!.Value).ToList();
         var avgPrice = prices.Count > 0 ? prices.Average() : symbol.LastPrice;
@@ -75,7 +70,7 @@ public class AlgoStrategy : IAlgoStrategy
         var macdData = results.FirstOrDefault(r => r.Macd != null)?.Macd;
         var crossover = results.FirstOrDefault(r => r.Crossover != CrossoverStatus.None)?.Crossover ?? CrossoverStatus.None;
 
-        // Get RSI data from results (take first non-null)
+        // Get RSI data from results (take first non-null) - FOR DISPLAY ONLY
         var rsiValue = results.FirstOrDefault(r => r.RsiValue.HasValue)?.RsiValue;
         var rsiSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.RsiSignal))?.RsiSignal;
 
@@ -83,33 +78,48 @@ public class AlgoStrategy : IAlgoStrategy
         var cciValue = results.FirstOrDefault(r => r.CciValue.HasValue)?.CciValue;
         var cciSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.CciSignal))?.CciSignal;
 
-        // Decision logic: require unanimous agreement
-        var total = results.Count;
+        // Filter to only MACD and CCI strategies for decision making
+        // Identify by indicator data presence
+        var decisionResults = results.Where(r => 
+            (r.Macd != null || r.Crossover != CrossoverStatus.None) ||  // MACD Strategy
+            (r.CciValue.HasValue || !string.IsNullOrEmpty(r.CciSignal))   // CCI Strategy
+        ).ToList();
+
+        // Count actions only from MACD and CCI (decision-making strategies)
+        var buyCount = decisionResults.Count(r => r.Action == AlgoAction.Buy);
+        var sellCount = decisionResults.Count(r => r.Action == AlgoAction.Sell);
+        var holdCount = decisionResults.Count(r => r.Action == AlgoAction.Hold);
+
+        // Decision logic: require unanimous agreement between MACD and CCI only
+        var total = decisionResults.Count;
 
         var action = AlgoAction.Hold;
-        var reasons = string.Join(" | ", results.Select(r => $"[{r.Action}] {r.Reason}"));
+        var reasons = string.Join(" | ", decisionResults.Select(r => $"[{r.Action}] {r.Reason}"));
         var summary = "";
 
         if (buyCount == total && total > 0)
         {
             action = AlgoAction.Buy;
-            summary = $"BUY unanimous: All {total} strategies agree on BUY";
+            summary = $"BUY unanimous: MACD and CCI both agree on BUY ({buyCount}/{total})";
         }
         else if (sellCount == total && total > 0)
         {
             action = AlgoAction.Sell;
-            summary = $"SELL unanimous: All {total} strategies agree on SELL";
+            summary = $"SELL unanimous: MACD and CCI both agree on SELL ({sellCount}/{total})";
         }
         else
         {
-            summary = $"HOLD: Strategies disagree (Buy: {buyCount}, Sell: {sellCount}, Hold: {holdCount}) - Unanimous agreement required";
+            summary = $"HOLD: MACD and CCI disagree (Buy: {buyCount}, Sell: {sellCount}, Hold: {holdCount}) - Unanimous agreement required";
         }
+
+        // Include RSI info in reason for reference (display only, not used in decision)
+        var rsiInfo = rsiValue.HasValue ? $" | RSI: {rsiValue.Value:F2} ({rsiSignal ?? "N/A"}) [DISPLAY ONLY]" : "";
 
         return new AlgoResult(
             Symbol: symbol.Symbol,
             Action: action,
             Price: avgPrice,
-            Reason: $"{summary} | {reasons}",
+            Reason: $"{summary} | {reasons}{rsiInfo}",
             Timestamp: DateTime.UtcNow,
             Macd: macdData,
             Crossover: crossover,

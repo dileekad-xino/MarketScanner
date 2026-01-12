@@ -13,10 +13,12 @@ public class CciSignalToColorConverter : IValueConverter
         signal = signal.ToUpperInvariant();
         return signal switch
         {
-            "STRONG BUY" => Color.FromArgb("#00c853"),
-            "BUY" => Color.FromArgb("#4caf50"),
-            "STRONG SELL" => Color.FromArgb("#d50000"),
-            "SELL" => Color.FromArgb("#ff5252"),
+            "BUY MOMENTUM" => Color.FromArgb("#00c853"),
+            "BUY PULLBACK" => Color.FromArgb("#4caf50"),
+            "OVERSOLD SCALP" => Color.FromArgb("#4caf50"),
+            "SELL MOMENTUM" => Color.FromArgb("#d50000"),
+            "TAKE PROFIT" => Color.FromArgb("#ff5252"),
+            "EXIT WEAKNESS" => Color.FromArgb("#ff5252"),
             _ => Color.FromArgb("#e0e0e0")
         };
     }

@@ -83,37 +83,37 @@ public class CciAlgoStrategy : IAlgoStrategy
             if (cci.Value >= 200)
             {
                 action = AlgoAction.Sell;
-                signal = "TAKE_PROFIT";
+                signal = "TAKE PROFIT";
                 reason = $"CCI exhaustion >= +200: {cci.Value:F2}";
             }
             else if (cci.Value >= 50 && cci.Value < 200)
             {
                 action = AlgoAction.Buy;
-                signal = "BUY_MOMENTUM";
+                signal = "BUY MOMENTUM";
                 reason = $"CCI strong bullish momentum > +50: {cci.Value:F2}";
             }
             else if (cci.Value > 0 && cci.Value < 50)
             {
                 action = AlgoAction.Buy;
-                signal = "BUY_PULLBACK";
+                signal = "BUY PULLBACK";
                 reason = $"CCI bullish pullback holding above 0: {cci.Value:F2}";
             }
             else if (cci.Value <= -200)
             {
                 action = AlgoAction.Buy;
-                signal = "OVERSOLD_SCALP";
+                signal = "OVERSOLD SCALP";
                 reason = $"CCI capitulation <= -200 (fast scalp): {cci.Value:F2}";
             }
             else if (cci.Value <= -50 && cci.Value > -200)
             {
                 action = AlgoAction.Sell;
-                signal = "SELL_MOMENTUM";
+                signal = "SELL MOMENTUM";
                 reason = $"CCI bearish momentum < -50: {cci.Value:F2}";
             }
             else if (cci.Value < 0 && cci.Value > -50)
             {
                 action = AlgoAction.Sell;
-                signal = "EXIT_WEAKNESS";
+                signal = "EXIT WEAKNESS";
                 reason = $"CCI lost bullish structure (<0): {cci.Value:F2}";
             }
             else

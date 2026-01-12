@@ -86,7 +86,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         ICandlestickStorage? candlestickStorage = null,
         Config.CandlestickConfig? config = null,
         Services.Impl.CciEngine? cciEngine = null,
-        ICciSettingsService? cciSettingsService = null)
+        ICciSettingsService? cciSettingsService = null,
         IDispatcherService? dispatcher = null)
     {
         _algorithm = algorithm;

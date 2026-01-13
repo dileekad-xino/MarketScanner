@@ -278,6 +278,7 @@ public partial class ScannerPage : ContentPage
                 ColumnDefinitions = new ColumnDefinitionCollection
                 {
                     new ColumnDefinition { Width = GridLength.Star },
+                    new ColumnDefinition { Width = GridLength.Auto },
                     new ColumnDefinition { Width = GridLength.Auto }
                 },
                 Padding = new Thickness(0, 0, 16, 0)
@@ -294,19 +295,31 @@ public partial class ScannerPage : ContentPage
             };
             Grid.SetColumn(titleLabel, 0);
             
+            var separatorLabel = new Label
+            {
+                Text = "|",
+                FontSize = 14,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(10, 0, 10, 0),
+                Opacity = 0.6
+            };
+            Grid.SetColumn(separatorLabel, 1);
+            
             var statusLabel = new Label
             {
                 FontSize = 14,
                 FontAttributes = FontAttributes.Bold,
                 TextColor = Colors.White,
                 VerticalOptions = LayoutOptions.Center,
-                HorizontalOptions = LayoutOptions.End,
-                Margin = new Thickness(10, 0, 0, 0)
+                HorizontalOptions = LayoutOptions.End
             };
             statusLabel.SetBinding(Label.TextProperty, new Binding("MarketStatus", source: vm));
-            Grid.SetColumn(statusLabel, 1);
+            Grid.SetColumn(statusLabel, 2);
             
             titleView.Children.Add(titleLabel);
+            titleView.Children.Add(separatorLabel);
             titleView.Children.Add(statusLabel);
             
             Shell.SetTitleView(this, titleView);

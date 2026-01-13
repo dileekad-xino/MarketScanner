@@ -272,6 +272,45 @@ public partial class ScannerPage : ContentPage
             // Pass page title to ViewModel for dynamic watchlist naming
             vm.SetPageTitle(this.Title);
             
+            // Set up custom title view with Market Status
+            var titleView = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitionCollection
+                {
+                    new ColumnDefinition { Width = GridLength.Star },
+                    new ColumnDefinition { Width = GridLength.Auto }
+                },
+                Padding = new Thickness(0, 0, 16, 0)
+            };
+            
+            var titleLabel = new Label
+            {
+                Text = "Market Scanner",
+                FontSize = 18,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Start
+            };
+            Grid.SetColumn(titleLabel, 0);
+            
+            var statusLabel = new Label
+            {
+                FontSize = 14,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.End,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            statusLabel.SetBinding(Label.TextProperty, new Binding("MarketStatus", source: vm));
+            Grid.SetColumn(statusLabel, 1);
+            
+            titleView.Children.Add(titleLabel);
+            titleView.Children.Add(statusLabel);
+            
+            Shell.SetTitleView(this, titleView);
+            
             // Load refresh preferences on first appearance
             vm.LoadRefreshPrefs();
             
@@ -293,10 +332,102 @@ public partial class ScannerPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
+        // Clear custom title view
+        Shell.SetTitleView(this, null);
         // Don't dispose here - scanner should keep running in background
         // Disposal will happen when app closes via App lifecycle
     }
 
+    private bool _isSyncingScroll = false;
+
+    private void OnTableScrollScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync bottom scrollbar
+        if (BottomScrollBar != null)
+        {
+            BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        // Sync filters scroll
+        if (FiltersScroll != null)
+        {
+            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    private void OnBottomScrollBarScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync table scroll
+        if (TableScroll != null)
+        {
+            TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
+        }
+        
+        // Sync filters scroll
+        if (FiltersScroll != null)
+        {
+            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    private void OnFiltersScrollScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync table scroll
+        if (TableScroll != null)
+        {
+            TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
+        }
+        
+        // Sync bottom scrollbar
+        if (BottomScrollBar != null)
+        {
+            BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    protected override void OnSizeAllocated(double width, double height)
+    {
+        base.OnSizeAllocated(width, height);
+        
+        // Update bottom scrollbar track width to match table content width
+        if (TableScroll != null && ScrollBarTrack != null)
+        {
+            var tableContentWidth = TableScroll.ContentSize.Width;
+            if (tableContentWidth > 0)
+            {
+                ScrollBarTrack.WidthRequest = tableContentWidth;
+            }
+        }
+        
+        // Sync filters scroll content width with table content width
+        if (TableScroll != null && FiltersScroll != null)
+        {
+            var tableContentWidth = TableScroll.ContentSize.Width;
+            if (tableContentWidth > 0)
+            {
+                // The filters HorizontalStackLayout will naturally size to its content
+                // We just need to ensure they're in sync when scrolling
+            }
+        }
+    }
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e)
     {

@@ -47,178 +47,211 @@
                     <RoundRectangle CornerRadius="4"/>
                 </Border.StrokeShape>
                 
-                <Grid RowDefinitions="Auto,*"
+                <!-- Scanner Content with Filters -->
+                <Grid RowDefinitions="Auto,*,Auto"
                       BackgroundColor="{StaticResource BackgroundDark}">
                     
-                    <!-- Scanner Tile Header -->
-                    <Label Grid.Row="0"
-                           Text="Market Scanner"
-                           TextColor="{StaticResource OnSurfaceDark}"
-                           FontSize="16"
-                           FontAttributes="Bold"
-                           Padding="10,8"
-                           BackgroundColor="{StaticResource SurfaceDark}"/>
-
-                    <!-- Scanner Content with Filters -->
-                    <ScrollView Grid.Row="1"
-                                Orientation="Vertical"
-                                VerticalScrollBarVisibility="Default">
-                        <Grid RowDefinitions="Auto,*"
-                              BackgroundColor="{StaticResource BackgroundDark}">
+                    <!-- Filters Panel (fixed at top) -->
+                    <Border Grid.Row="0"
+                                StrokeThickness="1"
+                                Stroke="{StaticResource BorderDark}"
+                                BackgroundColor="{StaticResource SurfaceDark}"
+                                Padding="6"
+                                Margin="8,8,8,4">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="4"/>
+                            </Border.StrokeShape>
                             
-                            <!-- Filters Panel (integrated into Scanner tile) -->
-                            <Border Grid.Row="0"
-                                    StrokeThickness="1"
-                                    Stroke="{StaticResource BorderDark}"
-                                    BackgroundColor="{StaticResource SurfaceDark}"
-                                    Padding="12"
-                                    Margin="8,8,8,8">
-                                <Border.StrokeShape>
-                                    <RoundRectangle CornerRadius="4"/>
-                                </Border.StrokeShape>
-                                
-                                <StackLayout Spacing="12">
-                                    <!-- Market Status -->
-                                    <StackLayout BackgroundColor="{StaticResource SurfaceDark}"
-                                                 Padding="8"
-                                                 Margin="0,0,0,8">
-                                        <Label Text="Market Status"
-                                               Style="{StaticResource FilterLabelStyle}"
-                                               FontSize="11"/>
-                                        <Label Text="{Binding MarketStatus}"
-                                               FontSize="14"
-                                               FontAttributes="Bold"
-                                               TextColor="{StaticResource TextPrimary}"/>
-                                    </StackLayout>
-
-                                    <Label Text="Filters"
-                                           Style="{StaticResource HeaderLabel}"
-                                           HorizontalOptions="Start"
-                                           VerticalOptions="Center"/>
-
-                                    <!-- Exchange Filter -->
-                                    <StackLayout>
-                                        <Label Text="Exchange"
-                                               Style="{StaticResource FilterLabelStyle}"/>
-                                        <Picker ItemsSource="{Binding ExchangeOptions}"
-                                                SelectedItem="{Binding Exchange, Mode=TwoWay}"
-                                                Style="{StaticResource FilterPickerStyle}"/>
-                                    </StackLayout>
-
-                                    <!-- Price Range Filter -->
-                                    <StackLayout>
-                                        <Label Text="Price Range"
-                                               Style="{StaticResource FilterLabelStyle}"/>
-                                        <Grid ColumnDefinitions="*,*,*"
-                                              ColumnSpacing="8">
-                                            <Entry Grid.Column="0"
-                                                   Text="{Binding MinPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="Min"
-                                                   Style="{StaticResource FilterEntryStyle}"
-                                                   Keyboard="Numeric"
-                                                   TextChanged="OnFilterTextChanged"/>
-                                            <Label Grid.Column="1"
-                                                   Text="to"
-                                                   Style="{StaticResource FilterLabelStyle}"
-                                                   HorizontalOptions="Center"
+                            <Grid RowDefinitions="Auto,Auto,Auto"
+                                  RowSpacing="4">
+                                <!-- Filters Row -->
+                                <ScrollView Grid.Row="0"
+                                            x:Name="FiltersScroll"
+                                            Orientation="Horizontal"
+                                            HorizontalScrollBarVisibility="Never"
+                                            VerticalOptions="Center"
+                                            Scrolled="OnFiltersScrollScrolled">
+                                    <HorizontalStackLayout Spacing="6"
+                                                           VerticalOptions="Center"
+                                                           Padding="0,4">
+                                        <!-- Exchange Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Exchange"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
                                                    VerticalOptions="Center"/>
-                                            <Entry Grid.Column="2"
-                                                   Text="{Binding MaxPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="Max"
-                                                   Style="{StaticResource FilterEntryStyle}"
+                                            <Picker ItemsSource="{Binding ExchangeOptions}"
+                                                    SelectedItem="{Binding Exchange, Mode=TwoWay}"
+                                                    HeightRequest="28"
+                                                    FontSize="11"
+                                                    WidthRequest="100"/>
+                                        </HorizontalStackLayout>
+                                        
+                                        <!-- Separator -->
+                                        <Label Text="|"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               Margin="4,0"
+                                               VerticalOptions="Center"/>
+                                        
+                                        <!-- Price Range Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Price Range"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                   VerticalOptions="Center"/>
+                                            <Entry Text="{Binding MinPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                                   Placeholder="Min"
+                                                   HeightRequest="28"
+                                                   FontSize="11"
+                                                   WidthRequest="60"
                                                    Keyboard="Numeric"
                                                    TextChanged="OnFilterTextChanged"/>
-                                        </Grid>
-                                    </StackLayout>
-
-                                    <!-- Volume Filter -->
-                                    <StackLayout>
-                                        <Label Text="Min Volume"
-                                               Style="{StaticResource FilterLabelStyle}"/>
-                                        <Entry Text="{Binding VolumeMinText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                               Placeholder="e.g., 100000"
-                                               Style="{StaticResource FilterEntryStyle}"
-                                               Keyboard="Numeric"
-                                               TextChanged="OnFilterTextChanged"/>
-                                    </StackLayout>
-
-                                    <!-- Change % Range Filter -->
-                                    <StackLayout>
-                                        <Label Text="Min Change %"
-                                               Style="{StaticResource FilterLabelStyle}"/>
-                                        <Entry Text="{Binding MinChangePercentText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                               Placeholder="e.g., 5"
-                                               Style="{StaticResource FilterEntryStyle}"
-                                               Keyboard="Numeric"
-                                               TextChanged="OnFilterTextChanged"/>
-                                    </StackLayout>
-
-                                    <!-- Top N Filter -->
-                                    <StackLayout>
-                                        <Label Text="Top N"
-                                               Style="{StaticResource FilterLabelStyle}"/>
-                                        <Picker ItemsSource="{Binding TopNOptions}"
-                                                SelectedItem="{Binding TopN, Mode=TwoWay}"
-                                                Style="{StaticResource FilterPickerStyle}"/>
-                                    </StackLayout>
-
+                                            <Label Text="to"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                   VerticalOptions="Center"/>
+                                            <Entry Text="{Binding MaxPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                                   Placeholder="Max"
+                                                   HeightRequest="28"
+                                                   FontSize="11"
+                                                   WidthRequest="60"
+                                                   Keyboard="Numeric"
+                                                   TextChanged="OnFilterTextChanged"/>
+                                        </HorizontalStackLayout>
+                                        
+                                        <!-- Separator -->
+                                        <Label Text="|"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               Margin="4,0"
+                                               VerticalOptions="Center"/>
+                                        
+                                        <!-- Min Vol Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Min Vol"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                   VerticalOptions="Center"/>
+                                            <Entry Text="{Binding VolumeMinText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                                   Placeholder="e.g., 100000"
+                                                   HeightRequest="28"
+                                                   FontSize="11"
+                                                   WidthRequest="80"
+                                                   Keyboard="Numeric"
+                                                   TextChanged="OnFilterTextChanged"/>
+                                        </HorizontalStackLayout>
+                                        
+                                        <!-- Separator -->
+                                        <Label Text="|"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               Margin="4,0"
+                                               VerticalOptions="Center"/>
+                                        
+                                        <!-- Min Chg% Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Min Chg%"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                   VerticalOptions="Center"/>
+                                            <Entry Text="{Binding MinChangePercentText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                                   Placeholder="e.g., 5"
+                                                   HeightRequest="28"
+                                                   FontSize="11"
+                                                   WidthRequest="60"
+                                                   Keyboard="Numeric"
+                                                   TextChanged="OnFilterTextChanged"/>
+                                        </HorizontalStackLayout>
+                                        
+                                        <!-- Separator -->
+                                        <Label Text="|"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               Margin="4,0"
+                                               VerticalOptions="Center"/>
+                                        
+                                        <!-- Top N Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Top N"
+                                                   FontSize="11"
+                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                   VerticalOptions="Center"/>
+                                            <Picker ItemsSource="{Binding TopNOptions}"
+                                                    SelectedItem="{Binding TopN, Mode=TwoWay}"
+                                                    HeightRequest="28"
+                                                    FontSize="11"
+                                                    WidthRequest="80"/>
+                                        </HorizontalStackLayout>
+                                    </HorizontalStackLayout>
+                                </ScrollView>
+                                
+                                <!-- Buttons Row -->
+                                <HorizontalStackLayout Grid.Row="1"
+                                                       Spacing="8"
+                                                       VerticalOptions="Center">
                                     <!-- Auto-refresh control -->
                                     <controls:AutoRefreshControl
                                         AutoRefreshEnabled="{Binding AutoRefreshEnabled, Mode=TwoWay}"
-                                        RefreshIntervalSeconds="{Binding RefreshIntervalSeconds, Mode=TwoWay}"
-                                        Margin="0,16,0,0"/>
-
-                                    <!-- Refresh and Reset buttons -->
-                                    <Grid RowDefinitions="Auto,Auto"
-                                          RowSpacing="10"
-                                          Margin="0,16,0,0">
-                                        <Button Text="Refresh"
-                                                Command="{Binding RefreshCommand}"/>
-                                        <Button Grid.Row="1"
-                                                Text="Reset Filters"
-                                                Style="{StaticResource ResetButtonStyle}"
-                                                Command="{Binding ResetFiltersCommand}"/>
-                                    </Grid>
-
-                                    <!-- Error Message -->
-                                    <Label Text="{Binding ErrorMessage}"
-                                           IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
-                                           Style="{StaticResource ErrorLabelStyle}"/>
-                                </StackLayout>
-                            </Border>
-
-                            <!-- Scanner Table -->
-                            <Grid Grid.Row="1"
-                                  BackgroundColor="{StaticResource BackgroundDark}">
+                                        RefreshIntervalSeconds="{Binding RefreshIntervalSeconds, Mode=TwoWay}"/>
+                                    
+                                    <!-- Reset button -->
+                                    <Button Text="Reset Filters"
+                                            Style="{StaticResource ResetButtonStyle}"
+                                            Command="{Binding ResetFiltersCommand}"
+                                            FontSize="12"
+                                            Padding="8,6"
+                                            HeightRequest="32"/>
+                                </HorizontalStackLayout>
                                 
-                                <ScrollView x:Name="TableScroll"
-                                            Orientation="Horizontal"
-                                            HorizontalScrollBarVisibility="Always"
-                                            BackgroundColor="{StaticResource BackgroundDark}"
-                                            Margin="8,0,8,8">
+                                <!-- Error Message -->
+                                <Label Grid.Row="2"
+                                       Text="{Binding ErrorMessage}"
+                                       IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
+                                       Style="{StaticResource ErrorLabelStyle}"/>
+                            </Grid>
+                    </Border>
 
-                                    <Grid x:Name="TableRoot"
-                                          BackgroundColor="{StaticResource BackgroundDark}"
-                                          RowDefinitions="Auto,*">
+                    <!-- Scanner Table (scrollable vertically) -->
+                    <ScrollView Grid.Row="1"
+                                Orientation="Vertical"
+                                VerticalScrollBarVisibility="Default">
+                        <Grid BackgroundColor="{StaticResource BackgroundDark}">
+                            
+                            <ScrollView x:Name="TableScroll"
+                                        Orientation="Horizontal"
+                                        HorizontalScrollBarVisibility="Always"
+                                        BackgroundColor="{StaticResource BackgroundDark}"
+                                        Margin="8,0,8,8"
+                                        Scrolled="OnTableScrollScrolled">
 
-                                        <!-- Table Header -->
-                                        <Grid x:Name="HeaderGrid"
-                                              Grid.Row="0"
-                                              BackgroundColor="{StaticResource SurfaceDark}"
-                                              HeightRequest="40">
+                                <Grid x:Name="TableRoot"
+                                      BackgroundColor="{StaticResource BackgroundDark}"
+                                      RowDefinitions="Auto,*">
 
-                                            <!-- Symbol Header -->
-                                            <Label Grid.Column="0"
-                                                   Text="Symbol"
-                                                   Style="{StaticResource HeaderLabel}"
-                                                   HorizontalOptions="Start">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="0"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                    <!-- Table Header -->
+                                    <Grid x:Name="HeaderGrid"
+                                          Grid.Row="0"
+                                          BackgroundColor="{StaticResource SurfaceDark}"
+                                          HeightRequest="40">
+
+                                        <!-- Symbol Header -->
+                                        <Label Grid.Column="0"
+                                               Text="Symbol"
+                                               Style="{StaticResource HeaderLabel}"
+                                               HorizontalOptions="Start">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="0"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
                                             <!-- Company Header -->
                                             <Label Grid.Column="1"
@@ -378,16 +411,16 @@
                                                 </BoxView.Behaviors>
                                             </BoxView>
 
-                                        </Grid>
+                                    </Grid>
 
-                                        <!-- Table Rows -->
-                                        <CollectionView x:Name="Rows"
-                                                        Grid.Row="1"
-                                                        ItemsSource="{Binding ScannerItems}"
-                                                        BackgroundColor="#1a1a1a"
-                                                        SelectionMode="None"
-                                                        ItemsUpdatingScrollMode="KeepScrollOffset"
-                                                        ItemsLayout="VerticalList">
+                                    <!-- Table Rows -->
+                                    <CollectionView x:Name="Rows"
+                                                    Grid.Row="1"
+                                                    ItemsSource="{Binding ScannerItems}"
+                                                    BackgroundColor="#1a1a1a"
+                                                    SelectionMode="None"
+                                                    ItemsUpdatingScrollMode="KeepScrollOffset"
+                                                    ItemsLayout="VerticalList">
 
                                             <!-- DataTemplate is set programmatically in code-behind -->
 
@@ -410,12 +443,26 @@
                                                             IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
                                                             Style="{StaticResource PrimaryButtonStyle}"/>
                                                 </StackLayout>
-                                            </CollectionView.EmptyView>
-                                        </CollectionView>
-                                    </Grid>
-                                </ScrollView>
-                            </Grid>
+                                        </CollectionView.EmptyView>
+                                    </CollectionView>
+                                </Grid>
+                            </ScrollView>
                         </Grid>
+                    </ScrollView>
+                    
+                    <!-- Fixed Horizontal Scrollbar at Bottom (always accessible) -->
+                    <ScrollView Grid.Row="2"
+                                x:Name="BottomScrollBar"
+                                Orientation="Horizontal"
+                                HorizontalScrollBarVisibility="Always"
+                                HeightRequest="20"
+                                BackgroundColor="{StaticResource BackgroundDark}"
+                                Margin="8,4,8,8"
+                                Scrolled="OnBottomScrollBarScrolled">
+                        <BoxView x:Name="ScrollBarTrack"
+                                 BackgroundColor="Transparent"
+                                 HeightRequest="20"
+                                 WidthRequest="2000"/>
                     </ScrollView>
                 </Grid>
             </Border>

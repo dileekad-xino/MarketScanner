@@ -78,39 +78,53 @@ public class AlgoStrategy : IAlgoStrategy
         var cciValue = results.FirstOrDefault(r => r.CciValue.HasValue)?.CciValue;
         var cciSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.CciSignal))?.CciSignal;
 
-        // Filter to only MACD and CCI strategies for decision making
-        // Identify by indicator data presence
-        var decisionResults = results.Where(r => 
-            (r.Macd != null || r.Crossover != CrossoverStatus.None) ||  // MACD Strategy
-            (r.CciValue.HasValue || !string.IsNullOrEmpty(r.CciSignal))   // CCI Strategy
-        ).ToList();
+        // Extract individual strategy actions
+        var macdResult = results.FirstOrDefault(r => r.Macd != null || r.Crossover != CrossoverStatus.None);
+        var cciResult = results.FirstOrDefault(r => r.CciValue.HasValue || !string.IsNullOrEmpty(r.CciSignal));
 
-        // Count actions only from MACD and CCI (decision-making strategies)
-        var buyCount = decisionResults.Count(r => r.Action == AlgoAction.Buy);
-        var sellCount = decisionResults.Count(r => r.Action == AlgoAction.Sell);
-        var holdCount = decisionResults.Count(r => r.Action == AlgoAction.Hold);
+        // Get actions from MACD and CCI
+        var macdAction = macdResult?.Action ?? AlgoAction.Hold;
+        var cciAction = cciResult?.Action ?? AlgoAction.Hold;
 
-        // Decision logic: require unanimous agreement between MACD and CCI only
-        var total = decisionResults.Count;
-
+        // Decision logic with CCI priority for SELL
         var action = AlgoAction.Hold;
-        var reasons = string.Join(" | ", decisionResults.Select(r => $"[{r.Action}] {r.Reason}"));
         var summary = "";
 
-        if (buyCount == total && total > 0)
+        // BUY: Requires both MACD and CCI to agree
+        if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy)
         {
             action = AlgoAction.Buy;
-            summary = $"BUY unanimous: MACD and CCI both agree on BUY ({buyCount}/{total})";
+            summary = "BUY: MACD and CCI both agree on BUY";
         }
-        else if (sellCount == total && total > 0)
+        // SELL: CCI has priority (if CCI = SELL, final action = SELL, except when CCI = HOLD)
+        else if (cciAction == AlgoAction.Sell)
         {
             action = AlgoAction.Sell;
-            summary = $"SELL unanimous: MACD and CCI both agree on SELL ({sellCount}/{total})";
+            if (macdAction == AlgoAction.Sell)
+            {
+                summary = "SELL: MACD and CCI both agree on SELL (CCI priority)";
+            }
+            else
+            {
+                summary = $"SELL: CCI priority overrides MACD {macdAction}";
+            }
         }
+        // Exception: CCI = HOLD and MACD = SELL → HOLD
+        else if (cciAction == AlgoAction.Hold && macdAction == AlgoAction.Sell)
+        {
+            action = AlgoAction.Hold;
+            summary = "HOLD: CCI HOLD overrides MACD SELL";
+        }
+        // All other cases: HOLD
         else
         {
-            summary = $"HOLD: MACD and CCI disagree (Buy: {buyCount}, Sell: {sellCount}, Hold: {holdCount}) - Unanimous agreement required";
+            action = AlgoAction.Hold;
+            summary = $"HOLD: MACD={macdAction}, CCI={cciAction}";
         }
+
+        var reasons = string.Join(" | ", new[] { macdResult, cciResult }
+            .Where(r => r != null)
+            .Select(r => $"[{r.Action}] {r.Reason}"));
 
         // Include RSI info in reason for reference (display only, not used in decision)
         var rsiInfo = rsiValue.HasValue ? $" | RSI: {rsiValue.Value:F2} ({rsiSignal ?? "N/A"}) [DISPLAY ONLY]" : "";

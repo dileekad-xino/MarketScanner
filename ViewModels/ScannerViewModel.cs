@@ -26,6 +26,7 @@ public partial class ScannerViewModel : ObservableObject
     private readonly ITradeService _tradeService;
     private readonly IRsiSettingsService _rsiSettingsService;
     private readonly IAlgoStrategy _algoStrategy;
+    private readonly Services.AlgoRunnerManagerService? _algoRunnerManager;
     private WatchlistViewModel? _watchlistViewModel;
     private QuoteViewModel? _quoteViewModel;
     private DailyPlViewModel? _dailyPlViewModel;
@@ -99,39 +100,20 @@ public partial class ScannerViewModel : ObservableObject
     [ObservableProperty] private bool _autoRefreshEnabled = false;
     [ObservableProperty] private int _refreshIntervalSeconds = 60; // default 60
 
-    // View switching properties
-    [ObservableProperty] private bool _isInScannerView = true;
-    [ObservableProperty] private bool _isInWatchlistView = false;
-    [ObservableProperty] private bool _isInQuoteView = false;
-    [ObservableProperty] private bool _isInDailyPlView = false;
-
-    // Computed property for filter panel visibility
-    public bool ShowFiltersPanel => IsInScannerView;
-
     // Expose ViewModels for binding
     public WatchlistViewModel? WatchlistViewModel => _watchlistViewModel;
     public QuoteViewModel? QuoteViewModel => _quoteViewModel;
     public DailyPlViewModel? DailyPlViewModel => _dailyPlViewModel;
 
-    // Property changed handler for view switching
-    partial void OnIsInWatchlistViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInWatchlistView changed to: {Value}, WatchlistViewModel is null: {IsNull}",
-            value, _watchlistViewModel == null);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
+    // Expose AlgoRunners collection for binding
+    public ObservableCollection<AlgoRunnerViewModel> AlgoRunners => 
+        _algoRunnerManager?.AlgoRunners ?? new ObservableCollection<AlgoRunnerViewModel>();
 
-    partial void OnIsInScannerViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInScannerView changed to: {Value}", value);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
-
-    partial void OnIsInDailyPlViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInDailyPlView changed to: {Value}", value);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
+    // Properties for "more algos" indicator
+    public bool HasMoreAlgos => _algoRunnerManager != null && _algoRunnerManager.Count > 3;
+    public string MoreAlgosText => _algoRunnerManager != null && _algoRunnerManager.Count > 3
+        ? $"+ {_algoRunnerManager.Count - 3} more algos"
+        : "";
 
     // Options for pickers
 
@@ -181,7 +163,8 @@ public partial class ScannerViewModel : ObservableObject
         IWatchlistService watchlistService,
         ITradeService tradeService,
         IRsiSettingsService rsiSettingsService,
-        IAlgoStrategy algoStrategy)
+        IAlgoStrategy algoStrategy,
+        Services.AlgoRunnerManagerService? algoRunnerManager = null)
     {
         _scanner = scanner;
         _dispatcher = dispatcher;
@@ -190,6 +173,7 @@ public partial class ScannerViewModel : ObservableObject
         _tradeService = tradeService;
         _rsiSettingsService = rsiSettingsService;
         _algoStrategy = algoStrategy;
+        _algoRunnerManager = algoRunnerManager;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
         _batchTimer = new System.Timers.Timer(BatchIntervalMs);
@@ -245,6 +229,56 @@ public partial class ScannerViewModel : ObservableObject
         // Initialize market status and set up periodic updates
         UpdateMarketStatus();
         SetupMarketStatusTimer();
+
+        // Initialize all ViewModels on startup since they're always visible in tiled layout
+        InitializeWatchlistView();
+        InitializeQuoteView();
+        InitializeDailyPlView();
+
+        // Subscribe to AlgoRunner close events if manager is available
+        if (_algoRunnerManager != null)
+        {
+            // Subscribe to collection changes to handle CloseTileRequested events
+            _algoRunnerManager.AlgoRunners.CollectionChanged += (sender, e) =>
+            {
+                if (e.NewItems != null)
+                {
+                    foreach (AlgoRunnerViewModel algoRunner in e.NewItems)
+                    {
+                        algoRunner.CloseTileRequested += OnAlgoRunnerCloseRequested;
+                    }
+                }
+                if (e.OldItems != null)
+                {
+                    foreach (AlgoRunnerViewModel algoRunner in e.OldItems)
+                    {
+                        algoRunner.CloseTileRequested -= OnAlgoRunnerCloseRequested;
+                    }
+                }
+                // Notify that computed properties have changed
+                OnPropertyChanged(nameof(HasMoreAlgos));
+                OnPropertyChanged(nameof(MoreAlgosText));
+                OnPropertyChanged(nameof(AlgoRunners));
+            };
+            
+            // Also subscribe to property changes on the manager itself
+            _algoRunnerManager.PropertyChanged += (sender, e) =>
+            {
+                if (e.PropertyName == nameof(Services.AlgoRunnerManagerService.Count))
+                {
+                    OnPropertyChanged(nameof(HasMoreAlgos));
+                    OnPropertyChanged(nameof(MoreAlgosText));
+                }
+            };
+        }
+    }
+
+    private void OnAlgoRunnerCloseRequested(object? sender, EventArgs e)
+    {
+        if (sender is AlgoRunnerViewModel algoRunner && _algoRunnerManager != null)
+        {
+            _algoRunnerManager.RemoveAlgoRunner(algoRunner);
+        }
     }
 
     private void SetProductionDefaults()
@@ -987,65 +1021,6 @@ public partial class ScannerViewModel : ObservableObject
     /// <summary>
     /// Switches to the scanner view.
     /// </summary>
-    [RelayCommand]
-    private void SwitchToScanner()
-    {
-        IsInScannerView = true;
-        IsInWatchlistView = false;
-        IsInQuoteView = false;
-        IsInDailyPlView = false;
-        PageTitle = "Market Scanner";
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-        _logger.LogInformation("Switched to Scanner view");
-    }
-
-    /// <summary>
-    /// Switches to the watchlist view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToWatchlist()
-    {
-        _logger.LogDebug("SwitchToWatchlist called, _watchlistViewModel is null: {IsNull}", _watchlistViewModel == null);
-
-        // Initialize watchlist ViewModel BEFORE switching to ensure it exists
-        if (_watchlistViewModel == null)
-        {
-            _logger.LogDebug("Creating WatchlistViewModel...");
-            InitializeWatchlistView();
-            _logger.LogDebug("WatchlistViewModel created");
-        }
-
-        _logger.LogDebug("Setting IsInScannerView = false");
-        IsInScannerView = false;
-        _logger.LogDebug("IsInScannerView set to false");
-
-        _logger.LogDebug("Setting IsInWatchlistView = true");
-        IsInScannerView = false;
-        IsInWatchlistView = true;
-        IsInQuoteView = false;
-        IsInDailyPlView = false;
-        _logger.LogDebug("IsInWatchlistView set to true");
-
-        PageTitle = "Watchlists";
-
-        _logger.LogDebug("Calling OnPropertyChanged for ShowFiltersPanel");
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Watchlist view");
-
-        // Resume subscriptions to ensure live updates continue
-        if (_watchlistViewModel != null)
-        {
-            try
-            {
-                await _watchlistViewModel.ResumeSubscriptionsAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resume subscriptions when switching to Watchlist view");
-            }
-        }
-    }
 
     /// <summary>
     /// Initializes the watchlist ViewModel on-demand.
@@ -1088,87 +1063,6 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogInformation("Watchlist view initialized, database loading in background");
     }
 
-    /// <summary>
-    /// Switches to the quote view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToQuote()
-    {
-        _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
-
-        // Initialize quote ViewModel BEFORE switching to ensure it exists
-        if (_quoteViewModel == null)
-        {
-            _logger.LogDebug("Creating QuoteViewModel...");
-            InitializeQuoteView();
-            _logger.LogDebug("QuoteViewModel created");
-        }
-
-        IsInScannerView = false;
-        IsInWatchlistView = false;
-        IsInQuoteView = true;
-        IsInDailyPlView = false;
-
-        PageTitle = "Quotes";
-
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Quote view");
-
-        // Resume subscriptions to ensure live updates continue
-        if (_quoteViewModel != null)
-        {
-            try
-            {
-                await _quoteViewModel.ResumeSubscriptionsAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resume subscriptions when switching to Quote view");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Switches to the Daily P/L view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToDailyPl()
-    {
-        _logger.LogDebug("SwitchToDailyPl called, _dailyPlViewModel is null: {IsNull}", _dailyPlViewModel == null);
-
-        // Initialize Daily P/L ViewModel BEFORE switching to ensure it exists
-        if (_dailyPlViewModel == null)
-        {
-            _logger.LogDebug("Creating DailyPlViewModel...");
-            InitializeDailyPlView();
-            _logger.LogDebug("DailyPlViewModel created");
-        }
-
-        IsInScannerView = false;
-        IsInWatchlistView = false;
-        IsInQuoteView = false;
-        IsInDailyPlView = true;
-
-        PageTitle = "Daily P/L";
-
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Daily P/L view");
-
-        // Load trades for the selected date
-        if (_dailyPlViewModel != null)
-        {
-            try
-            {
-                await _dailyPlViewModel.LoadTradesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load trades when switching to Daily P/L view");
-            }
-        }
-    }
 
     /// <summary>
     /// Initializes the quote ViewModel on-demand.
@@ -1290,7 +1184,7 @@ public partial class ScannerViewModel : ObservableObject
             _linkedQuotes = true;
 
             // Switch to full Quotes view (do not alter the scanner right panel state beyond view switch)
-            SwitchToQuote();
+            // View switching removed - all views are now always visible in tiled layout
         }
         catch (Exception ex)
         {

@@ -27,6 +27,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly Config.CandlestickConfig? _config;
     private readonly Services.Impl.CciEngine? _cciEngine;
     private readonly ICciSettingsService? _cciSettingsService;
+    private readonly IDispatcherService? _dispatcher;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
     private IDisposable? _streamingBarSubscription;
@@ -86,6 +87,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         Config.CandlestickConfig? config = null,
         Services.Impl.CciEngine? cciEngine = null,
         ICciSettingsService? cciSettingsService = null)
+        IDispatcherService? dispatcher = null)
     {
         _algorithm = algorithm;
         _logger = logger;
@@ -100,6 +102,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _config = config;
         _cciEngine = cciEngine;
         _cciSettingsService = cciSettingsService;
+        _dispatcher = dispatcher;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -134,17 +137,21 @@ public partial class AlgoRunnerViewModel : ObservableObject
         if (SelectedSymbol == null || tick.Symbol != SelectedSymbol.Symbol)
             return;
 
-        // Update the symbol's price data (this will trigger change % recalculation)
-        if (tick.LastPrice.HasValue && tick.LastPrice.Value > 0)
+        // Marshal to UI thread for property updates
+        _dispatcher?.OnUI(() =>
         {
-            SelectedSymbol.LastPrice = tick.LastPrice.Value;
-        }
+            // Update the symbol's price data (this will trigger change % recalculation)
+            if (tick.LastPrice.HasValue && tick.LastPrice.Value > 0)
+            {
+                SelectedSymbol.LastPrice = tick.LastPrice.Value;
+            }
 
-        // Update P/L if we have a position
-        if (HasPosition && !PositionClosed)
-        {
-            UpdateProfitLossFromTick();
-        }
+            // Update P/L if we have a position
+            if (HasPosition && !PositionClosed)
+            {
+                UpdateProfitLossFromTick();
+            }
+        });
     }
 
     private void UpdateProfitLossFromTick()
@@ -269,6 +276,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    // Command for closing tile (used when embedded as tile)
+    // The actual removal will be handled by AlgoRunnerManagerService
+    public event EventHandler? CloseTileRequested;
+
+    [RelayCommand]
+    private void CloseTile()
+    {
+        CloseTileRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private async Task ExecuteAlgoOnceAsync()
     {
         if (SelectedSymbol == null || _cancellationTokenSource?.IsCancellationRequested == true)
@@ -284,59 +301,116 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 SelectedSymbol.CciValue = Result.CciValue;
                 SelectedSymbol.CciSignal = Result.CciSignal;
             }
+            
+            if (Result == null)
+                return;
 
-            // Update peak RSI for open positions
-            if (Result?.RsiValue.HasValue == true && HasPosition && !PositionClosed && _currentTradeId.HasValue)
-            {
-                await UpdatePeakRsiAsync(Result.RsiValue.Value);
-            }
+            // Capture position state on UI thread before processing
+            var positionState = await (_dispatcher?.OnUIAsync(() => 
+                (HasPosition, PositionClosed, _currentTradeId)) 
+                ?? Task.FromResult((HasPosition, PositionClosed, _currentTradeId)));
+            
+            var hadPosition = positionState.Item1;
+            var wasPositionClosed = positionState.Item2;
+            var tradeId = positionState.Item3;
 
-            _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}",
-                Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);
+            var shouldOpenPosition = Result.Action == AlgoAction.Buy && !hadPosition;
+            var shouldClosePosition = Result.Action == AlgoAction.Sell && hadPosition && !wasPositionClosed;
 
             // Ensure we only buy when we don't have a position, and only sell when we have a position
-            if (Result.Action == AlgoAction.Buy && HasPosition)
+            if (Result.Action == AlgoAction.Buy && hadPosition)
             {
                 _logger.LogInformation("Ignoring BUY signal - already have a position");
                 Result = Result with { Action = AlgoAction.Hold, Reason = "Already have position. " + Result.Reason };
             }
-            else if (Result.Action == AlgoAction.Sell && !HasPosition)
+            else if (Result.Action == AlgoAction.Sell && !hadPosition)
             {
                 _logger.LogInformation("Ignoring SELL signal - no position to close");
                 Result = Result with { Action = AlgoAction.Hold, Reason = "No position to close. " + Result.Reason };
             }
 
-            // Update MACD display
-            UpdateMacdDisplay();
+            _logger.LogInformation("Algorithm result: {Action} for {Symbol} - MACD: {Macd:F4}, Signal: {Signal:F4}",
+                Result.Action, Result.Symbol, Result.Macd?.MacdLine ?? 0, Result.Macd?.SignalLine ?? 0);
 
-            // Align Reason with current indicator values after strategy run
-            UpdateReasonWithIndicatorValues();
-
-            // Handle position opening/closing based on algo action (only if action wasn't filtered out)
-            if (Result.Action == AlgoAction.Buy && !HasPosition)
+            // Marshal property updates to UI thread
+            if (_dispatcher != null)
             {
-                EntryPrice = (decimal)SelectedSymbol.LastPrice;
-                _entryTime = DateTime.UtcNow;
-                HasPosition = true;
-                PositionClosed = false;
-                _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    if (Result != null && SelectedSymbol != null)
+                    {
+                        SelectedSymbol.RsiValue = Result.RsiValue;
+                        SelectedSymbol.RsiSignal = Result.RsiSignal;
+                    }
 
-                // Save trade as open position
+                    // Update MACD display
+                    UpdateMacdDisplay();
+
+                    // Align Reason with current indicator values after strategy run
+                    UpdateReasonWithIndicatorValues();
+
+                    // Handle position opening/closing based on algo action (only if action wasn't filtered out)
+                    if (shouldOpenPosition)
+                    {
+                        EntryPrice = (decimal)SelectedSymbol.LastPrice;
+                        _entryTime = DateTime.UtcNow;
+                        HasPosition = true;
+                        PositionClosed = false;
+                        _logger.LogInformation("Position opened at {Price:C2} for {Qty} shares (BUY signal)", EntryPrice, Quantity);
+                    }
+                    else if (shouldClosePosition)
+                    {
+                        ExitPrice = (decimal)SelectedSymbol.LastPrice;
+                        PositionClosed = true;
+                        HasPosition = false; // Position is now closed
+                        _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
+                    }
+
+                    // Update P/L calculations
+                    UpdateProfitLoss();
+                });
+            }
+            else
+            {
+                // Fallback if no dispatcher
+                if (Result != null && SelectedSymbol != null)
+                {
+                    SelectedSymbol.RsiValue = Result.RsiValue;
+                    SelectedSymbol.RsiSignal = Result.RsiSignal;
+                }
+                UpdateMacdDisplay();
+                UpdateReasonWithIndicatorValues();
+                if (shouldOpenPosition)
+                {
+                    EntryPrice = (decimal)SelectedSymbol.LastPrice;
+                    _entryTime = DateTime.UtcNow;
+                    HasPosition = true;
+                    PositionClosed = false;
+                }
+                else if (shouldClosePosition)
+                {
+                    ExitPrice = (decimal)SelectedSymbol.LastPrice;
+                    PositionClosed = true;
+                    HasPosition = false;
+                }
+                UpdateProfitLoss();
+            }
+
+            // Handle trade saving (async, doesn't need UI thread, but wait for UI updates)
+            if (shouldOpenPosition)
+            {
                 await SaveTradeAsync();
             }
-            else if (Result.Action == AlgoAction.Sell && HasPosition && !PositionClosed)
+            else if (shouldClosePosition)
             {
-                ExitPrice = (decimal)SelectedSymbol.LastPrice;
-                PositionClosed = true;
-                HasPosition = false; // Position is now closed
-                _logger.LogInformation("Position closed at {Price:C2} for {Qty} shares (SELL signal)", ExitPrice, Quantity);
-
-                // Update trade to mark as closed
                 await UpdateTradeAsync();
             }
 
-            // Update P/L calculations
-            UpdateProfitLoss();
+            // Update peak RSI for open positions (async, doesn't need UI thread)
+            if (Result.RsiValue.HasValue && shouldOpenPosition && tradeId.HasValue)
+            {
+                await UpdatePeakRsiAsync(Result.RsiValue.Value);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -389,11 +463,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
                 // RSI updates on every bar close (more stable than tick-by-tick)
                 _rsiEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
-
                 // CCI updates on every bar close (needs High, Low, Close)
                 _cciEngine?.UpdateOnBar(symbol, interval, bar.High, bar.Low, bar.Close, bar.Timestamp);
 
                 // Update UI with latest MACD values from engine
+                // Update UI with latest MACD values from engine (marshal to UI thread)
                 var macdResult = _macdEngine.GetLastMacd(symbol, interval);
                 if (macdResult.HasValue)
                 {
@@ -406,15 +480,18 @@ public partial class AlgoRunnerViewModel : ObservableObject
                         Timestamp: bar.Timestamp,
                         Interval: interval
                     );
-                    UpdateMacdDisplayFromLive(macdData);
+                    _dispatcher?.OnUI(() => UpdateMacdDisplayFromLive(macdData));
                 }
 
                 // Update RSI display (shows preview RSI for live intrabar updates)
                 var rsi = _rsiEngine.GetRsi(symbol, interval);
                 if (rsi.HasValue)
                 {
-                    LiveRsiValue = rsi.Value; // Update live property for UI (preview RSI)
-                    UpdateLiveRsiDisplay(symbol, rsi.Value);
+                    _dispatcher?.OnUI(() =>
+                    {
+                        LiveRsiValue = rsi.Value; // Update live property for UI (preview RSI)
+                        UpdateLiveRsiDisplay(symbol, rsi.Value);
+                    });
                 }
 
                 // Update CCI display (shows preview CCI for live intrabar updates)
@@ -480,26 +557,30 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 _cciEngine?.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.High, candle.Low, candle.Close, candle.Timestamp);
 
                 // Update UI immediately to the committed close snapshot
+                // Update UI immediately to the committed close snapshot (marshal to UI thread)
                 var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
                 if (macdResult.HasValue)
                 {
                     var (macd, signal, hist) = macdResult.Value;
-                    UpdateMacdDisplayFromLive(new MacdData(
+                    _dispatcher?.OnUI(() => UpdateMacdDisplayFromLive(new MacdData(
                         Symbol: symbol,
                         MacdLine: (decimal)macd,
                         SignalLine: (decimal)signal,
                         Histogram: (decimal)hist,
                         Timestamp: candle.Timestamp,
                         Interval: candle.Interval
-                    ));
+                    )));
                 }
 
                 // Update RSI display to committed value (matches TradingView)
                 var rsi = _rsiEngine.GetRsi(symbol, candle.Interval);
                 if (rsi.HasValue)
                 {
-                    LiveRsiValue = rsi.Value; // Now shows committed RSI (matches TradingView)
-                    UpdateLiveRsiDisplay(symbol, rsi.Value);
+                    _dispatcher?.OnUI(() =>
+                    {
+                        LiveRsiValue = rsi.Value; // Now shows committed RSI (matches TradingView)
+                        UpdateLiveRsiDisplay(symbol, rsi.Value);
+                    });
                 }
 
                 // Update CCI display to committed value (matches TradingView)

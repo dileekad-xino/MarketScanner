@@ -19,7 +19,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private readonly IDispatcherService _dispatcher;
     private readonly IWatchlistService _watchlistService;
     private readonly ILogger<QuoteViewModel> _logger;
-    private readonly ISymbolSearchService? _symbolSearchService;
+    private ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _quoteItems = new();
     [ObservableProperty] private string _newSymbolText = "";
@@ -592,7 +592,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
             if (string.IsNullOrWhiteSpace(symbol))
             {
-                ErrorMessage = "Please enter a symbol";
                 return;
             }
 
@@ -759,24 +758,28 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (_serviceProvider == null)
+            // Try to get service provider if not already set
+            var serviceProvider = _serviceProvider ?? 
+                Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+            
+            if (serviceProvider == null)
             {
                 _logger.LogError("ServiceProvider is not available - cannot open algo runner");
-                ErrorMessage = "Algo runner is not available";
+                ErrorMessage = "Algo runner is not available. Please restart the application.";
                 return;
             }
 
-            // Get the current page to navigate from
-            var currentPage = Application.Current?.MainPage;
-            if (currentPage == null)
+            // Get AlgoRunnerManagerService
+            var algoRunnerManager = serviceProvider.GetService<Services.AlgoRunnerManagerService>();
+            if (algoRunnerManager == null)
             {
-                _logger.LogError("MainPage is not available - cannot open algo runner");
-                ErrorMessage = "Cannot open algo runner - main page not available";
+                _logger.LogError("AlgoRunnerManagerService is not available - cannot add algo runner");
+                ErrorMessage = "Algo runner manager is not available. Please restart the application.";
                 return;
             }
 
             // Get candlestick builder and subscribe symbol (so candlesticks are built for this symbol)
-            var candlestickBuilder = _serviceProvider.GetService<ICandlestickBuilder>();
+            var candlestickBuilder = serviceProvider.GetService<ICandlestickBuilder>();
             try
             {
                 if (candlestickBuilder != null)
@@ -800,18 +803,18 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
 
             // Create algo runner view model
-            var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
-            var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
-            var tradeService = _serviceProvider.GetService<ITradeService>();
-            var macdStrategy = _serviceProvider.GetService<MarketScanner.Services.Impl.MacdStrategy>();
-            var macdEngine = _serviceProvider.GetService<MarketScanner.Services.Impl.MacdEngine>();
-            var rsiEngine = _serviceProvider.GetService<MarketScanner.Services.Impl.RsiEngine>();
-            var rsiSettingsService = _serviceProvider.GetService<IRsiSettingsService>();
-            var candlestickStorage = _serviceProvider.GetService<ICandlestickStorage>();
-            var config = _serviceProvider.GetService<MarketScanner.Config.CandlestickConfig>();
-            var cciEngine = _serviceProvider.GetService<Services.Impl.CciEngine>();
-            var cciSettingsService = _serviceProvider.GetService<ICciSettingsService>();
-            
+            var algorithm = serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            var tradeService = serviceProvider.GetService<ITradeService>();
+            var macdStrategy = serviceProvider.GetService<MarketScanner.Services.Impl.MacdStrategy>();
+            var macdEngine = serviceProvider.GetService<MarketScanner.Services.Impl.MacdEngine>();
+            var rsiEngine = serviceProvider.GetService<MarketScanner.Services.Impl.RsiEngine>();
+            var rsiSettingsService = serviceProvider.GetService<IRsiSettingsService>();
+            var candlestickStorage = serviceProvider.GetService<ICandlestickStorage>();
+            var config = serviceProvider.GetService<MarketScanner.Config.CandlestickConfig>();
+            var cciEngine = serviceProvider.GetService<Services.Impl.CciEngine>();
+            var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
+            var dispatcher = serviceProvider.GetService<IDispatcherService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
@@ -825,23 +828,29 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 candlestickStorage,
                 config,
                 cciEngine,
-                cciSettingsService);
-
+                cciSettingsService,
+                dispatcher);
+                
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);
 
-            // Create and show algo runner page
-            var algoRunnerPage = new Views.AlgoRunnerPage(algoRunnerViewModel);
-            
-            // Navigate to algo runner page
-            await currentPage.Navigation.PushModalAsync(algoRunnerPage);
-
-            _logger.LogInformation("Opened algo runner for symbol {Symbol}", row.Symbol);
+            // Add to manager (will handle max 3 limit and replacement dialog)
+            var added = await algoRunnerManager.AddAlgoRunnerAsync(algoRunnerViewModel);
+            if (added)
+            {
+                _logger.LogInformation("Added algo runner tile for symbol {Symbol}", row.Symbol);
+            }
+            else
+            {
+                _logger.LogInformation("Failed to add algo runner for symbol {Symbol} (user cancelled or error)", row.Symbol);
+                // Dispose the ViewModel if it wasn't added
+                algoRunnerViewModel.Dispose();
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to open algo runner");
-            ErrorMessage = $"Failed to open algo runner: {ex.Message}";
+            _logger.LogError(ex, "Failed to add algo runner");
+            ErrorMessage = $"Failed to add algo runner: {ex.Message}";
         }
     }
 
@@ -873,10 +882,27 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
             
-            if (_symbolSearchService == null)
+            // Try to get symbol search service if not already set
+            var symbolSearchService = _symbolSearchService;
+            if (symbolSearchService == null)
             {
-                _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
-                return;
+                var serviceProvider = _serviceProvider ?? 
+                    Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+                
+                if (serviceProvider != null)
+                {
+                    symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
+                    if (symbolSearchService != null)
+                    {
+                        _symbolSearchService = symbolSearchService; // Cache it for future use
+                    }
+                }
+                
+                if (symbolSearchService == null)
+                {
+                    _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
+                    return;
+                }
             }
             
             if (_searchCts.Token.IsCancellationRequested)
@@ -885,7 +911,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
                 
             IsSearching = true;
-            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+            var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
             
             if (!_searchCts.Token.IsCancellationRequested)
             {

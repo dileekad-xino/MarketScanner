@@ -86,23 +86,23 @@ public class CciAlgoStrategy : IAlgoStrategy
                 signal = "TAKE PROFIT";
                 reason = $"CCI take profit >= +260: {cci.Value:F2}";
             }
-            else if (cci.Value >= 150 && cci.Value < 260)
+            else if (cci.Value >= 180 && cci.Value < 260)
             {
                 action = AlgoAction.Hold;
                 signal = "BULLISH MOMENTUM";
-                reason = $"CCI bullish momentum (+150 to +260): {cci.Value:F2}";
+                reason = $"CCI bullish momentum (+180 to +260): {cci.Value:F2}";
             }
-            else if (cci.Value >= 50 && cci.Value < 150)
+            else if (cci.Value >= 90 && cci.Value < 180)
             {
                 action = AlgoAction.Buy;
                 signal = "BULLISH ENTRY";
-                reason = $"CCI bullish entry (+50 to +150): {cci.Value:F2}";
+                reason = $"CCI bullish entry (+90 to +180): {cci.Value:F2}";
             }
-            else if (cci.Value > 0 && cci.Value < 50)
+            else if (cci.Value > 0 && cci.Value < 90)
             {
                 action = AlgoAction.Sell;
                 signal = "EXIT WEAKNESS";
-                reason = $"CCI exit weakness (0 to +50): {cci.Value:F2}";
+                reason = $"CCI exit weakness (0 to +90): {cci.Value:F2}";
             }
             else if (cci.Value == 0)
             {

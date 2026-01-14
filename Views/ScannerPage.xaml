@@ -526,6 +526,10 @@
                                 <CollectionView ItemsSource="{Binding AlgoRunners}"
                                                 SelectionMode="None"
                                                 BackgroundColor="Transparent">
+                                    <CollectionView.ItemsLayout>
+                                        <LinearItemsLayout Orientation="Horizontal"
+                                                           ItemSpacing="8" />
+                                    </CollectionView.ItemsLayout>
                                     <CollectionView.ItemTemplate>
                                         <DataTemplate>
                                             <local:AlgoRunnerTile BindingContext="{Binding .}"/>
@@ -578,34 +582,6 @@
                                 VerticalScrollBarVisibility="Default">
                         <local:WatchlistContentView 
                             BindingContext="{Binding WatchlistViewModel}" />
-                    </ScrollView>
-                </Grid>
-            </Border>
-
-            <!-- Right Column - Bottom: Daily P/L Tile -->
-            <Border Grid.Column="1"
-                    Grid.Row="1"
-                    StrokeThickness="1"
-                    Stroke="{StaticResource BorderDark}"
-                    BackgroundColor="{StaticResource BackgroundDark}">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="4"/>
-                </Border.StrokeShape>
-                
-                <Grid RowDefinitions="Auto,*"
-                      BackgroundColor="{StaticResource BackgroundDark}">
-                    <Label Grid.Row="0"
-                           Text="Daily P/L"
-                           TextColor="{StaticResource OnSurfaceDark}"
-                           FontSize="16"
-                           FontAttributes="Bold"
-                           Padding="10,8"
-                           BackgroundColor="{StaticResource SurfaceDark}"/>
-                    <ScrollView Grid.Row="1"
-                                Orientation="Vertical"
-                                VerticalScrollBarVisibility="Default">
-                        <local:DailyPlContentView 
-                            BindingContext="{Binding DailyPlViewModel}" />
                     </ScrollView>
                 </Grid>
             </Border>

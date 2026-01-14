@@ -272,12 +272,14 @@ public partial class ScannerPage : ContentPage
             // Pass page title to ViewModel for dynamic watchlist naming
             vm.SetPageTitle(this.Title);
             
-            // Set up custom title view with Market Status
+            // Set up custom title view with Market Status and Daily P/L button
             var titleView = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitionCollection
                 {
                     new ColumnDefinition { Width = GridLength.Star },
+                    new ColumnDefinition { Width = GridLength.Auto },
+                    new ColumnDefinition { Width = GridLength.Auto },
                     new ColumnDefinition { Width = GridLength.Auto },
                     new ColumnDefinition { Width = GridLength.Auto }
                 },
@@ -295,7 +297,7 @@ public partial class ScannerPage : ContentPage
             };
             Grid.SetColumn(titleLabel, 0);
             
-            var separatorLabel = new Label
+            var separatorLabel1 = new Label
             {
                 Text = "|",
                 FontSize = 14,
@@ -305,7 +307,7 @@ public partial class ScannerPage : ContentPage
                 Margin = new Thickness(10, 0, 10, 0),
                 Opacity = 0.6
             };
-            Grid.SetColumn(separatorLabel, 1);
+            Grid.SetColumn(separatorLabel1, 1);
             
             var statusLabel = new Label
             {
@@ -318,9 +320,39 @@ public partial class ScannerPage : ContentPage
             statusLabel.SetBinding(Label.TextProperty, new Binding("MarketStatus", source: vm));
             Grid.SetColumn(statusLabel, 2);
             
+            var separatorLabel2 = new Label
+            {
+                Text = "|",
+                FontSize = 14,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(10, 0, 10, 0),
+                Opacity = 0.6
+            };
+            Grid.SetColumn(separatorLabel2, 3);
+            
+            var dailyPlButton = new Button
+            {
+                Text = "Daily P/L",
+                FontSize = 12,
+                BackgroundColor = Color.FromArgb("#1E1E1E"),
+                TextColor = Colors.White,
+                BorderColor = Color.FromArgb("#404040"),
+                BorderWidth = 1,
+                Padding = new Thickness(12, 6),
+                HeightRequest = 32,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.End
+            };
+            dailyPlButton.SetBinding(Button.CommandProperty, new Binding("OpenDailyPlWindowCommand", source: vm));
+            Grid.SetColumn(dailyPlButton, 4);
+            
             titleView.Children.Add(titleLabel);
-            titleView.Children.Add(separatorLabel);
+            titleView.Children.Add(separatorLabel1);
             titleView.Children.Add(statusLabel);
+            titleView.Children.Add(separatorLabel2);
+            titleView.Children.Add(dailyPlButton);
             
             Shell.SetTitleView(this, titleView);
             

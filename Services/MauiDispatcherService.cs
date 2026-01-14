@@ -15,7 +15,15 @@ public sealed class MauiDispatcherService : IDispatcherService
         }
         else
         {
-            MainThread.BeginInvokeOnMainThread(action);
+            try
+            {
+                MainThread.BeginInvokeOnMainThread(action);
+            }
+            catch (InvalidOperationException)
+            {
+                // Main thread not available - skip execution
+                // This can happen during app shutdown or when the main thread is no longer available
+            }
         }
     }
 

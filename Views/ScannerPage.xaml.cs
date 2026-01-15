@@ -272,6 +272,9 @@ public partial class ScannerPage : ContentPage
             // Pass page title to ViewModel for dynamic watchlist naming
             vm.SetPageTitle(this.Title);
             
+            // Set up Algo Runner tile bindings
+            SetupAlgoRunnerTiles(vm);
+            
             // Set up custom title view with Market Status and Daily P/L button
             var titleView = new Grid
             {
@@ -479,5 +482,33 @@ public partial class ScannerPage : ContentPage
         if (BindingContext is ViewModels.ScannerViewModel vm)
             vm.GetType().GetMethod("DebouncedApply", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
               ?.Invoke(vm, null);
+    }
+
+    private void SetupAlgoRunnerTiles(ViewModels.ScannerViewModel vm)
+    {
+        if (AlgoTile0 == null || AlgoTile1 == null || AlgoTile2 == null)
+            return;
+
+        // Subscribe to collection changes to update bindings
+        vm.AlgoRunners.CollectionChanged += (sender, e) =>
+        {
+            // Update bindings when collection changes
+            AlgoTile0.BindingContext = vm.AlgoRunners.Count > 0 ? vm.AlgoRunners[0] : null;
+            AlgoTile1.BindingContext = vm.AlgoRunners.Count > 1 ? vm.AlgoRunners[1] : null;
+            AlgoTile2.BindingContext = vm.AlgoRunners.Count > 2 ? vm.AlgoRunners[2] : null;
+            
+            AlgoTile0.IsVisible = vm.AlgoRunners.Count > 0;
+            AlgoTile1.IsVisible = vm.AlgoRunners.Count > 1;
+            AlgoTile2.IsVisible = vm.AlgoRunners.Count > 2;
+        };
+
+        // Set initial bindings
+        AlgoTile0.BindingContext = vm.AlgoRunners.Count > 0 ? vm.AlgoRunners[0] : null;
+        AlgoTile1.BindingContext = vm.AlgoRunners.Count > 1 ? vm.AlgoRunners[1] : null;
+        AlgoTile2.BindingContext = vm.AlgoRunners.Count > 2 ? vm.AlgoRunners[2] : null;
+        
+        AlgoTile0.IsVisible = vm.AlgoRunners.Count > 0;
+        AlgoTile1.IsVisible = vm.AlgoRunners.Count > 1;
+        AlgoTile2.IsVisible = vm.AlgoRunners.Count > 2;
     }
 }

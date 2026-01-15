@@ -32,6 +32,8 @@
   <Color x:Key="GainColor">#4CAF50</Color>        <!-- Green for positive changes -->
   <Color x:Key="LossColor">#F44336</Color>        <!-- Red for negative changes -->
   <Color x:Key="NeutralColor">#9E9E9E</Color>     <!-- Gray for zero changes -->
+  <Color x:Key="PositiveGreen">#4CAF50</Color>    <!-- Green for positive values (alias) -->
+  <Color x:Key="NegativeRed">#EF5350</Color>     <!-- Red for negative values (alias) -->
 
   <!-- Radio button and UI colors -->
   <Color x:Key="AccentFill">#3B82F6</Color>       <!-- Blue accent for selected state -->

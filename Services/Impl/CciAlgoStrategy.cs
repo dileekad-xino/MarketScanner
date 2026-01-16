@@ -80,23 +80,23 @@ public class CciAlgoStrategy : IAlgoStrategy
             string reason;
 
             // Updated CCI decision tree
-            if (cci.Value >= 230)
+            if (cci.Value >= 210)
             {
                 action = AlgoAction.Sell;
                 signal = "TAKE PROFIT";
-                reason = $"CCI take profit >= +230: {cci.Value:F2}";
+                reason = $"CCI take profit >= +210: {cci.Value:F2}";
             }
-            else if (cci.Value >= 180 && cci.Value < 230)
+            else if (cci.Value >= 150 && cci.Value < 210)
             {
                 action = AlgoAction.Hold;
                 signal = "BULLISH MOMENTUM";
-                reason = $"CCI bullish momentum (+180 to +230): {cci.Value:F2}";
+                reason = $"CCI bullish momentum (+150 to +210): {cci.Value:F2}";
             }
-            else if (cci.Value >= 100 && cci.Value < 180)
+            else if (cci.Value >= 100 && cci.Value < 150)
             {
                 action = AlgoAction.Buy;
                 signal = "BULLISH ENTRY";
-                reason = $"CCI bullish entry (+100 to +180): {cci.Value:F2}";
+                reason = $"CCI bullish entry (+100 to +150): {cci.Value:F2}";
             }
             else if (cci.Value > 0 && cci.Value < 100)
             {
@@ -116,17 +116,17 @@ public class CciAlgoStrategy : IAlgoStrategy
                 signal = "NEUTRAL";
                 reason = $"CCI neutral weakness (-50 to 0): {cci.Value:F2}";
             }
-            else if (cci.Value <= -50 && cci.Value > -230)
+            else if (cci.Value <= -50 && cci.Value > -210)
             {
                 action = AlgoAction.Hold;
                 signal = "BEARISH MOMENTUM";
-                reason = $"CCI bearish momentum (-230 to -50): {cci.Value:F2}";
+                reason = $"CCI bearish momentum (-210 to -50): {cci.Value:F2}";
             }
-            else // cci.Value <= -230
+            else // cci.Value <= -210
             {
                 action = AlgoAction.Buy;
                 signal = "OVERSOLD SCALP";
-                reason = $"CCI oversold scalp <= -230: {cci.Value:F2}";
+                reason = $"CCI oversold scalp <= -210: {cci.Value:F2}";
             }
 
             return new AlgoResult(

@@ -80,17 +80,17 @@ public class CciAlgoStrategy : IAlgoStrategy
             string reason;
 
             // Updated CCI decision tree
-            if (cci.Value >= 260)
+            if (cci.Value >= 230)
             {
                 action = AlgoAction.Sell;
                 signal = "TAKE PROFIT";
-                reason = $"CCI take profit >= +260: {cci.Value:F2}";
+                reason = $"CCI take profit >= +230: {cci.Value:F2}";
             }
-            else if (cci.Value >= 180 && cci.Value < 260)
+            else if (cci.Value >= 180 && cci.Value < 230)
             {
                 action = AlgoAction.Hold;
                 signal = "BULLISH MOMENTUM";
-                reason = $"CCI bullish momentum (+180 to +260): {cci.Value:F2}";
+                reason = $"CCI bullish momentum (+180 to +230): {cci.Value:F2}";
             }
             else if (cci.Value >= 100 && cci.Value < 180)
             {

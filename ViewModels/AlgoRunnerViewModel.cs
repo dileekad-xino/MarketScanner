@@ -907,8 +907,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
             PositionValue = 0;
         }
 
-        // Calculate P/L if we have a position (open or closed)
-        if (HasPosition && EntryPrice.HasValue && EntryPrice.Value > 0)
+        // Calculate P/L if we have a position (open or closed) OR if position was just closed
+        if ((HasPosition || PositionClosed) && EntryPrice.HasValue && EntryPrice.Value > 0)
         {
             // Use exit price if position closed, otherwise use current price
             var priceForPL = PositionClosed && ExitPrice.HasValue ? ExitPrice.Value : currentPrice;

@@ -7,6 +7,6 @@
              BackgroundColor="{StaticResource BackgroundDark}">
 
     <Grid>
-        <local:DailyPlContentView />
+        <local:DailyPlContentView BindingContext="{Binding .}" />
     </Grid>
 </ContentPage>

@@ -15,6 +15,7 @@
 
     <ContentPage.Resources>
         <ResourceDictionary>
+            <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter"/>
             <converters:ChangeToColorConverter x:Key="ChangeToColorConverter"/>
             <converters:StringToBoolConverter x:Key="StringToBoolConverter"/>
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
@@ -467,17 +468,19 @@
                 </Grid>
             </Border>
 
-            <!-- Left Column - Bottom: Quotes and Algo Runners -->
+            <!-- Bottom Row: Quotes and Algo Runners -->
             <Grid Grid.Column="0"
+                  Grid.ColumnSpan="2"
                   Grid.Row="1"
-                  ColumnDefinitions="*,*"
+                  ColumnDefinitions="Auto,*"
                   ColumnSpacing="8">
-
+                
                 <!-- Quotes Tile -->
                 <Border Grid.Column="0"
                         StrokeThickness="1"
                         Stroke="{StaticResource BorderDark}"
-                        BackgroundColor="{StaticResource BackgroundDark}">
+                        BackgroundColor="{StaticResource BackgroundDark}"
+                        WidthRequest="320">
                     <Border.StrokeShape>
                         <RoundRectangle CornerRadius="4"/>
                     </Border.StrokeShape>
@@ -504,54 +507,67 @@
                 <Border Grid.Column="1"
                         StrokeThickness="1"
                         Stroke="{StaticResource BorderDark}"
-                        BackgroundColor="{StaticResource BackgroundDark}">
-                    <Border.StrokeShape>
-                        <RoundRectangle CornerRadius="4"/>
-                    </Border.StrokeShape>
-                    
-                    <Grid RowDefinitions="Auto,*"
-                          BackgroundColor="{StaticResource BackgroundDark}">
-                        <Label Grid.Row="0"
-                               Text="Algo Runner"
-                               TextColor="{StaticResource OnSurfaceDark}"
-                               FontSize="16"
-                               FontAttributes="Bold"
-                               Padding="10,8"
-                               BackgroundColor="{StaticResource SurfaceDark}"/>
-                        <ScrollView Grid.Row="1"
-                                    Orientation="Vertical"
-                                    VerticalScrollBarVisibility="Default">
-                            <StackLayout Spacing="8"
-                                         Padding="8">
-                                <CollectionView ItemsSource="{Binding AlgoRunners}"
-                                                SelectionMode="None"
-                                                BackgroundColor="Transparent">
-                                    <CollectionView.ItemTemplate>
-                                        <DataTemplate>
-                                            <local:AlgoRunnerTile BindingContext="{Binding .}"/>
-                                        </DataTemplate>
-                                    </CollectionView.ItemTemplate>
-                                    <CollectionView.EmptyView>
-                                        <Label Text="No active algo runners. Right-click a symbol in Quotes to run an algorithm."
-                                               TextColor="{StaticResource OnSurfaceVariantDark}"
-                                               HorizontalOptions="Center"
-                                               VerticalOptions="Center"
-                                               Padding="20"
-                                               HorizontalTextAlignment="Center"/>
-                                    </CollectionView.EmptyView>
-                                </CollectionView>
-                                
-                                <!-- Show "+ X more algos" if there are more than 3 -->
-                                <Label Text="{Binding BindingContext.MoreAlgosText, Source={x:Reference ScannerPageRoot}}"
-                                       IsVisible="{Binding BindingContext.HasMoreAlgos, Source={x:Reference ScannerPageRoot}}"
-                                       TextColor="{StaticResource OnSurfaceVariantDark}"
-                                       FontSize="12"
-                                       HorizontalOptions="Center"
-                                       Padding="8"/>
-                            </StackLayout>
-                        </ScrollView>
+                        BackgroundColor="{StaticResource BackgroundDark}"
+                        HorizontalOptions="FillAndExpand">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="4"/>
+                </Border.StrokeShape>
+                
+                <Grid RowDefinitions="Auto,*"
+                      BackgroundColor="{StaticResource BackgroundDark}"
+                      HorizontalOptions="FillAndExpand"
+                      VerticalOptions="FillAndExpand">
+                    <Label Grid.Row="0"
+                           Text="Algo Runner"
+                           TextColor="{StaticResource OnSurfaceDark}"
+                           FontSize="16"
+                           FontAttributes="Bold"
+                           Padding="10,8"
+                           BackgroundColor="{StaticResource SurfaceDark}"/>
+                    <Grid Grid.Row="1"
+                          ColumnDefinitions="*,*,*"
+                          ColumnSpacing="8"
+                          Padding="8"
+                          HorizontalOptions="FillAndExpand"
+                          VerticalOptions="FillAndExpand">
+                        <local:AlgoRunnerTile Grid.Column="0"
+                                              x:Name="AlgoTile0"
+                                              HorizontalOptions="FillAndExpand"
+                                              VerticalOptions="FillAndExpand"/>
+                        <local:AlgoRunnerTile Grid.Column="1"
+                                              x:Name="AlgoTile1"
+                                              HorizontalOptions="FillAndExpand"
+                                              VerticalOptions="FillAndExpand"/>
+                        <local:AlgoRunnerTile Grid.Column="2"
+                                              x:Name="AlgoTile2"
+                                              HorizontalOptions="FillAndExpand"
+                                              VerticalOptions="FillAndExpand"/>
+                        
+                        <!-- Empty view when no algos -->
+                        <Label Grid.Column="0"
+                               Grid.ColumnSpan="3"
+                               Text="No active algo runners. Right-click a symbol in Quotes to run an algorithm."
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               Padding="20"
+                               HorizontalTextAlignment="Center"
+                               IsVisible="{Binding AlgoRunners.Count, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=-1}"/>
                     </Grid>
-                </Border>
+                    
+                    <!-- Show "+ X more algos" if there are more than 3 -->
+                    <Label Grid.Row="1"
+                           Text="{Binding BindingContext.MoreAlgosText, Source={x:Reference ScannerPageRoot}}"
+                           IsVisible="{Binding BindingContext.HasMoreAlgos, Source={x:Reference ScannerPageRoot}}"
+                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                           FontSize="12"
+                           HorizontalOptions="End"
+                           VerticalOptions="End"
+                           Margin="8"
+                           Padding="8"
+                           BackgroundColor="{StaticResource SurfaceDark}"/>
+                </Grid>
+            </Border>
             </Grid>
 
             <!-- Right Column - Top: Watchlists Tile -->
@@ -578,34 +594,6 @@
                                 VerticalScrollBarVisibility="Default">
                         <local:WatchlistContentView 
                             BindingContext="{Binding WatchlistViewModel}" />
-                    </ScrollView>
-                </Grid>
-            </Border>
-
-            <!-- Right Column - Bottom: Daily P/L Tile -->
-            <Border Grid.Column="1"
-                    Grid.Row="1"
-                    StrokeThickness="1"
-                    Stroke="{StaticResource BorderDark}"
-                    BackgroundColor="{StaticResource BackgroundDark}">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="4"/>
-                </Border.StrokeShape>
-                
-                <Grid RowDefinitions="Auto,*"
-                      BackgroundColor="{StaticResource BackgroundDark}">
-                    <Label Grid.Row="0"
-                           Text="Daily P/L"
-                           TextColor="{StaticResource OnSurfaceDark}"
-                           FontSize="16"
-                           FontAttributes="Bold"
-                           Padding="10,8"
-                           BackgroundColor="{StaticResource SurfaceDark}"/>
-                    <ScrollView Grid.Row="1"
-                                Orientation="Vertical"
-                                VerticalScrollBarVisibility="Default">
-                        <local:DailyPlContentView 
-                            BindingContext="{Binding DailyPlViewModel}" />
                     </ScrollView>
                 </Grid>
             </Border>

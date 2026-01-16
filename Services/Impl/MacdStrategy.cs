@@ -93,6 +93,13 @@ public class MacdStrategy : IAlgoStrategy
         bool below = m.MacdLine < m.SignalLine - EPS;
 
         var prev = _macdEngine.GetPreviousMacd(m.Symbol, m.Interval);
+        
+        // Calculate previous histogram (since GetPreviousMacd doesn't return it)
+        decimal? prevHist = null;
+        if (prev != null)
+        {
+            prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
+        }
 
         bool bullish = false;
         bool bearish = false;
@@ -106,19 +113,45 @@ public class MacdStrategy : IAlgoStrategy
             bearish = prevMacd >= prevSignal - EPS && below;
         }
 
+        // Histogram momentum analysis
+        bool histGrowing = m.Histogram > 0 && prevHist.HasValue && m.Histogram > prevHist.Value;
+        bool histFalling = prevHist.HasValue && m.Histogram < prevHist.Value;
 
-        if (bullish && m.MacdLine > 0 && m.SignalLine > 0)
-            return (AlgoAction.Buy,
-                $"Bullish crossover: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
-                CrossoverStatus.CrossedUp);
-
-        if (bearish)
+        // Priority 1: Full bearish reversal (highest priority - exit immediately)
+        if (bearish && m.MacdLine < 0)
+        {
             return (AlgoAction.Sell,
-                $"Bearish crossover: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
+                $"Bearish MACD reversal: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
                 CrossoverStatus.CrossedDown);
+        }
 
+        // Priority 2: Momentum failure exit (early exit signal)
+        if (histFalling && m.MacdLine > 0)
+        {
+            return (AlgoAction.Sell,
+                $"MACD momentum weakening (histogram contraction): Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"}",
+                CrossoverStatus.None);
+        }
+
+        // Priority 3: Bullish ignition (entry signal)
+        if (bullish && m.MacdLine > -0.05m)
+        {
+            return (AlgoAction.Buy,
+                $"Bullish MACD ignition: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
+                CrossoverStatus.CrossedUp);
+        }
+
+        // Priority 4: Trend continuation (add-on signal)
+        if (above && m.MacdLine > 0 && histGrowing)
+        {
+            return (AlgoAction.Buy,
+                $"MACD continuation: momentum expanding (Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"})",
+                CrossoverStatus.None);
+        }
+
+        // Default: HOLD
         return (AlgoAction.Hold,
-            $"Monitoring: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
+            $"MACD stable: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
             CrossoverStatus.None);
     }
 

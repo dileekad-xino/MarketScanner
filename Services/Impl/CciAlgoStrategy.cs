@@ -92,17 +92,17 @@ public class CciAlgoStrategy : IAlgoStrategy
                 signal = "BULLISH MOMENTUM";
                 reason = $"CCI bullish momentum (+180 to +260): {cci.Value:F2}";
             }
-            else if (cci.Value >= 90 && cci.Value < 180)
+            else if (cci.Value >= 100 && cci.Value < 180)
             {
                 action = AlgoAction.Buy;
                 signal = "BULLISH ENTRY";
-                reason = $"CCI bullish entry (+90 to +180): {cci.Value:F2}";
+                reason = $"CCI bullish entry (+100 to +180): {cci.Value:F2}";
             }
-            else if (cci.Value > 0 && cci.Value < 90)
+            else if (cci.Value > 0 && cci.Value < 100)
             {
                 action = AlgoAction.Sell;
                 signal = "EXIT WEAKNESS";
-                reason = $"CCI exit weakness (0 to +90): {cci.Value:F2}";
+                reason = $"CCI exit weakness (0 to +100): {cci.Value:F2}";
             }
             else if (cci.Value == 0)
             {

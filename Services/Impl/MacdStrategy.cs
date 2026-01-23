@@ -13,7 +13,7 @@ public class MacdStrategy : IAlgoStrategy
     private readonly MacdEngine _macdEngine;
 
     public string Name => "MACD Strategy";
-    public string Description => "Generates trading signals based on MACD crossovers.";
+    public string Description => "TradingView-style MACD histogram momentum signals optimized for intraday scalping.";
 
     public MacdStrategy(
         ICandlestickStorage storage,
@@ -89,69 +89,97 @@ public class MacdStrategy : IAlgoStrategy
     {
         const decimal EPS = 0.000001m;
 
+        // Get previous histogram using preferred method, fallback to calculation
+        decimal? prevHist = null;
+        var prevWithHist = _macdEngine.GetPreviousMacdWithHist(m.Symbol, m.Interval);
+        
+        if (prevWithHist != null)
+        {
+            prevHist = (decimal)prevWithHist.Value.Hist;
+        }
+        else
+        {
+            // Fallback: calculate from previous MACD/Signal
+            var prev = _macdEngine.GetPreviousMacd(m.Symbol, m.Interval);
+            if (prev != null)
+            {
+                prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
+            }
+        }
+
+        // If no previous histogram available, use basic MACD crossover logic as fallback
+        if (!prevHist.HasValue)
+        {
+            bool aboveFallback = m.MacdLine > m.SignalLine + EPS;
+            bool belowFallback = m.MacdLine < m.SignalLine - EPS;
+
+            if (aboveFallback && m.MacdLine > 0)
+                return (AlgoAction.Buy, $"MACD bullish (no hist history): MACD={m.MacdLine:F4}", CrossoverStatus.None);
+            if (belowFallback && m.MacdLine < 0)
+                return (AlgoAction.Sell, $"MACD bearish (no hist history): MACD={m.MacdLine:F4}", CrossoverStatus.None);
+
+            return (AlgoAction.Hold, $"MACD waiting for history: MACD={m.MacdLine:F4}", CrossoverStatus.None);
+        }
+
+        // Histogram-first signal generation (TradingView-style)
+        decimal hist = m.Histogram;
+        decimal histChange = hist - prevHist.Value;
+        decimal threshold = GetHistogramThreshold(m.Interval);
+
         bool above = m.MacdLine > m.SignalLine + EPS;
         bool below = m.MacdLine < m.SignalLine - EPS;
 
-        var prev = _macdEngine.GetPreviousMacd(m.Symbol, m.Interval);
-
-        // Calculate previous histogram (since GetPreviousMacd doesn't return it)
-        decimal? prevHist = null;
-        if (prev != null)
+        // Rule 1: hist >= 0 && hist > hist[1] + threshold → BUY (bullish momentum increasing)
+        if (hist >= 0 && histChange > threshold)
         {
-            prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
+            // Additional confirmation: MACD line should be above signal
+            if (above)
+            {
+                return (AlgoAction.Buy,
+                    $"Histogram bullish momentum: Hist={hist:F4} (↑{histChange:+0.0000}), MACD={m.MacdLine:F4}",
+                    CrossoverStatus.None);
+            }
         }
 
-        bool bullish = false;
-        bool bearish = false;
-
-        if (prev != null)
+        // Rule 2: hist >= 0 && hist <= hist[1] + threshold → HOLD (bullish momentum weakening)
+        if (hist >= 0 && histChange <= threshold)
         {
-            decimal prevMacd = (decimal)prev.Value.Macd;
-            decimal prevSignal = (decimal)prev.Value.Signal;
-
-            bullish = prevMacd <= prevSignal + EPS && above;
-            bearish = prevMacd >= prevSignal - EPS && below;
+            // If MACD still above signal, hold; if crossed below, exit
+            if (above)
+            {
+                return (AlgoAction.Sell,
+                    $"Histogram momentum weakening: Hist={hist:F4} (↓{histChange:0.0000}), MACD={m.MacdLine:F4}",
+                    CrossoverStatus.None);
+            }
+            else
+            {
+                // Bearish crossover while histogram positive → exit signal
+                return (AlgoAction.Sell,
+                    $"Histogram weakening + bearish crossover: Hist={hist:F4}, MACD={m.MacdLine:F4}",
+                    CrossoverStatus.CrossedDown);
+            }
         }
 
-        // Histogram momentum analysis
-        bool histGrowing = m.Histogram > 0 && prevHist.HasValue && m.Histogram > prevHist.Value;
-        bool histFalling = prevHist.HasValue && m.Histogram < prevHist.Value;
-
-        // Priority 1: Full bearish reversal (highest priority - exit immediately)
-        if (bearish && m.MacdLine < 0)
+        // Rule 3: hist < 0 && hist > hist[1] + threshold → SELL (exit longs, bearish weakening)
+        if (hist < 0 && histChange > threshold)
         {
+            // Histogram improving but still negative - exit long positions
             return (AlgoAction.Sell,
-                $"Bearish MACD reversal: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
-                CrossoverStatus.CrossedDown);
-        }
-
-        // Priority 2: Momentum failure exit (early exit signal)
-        if (histFalling && m.MacdLine > 0)
-        {
-            return (AlgoAction.Sell,
-                $"MACD momentum weakening (histogram contraction): Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"}",
+                $"Histogram improving but negative: Hist={hist:F4} (↑{histChange:+0.0000}), MACD={m.MacdLine:F4}",
                 CrossoverStatus.None);
         }
 
-        // Priority 3: Bullish ignition (entry signal)
-        if (bullish && m.MacdLine > -0.05m)
+        // Rule 4: hist < 0 && hist <= hist[1] + threshold → SELL (bearish momentum increasing)
+        if (hist < 0 && histChange <= threshold)
         {
-            return (AlgoAction.Buy,
-                $"Bullish MACD ignition: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
-                CrossoverStatus.CrossedUp);
-        }
-
-        // Priority 4: Trend continuation (add-on signal)
-        if (above && m.MacdLine > 0 && histGrowing)
-        {
-            return (AlgoAction.Buy,
-                $"MACD continuation: momentum expanding (Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"})",
+            return (AlgoAction.Sell,
+                $"Histogram bearish momentum: Hist={hist:F4} (↓{histChange:0.0000}), MACD={m.MacdLine:F4}",
                 CrossoverStatus.None);
         }
 
-        // Default: HOLD
+        // Fallback: HOLD
         return (AlgoAction.Hold,
-            $"MACD stable: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
+            $"MACD stable: Hist={hist:F4}, MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
             CrossoverStatus.None);
     }
 
@@ -175,4 +203,18 @@ public class MacdStrategy : IAlgoStrategy
             60 => "1min",
             _ => $"{s}s"
         };
+
+    /// <summary>
+    /// Gets minimum histogram change threshold based on timeframe to reduce noise.
+    /// </summary>
+    private decimal GetHistogramThreshold(string interval)
+    {
+        return interval switch
+        {
+            "15s" => 0.001m,   // Very small threshold for 15s scalping
+            "30s" => 0.002m,   // Small threshold for 30s scalping
+            "1min" => 0.003m,  // Standard threshold for 1m scalping
+            _ => 0.002m        // Default for other intervals
+        };
+    }
 }

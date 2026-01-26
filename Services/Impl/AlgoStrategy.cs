@@ -86,36 +86,34 @@ public class AlgoStrategy : IAlgoStrategy
         var macdAction = macdResult?.Action ?? AlgoAction.Hold;
         var cciAction = cciResult?.Action ?? AlgoAction.Hold;
 
-        // Decision logic with CCI priority for SELL
+        // Decision logic: SELL from either indicator takes priority
         var action = AlgoAction.Hold;
         var summary = "";
 
-        // BUY: Requires both MACD and CCI to agree
-        if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy)
+        // Priority 1: SELL from either MACD or CCI → SELL
+        if (macdAction == AlgoAction.Sell || cciAction == AlgoAction.Sell)
+        {
+            action = AlgoAction.Sell;
+            if (macdAction == AlgoAction.Sell && cciAction == AlgoAction.Sell)
+            {
+                summary = "SELL: MACD and CCI both agree on SELL";
+            }
+            else if (macdAction == AlgoAction.Sell)
+            {
+                summary = $"SELL: MACD SELL (CCI={cciAction})";
+            }
+            else
+            {
+                summary = $"SELL: CCI SELL (MACD={macdAction})";
+            }
+        }
+        // Priority 2: BUY requires both MACD and CCI to agree
+        else if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy)
         {
             action = AlgoAction.Buy;
             summary = "BUY: MACD and CCI both agree on BUY";
         }
-        // SELL: CCI has priority (if CCI = SELL, final action = SELL, except when CCI = HOLD)
-        else if (cciAction == AlgoAction.Sell)
-        {
-            action = AlgoAction.Sell;
-            if (macdAction == AlgoAction.Sell)
-            {
-                summary = "SELL: MACD and CCI both agree on SELL (CCI priority)";
-            }
-            else
-            {
-                summary = $"SELL: CCI priority overrides MACD {macdAction}";
-            }
-        }
-        // Exception: CCI = HOLD and MACD = SELL → HOLD
-        else if (cciAction == AlgoAction.Hold && macdAction == AlgoAction.Sell)
-        {
-            action = AlgoAction.Hold;
-            summary = "HOLD: CCI HOLD overrides MACD SELL";
-        }
-        // All other cases: HOLD
+        // Priority 3: All other cases → HOLD
         else
         {
             action = AlgoAction.Hold;

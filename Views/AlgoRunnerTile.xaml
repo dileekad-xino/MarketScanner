@@ -4,7 +4,9 @@
              xmlns:converters="clr-namespace:MarketScanner.Converters"
              xmlns:models="clr-namespace:MarketScanner.Models"
              x:Class="MarketScanner.Views.AlgoRunnerTile"
-             BackgroundColor="{StaticResource BackgroundDark}">
+             BackgroundColor="{StaticResource BackgroundDark}"
+             HorizontalOptions="FillAndExpand"
+             VerticalOptions="FillAndExpand">
 
     <ContentView.Resources>
         <ResourceDictionary>
@@ -21,12 +23,16 @@
     <Border StrokeThickness="1"
             Stroke="{StaticResource BorderDark}"
             BackgroundColor="{StaticResource BackgroundDark}"
-            Padding="10">
+            Padding="10"
+            HorizontalOptions="FillAndExpand"
+            VerticalOptions="FillAndExpand">
         <Border.StrokeShape>
             <RoundRectangle CornerRadius="4"/>
         </Border.StrokeShape>
         
-        <Grid RowDefinitions="Auto,*">
+        <Grid RowDefinitions="Auto,*"
+              HorizontalOptions="FillAndExpand"
+              VerticalOptions="FillAndExpand">
             <!-- Header with Symbol and Close Button -->
             <Grid Grid.Row="0"
                   ColumnDefinitions="*,Auto"
@@ -108,23 +114,23 @@
                                 <RoundRectangle CornerRadius="4"/>
                             </Border.StrokeShape>
                             <VerticalStackLayout>
-                                <Label Text="RSI"
+                                <Label Text="CCI"
                                        TextColor="{StaticResource OnSurfaceVariantDark}"
                                        FontSize="10"/>
-                                <Label Text="{Binding LiveRsiValue, StringFormat='{0:F2}'}"
+                                <Label Text="{Binding LiveCciValue, StringFormat='{0:F2}'}"
                                        TextColor="{StaticResource OnSurfaceDark}"
                                        FontSize="13"
                                        FontFamily="Cascadia Mono, Consolas, Menlo"
-                                       IsVisible="{Binding LiveRsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}"/>
-                                <Label Text="N/A"
+                                       IsVisible="{Binding LiveCciValue, Converter={StaticResource NullableDoubleToBoolConverter}}"/>
+                                <!--<Label Text="N/A"
                                        TextColor="{StaticResource OnSurfaceVariantDark}"
                                        FontSize="13">
                                     <Label.Triggers>
-                                        <DataTrigger TargetType="Label" Binding="{Binding LiveRsiValue, Converter={StaticResource NullableDoubleToBoolConverter}}" Value="False">
+                                        <DataTrigger TargetType="Label" Binding="{Binding LiveCciValue, Converter={StaticResource NullableDoubleToBoolConverter}}" Value="False">
                                             <Setter Property="IsVisible" Value="True"/>
                                         </DataTrigger>
                                     </Label.Triggers>
-                                </Label>
+                                </Label>-->
                             </VerticalStackLayout>
                         </Border>
                     </Grid>

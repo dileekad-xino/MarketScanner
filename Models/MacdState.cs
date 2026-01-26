@@ -2,7 +2,7 @@ namespace MarketScanner.Models;
 
 /// <summary>
 /// Stores the state of MACD calculations for a symbol/interval.
-/// Includes previous MACD/signal for crossover detection.
+/// Includes previous MACD/signal/histogram for crossover and momentum detection.
 /// </summary>
 public class MacdState
 {
@@ -20,6 +20,7 @@ public class MacdState
     // Previous preview values (for tick crossover detection)
     public double? PreviousMacd { get; set; }
     public double? PreviousSignal { get; set; }
+    public double? PreviousHist { get; set; }
 
     // Latest tick preview (NOT committed)
     public double? LiveMacd { get; set; }
@@ -28,4 +29,7 @@ public class MacdState
 
     // Computed committed MACD
     public double Macd => FastEma - SlowEma;
+    
+    // Computed committed histogram
+    public double Hist => Macd - Signal;
 }

@@ -13,6 +13,7 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 using Microsoft.Maui.Controls;
+using MarketScanner.Views;
 using MarketScanner.Views.Dialogs;
 
 namespace MarketScanner.ViewModels;
@@ -1153,6 +1154,47 @@ public partial class ScannerViewModel : ObservableObject
     /// Add all currently visible scanner items to the Quotes panel and switch to the full Quote view.
     /// </summary>
     [RelayCommand]
+    private async Task OpenDailyPlWindowAsync()
+    {
+        try
+        {
+            // Ensure DailyPlViewModel is initialized
+            if (_dailyPlViewModel == null)
+            {
+                InitializeDailyPlView();
+            }
+
+            if (_dailyPlViewModel == null)
+            {
+                _logger.LogError("DailyPlViewModel is not available");
+                return;
+            }
+
+            // Get the current window/page
+            var page = Application.Current?.MainPage;
+            if (page == null)
+            {
+                _logger.LogError("MainPage is not available - cannot open Daily P/L window");
+                return;
+            }
+
+            // Create the Daily P/L window page
+            var dailyPlPage = new DailyPlWindowPage(_dailyPlViewModel);
+            var dailyPlWindow = new Window(dailyPlPage)
+            {
+                Title = "Daily P/L"
+            };
+
+            // Open the window
+            Application.Current?.OpenWindow(dailyPlWindow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open Daily P/L window");
+        }
+    }
+
+    [RelayCommand]
     private async Task AddAllVisibleToQuotesAsync()
     {
         try
@@ -1292,10 +1334,38 @@ public partial class ScannerViewModel : ObservableObject
         _marketStatusTimer = new System.Timers.Timer(60000); // 60 seconds
         _marketStatusTimer.Elapsed += (_, _) =>
         {
-            _dispatcher.OnUI(() =>
+            // Skip if disposed
+            if (_disposed)
             {
-                UpdateMarketStatus();
-            });
+                _marketStatusTimer?.Stop();
+                return;
+            }
+
+            try
+            {
+                _dispatcher.OnUI(() =>
+                {
+                    // Double-check disposed state on UI thread
+                    if (!_disposed)
+                    {
+                        UpdateMarketStatus();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                // Log but don't crash - timer might fire during shutdown
+                _logger.LogDebug(ex, "Failed to update market status from timer");
+                // Stop timer if main thread is no longer available
+                if (ex is InvalidOperationException)
+                {
+                    try
+                    {
+                        _marketStatusTimer?.Stop();
+                    }
+                    catch { }
+                }
+            }
         };
         _marketStatusTimer.AutoReset = true;
         _marketStatusTimer.Start();
@@ -1392,6 +1462,8 @@ public partial class ScannerViewModel : ObservableObject
             {
                 row.RsiValue = result.RsiValue;
                 row.RsiSignal = result.RsiSignal;
+                row.CciValue = result.CciValue;
+                row.CciSignal = result.CciSignal;
             }
         }
         catch (Exception ex)

@@ -272,6 +272,93 @@ public partial class ScannerPage : ContentPage
             // Pass page title to ViewModel for dynamic watchlist naming
             vm.SetPageTitle(this.Title);
             
+            // Set up Algo Runner tile bindings
+            SetupAlgoRunnerTiles(vm);
+            
+            // Set up custom title view with Market Status and Daily P/L button
+            var titleView = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitionCollection
+                {
+                    new ColumnDefinition { Width = GridLength.Star },
+                    new ColumnDefinition { Width = GridLength.Auto },
+                    new ColumnDefinition { Width = GridLength.Auto },
+                    new ColumnDefinition { Width = GridLength.Auto },
+                    new ColumnDefinition { Width = GridLength.Auto }
+                },
+                Padding = new Thickness(0, 0, 16, 0)
+            };
+            
+            var titleLabel = new Label
+            {
+                Text = "Market Scanner",
+                FontSize = 18,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Start
+            };
+            Grid.SetColumn(titleLabel, 0);
+            
+            var separatorLabel1 = new Label
+            {
+                Text = "|",
+                FontSize = 14,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(10, 0, 10, 0),
+                Opacity = 0.6
+            };
+            Grid.SetColumn(separatorLabel1, 1);
+            
+            var statusLabel = new Label
+            {
+                FontSize = 14,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.End
+            };
+            statusLabel.SetBinding(Label.TextProperty, new Binding("MarketStatus", source: vm));
+            Grid.SetColumn(statusLabel, 2);
+            
+            var separatorLabel2 = new Label
+            {
+                Text = "|",
+                FontSize = 14,
+                TextColor = Colors.White,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(10, 0, 10, 0),
+                Opacity = 0.6
+            };
+            Grid.SetColumn(separatorLabel2, 3);
+            
+            var dailyPlButton = new Button
+            {
+                Text = "Daily P/L",
+                FontSize = 12,
+                BackgroundColor = Color.FromArgb("#1E1E1E"),
+                TextColor = Colors.White,
+                BorderColor = Color.FromArgb("#404040"),
+                BorderWidth = 1,
+                Padding = new Thickness(12, 6),
+                HeightRequest = 32,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.End
+            };
+            dailyPlButton.SetBinding(Button.CommandProperty, new Binding("OpenDailyPlWindowCommand", source: vm));
+            Grid.SetColumn(dailyPlButton, 4);
+            
+            titleView.Children.Add(titleLabel);
+            titleView.Children.Add(separatorLabel1);
+            titleView.Children.Add(statusLabel);
+            titleView.Children.Add(separatorLabel2);
+            titleView.Children.Add(dailyPlButton);
+            
+            Shell.SetTitleView(this, titleView);
+            
             // Load refresh preferences on first appearance
             vm.LoadRefreshPrefs();
             
@@ -293,15 +380,135 @@ public partial class ScannerPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
+        // Clear custom title view
+        Shell.SetTitleView(this, null);
         // Don't dispose here - scanner should keep running in background
         // Disposal will happen when app closes via App lifecycle
     }
 
+    private bool _isSyncingScroll = false;
+
+    private void OnTableScrollScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync bottom scrollbar
+        if (BottomScrollBar != null)
+        {
+            BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        // Sync filters scroll
+        if (FiltersScroll != null)
+        {
+            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    private void OnBottomScrollBarScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync table scroll
+        if (TableScroll != null)
+        {
+            TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
+        }
+        
+        // Sync filters scroll
+        if (FiltersScroll != null)
+        {
+            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    private void OnFiltersScrollScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (_isSyncingScroll) return;
+        
+        _isSyncingScroll = true;
+        
+        // Sync table scroll
+        if (TableScroll != null)
+        {
+            TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
+        }
+        
+        // Sync bottom scrollbar
+        if (BottomScrollBar != null)
+        {
+            BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
+        }
+        
+        _isSyncingScroll = false;
+    }
+
+    protected override void OnSizeAllocated(double width, double height)
+    {
+        base.OnSizeAllocated(width, height);
+        
+        // Update bottom scrollbar track width to match table content width
+        if (TableScroll != null && ScrollBarTrack != null)
+        {
+            var tableContentWidth = TableScroll.ContentSize.Width;
+            if (tableContentWidth > 0)
+            {
+                ScrollBarTrack.WidthRequest = tableContentWidth;
+            }
+        }
+        
+        // Sync filters scroll content width with table content width
+        if (TableScroll != null && FiltersScroll != null)
+        {
+            var tableContentWidth = TableScroll.ContentSize.Width;
+            if (tableContentWidth > 0)
+            {
+                // The filters HorizontalStackLayout will naturally size to its content
+                // We just need to ensure they're in sync when scrolling
+            }
+        }
+    }
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e)
     {
         if (BindingContext is ViewModels.ScannerViewModel vm)
             vm.GetType().GetMethod("DebouncedApply", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
               ?.Invoke(vm, null);
+    }
+
+    private void SetupAlgoRunnerTiles(ViewModels.ScannerViewModel vm)
+    {
+        if (AlgoTile0 == null || AlgoTile1 == null || AlgoTile2 == null)
+            return;
+
+        // Subscribe to collection changes to update bindings
+        vm.AlgoRunners.CollectionChanged += (sender, e) =>
+        {
+            // Update bindings when collection changes
+            AlgoTile0.BindingContext = vm.AlgoRunners.Count > 0 ? vm.AlgoRunners[0] : null;
+            AlgoTile1.BindingContext = vm.AlgoRunners.Count > 1 ? vm.AlgoRunners[1] : null;
+            AlgoTile2.BindingContext = vm.AlgoRunners.Count > 2 ? vm.AlgoRunners[2] : null;
+            
+            AlgoTile0.IsVisible = vm.AlgoRunners.Count > 0;
+            AlgoTile1.IsVisible = vm.AlgoRunners.Count > 1;
+            AlgoTile2.IsVisible = vm.AlgoRunners.Count > 2;
+        };
+
+        // Set initial bindings
+        AlgoTile0.BindingContext = vm.AlgoRunners.Count > 0 ? vm.AlgoRunners[0] : null;
+        AlgoTile1.BindingContext = vm.AlgoRunners.Count > 1 ? vm.AlgoRunners[1] : null;
+        AlgoTile2.BindingContext = vm.AlgoRunners.Count > 2 ? vm.AlgoRunners[2] : null;
+        
+        AlgoTile0.IsVisible = vm.AlgoRunners.Count > 0;
+        AlgoTile1.IsVisible = vm.AlgoRunners.Count > 1;
+        AlgoTile2.IsVisible = vm.AlgoRunners.Count > 2;
     }
 }

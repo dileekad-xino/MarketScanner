@@ -76,6 +76,7 @@ public class MacdEngine
                 Signal = signalEma,
                 PreviousMacd = null,
                 PreviousSignal = null,
+                PreviousHist = null,
                 LiveMacd = null,
                 LiveSignal = null,
                 LiveHist = null,
@@ -119,6 +120,7 @@ public class MacdEngine
             // Save previous preview values BEFORE updating (bar-based)
             state.PreviousMacd = state.LiveMacd;
             state.PreviousSignal = state.LiveSignal;
+            state.PreviousHist = state.LiveHist;
 
             // TradingView-style intrabar preview: compute from committed state but DO NOT write back EMAs
             var previewFast = state.FastEma + alphaFast * (p - state.FastEma);
@@ -167,6 +169,7 @@ public class MacdEngine
             // Save previous preview values BEFORE updating (tick-based)
             state.PreviousMacd = state.LiveMacd;
             state.PreviousSignal = state.LiveSignal;
+            state.PreviousHist = state.LiveHist;
 
             // TradingView-style intrabar preview: compute from committed state but DO NOT write back EMAs
             var previewFast = state.FastEma + alphaFast * (p - state.FastEma);
@@ -218,6 +221,9 @@ public class MacdEngine
             state.LiveSignal = state.Signal;
             state.LiveHist = macd - state.Signal;
 
+            // Save committed histogram as previous for next bar
+            state.PreviousHist = state.LiveHist;
+
             state.LastPrice = p;
             state.LastTimestamp = ts;
         }
@@ -254,6 +260,21 @@ public class MacdEngine
             return null;
 
         return (s.PreviousMacd.Value, s.PreviousSignal.Value);
+    }
+
+    /// <summary>
+    /// Gets previous MACD, Signal, and Histogram values for histogram momentum analysis.
+    /// Returns null if previous values are not available.
+    /// </summary>
+    public (double Macd, double Signal, double Hist)? GetPreviousMacdWithHist(string symbol, string interval)
+    {
+        if (!_states.TryGetValue(Key(symbol, interval), out var s))
+            return null;
+
+        if (s.PreviousMacd == null || s.PreviousSignal == null || s.PreviousHist == null)
+            return null;
+
+        return (s.PreviousMacd.Value, s.PreviousSignal.Value, s.PreviousHist.Value);
     }
 
 

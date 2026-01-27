@@ -402,7 +402,7 @@ public partial class ScannerViewModel : ObservableObject
             _logger.LogInformation("Received {Count} rows from scanner", rows.Count);
 
             // Clear existing rows and rebuild from scanner results
-            await MainThread.InvokeOnMainThreadAsync(() =>
+            await _dispatcher.OnUIAsync(() =>
             {
                 ScannerItems.Clear();
                 _rowLookup.Clear();
@@ -501,7 +501,7 @@ public partial class ScannerViewModel : ObservableObject
         var rows = new List<ScannerRowViewModel>();
         int scannerItemsCount = 0;
         int snapshotCount = 0;
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await _dispatcher.OnUIAsync(() =>
         {
             // Clear ScannerItems BEFORE building snapshot to ensure clean state
             ScannerItems.Clear();
@@ -800,7 +800,7 @@ public partial class ScannerViewModel : ObservableObject
         }
 
         // Marshal to UI thread once with the FILTERED set
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await _dispatcher.OnUIAsync(() =>
         {
             ScannerItems.Clear();
             foreach (var i in result.TopIndices)

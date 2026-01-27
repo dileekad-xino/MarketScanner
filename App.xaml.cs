@@ -7,17 +7,19 @@ namespace MarketScanner
 {
     public partial class App : Application
     {
+        private readonly ScannerViewModel _scannerViewModel;
+
         public App(IServiceProvider services)
         {
             InitializeComponent();
-            
+
             // Resolve scanner page from DI container
-            var viewModel = services.GetRequiredService<ScannerViewModel>();
+            _scannerViewModel = services.GetRequiredService<ScannerViewModel>();
             var layout = services.GetRequiredService<ColumnLayoutService>();
-            var scannerPage = new ScannerPage(viewModel, layout);
-            
+            var scannerPage = new ScannerPage(_scannerViewModel, layout);
+
             MainPage = new AppShell(scannerPage);
-            
+
             // Start candlestick builder
             try
             {
@@ -31,6 +33,25 @@ namespace MarketScanner
             {
                 // Log error but don't crash the app
                 System.Diagnostics.Debug.WriteLine($"Failed to start candlestick builder: {ex.Message}");
+            }
+        }
+
+        protected override void OnSleep()
+        {
+            base.OnSleep();
+            Shutdown();
+        }
+
+        private void Shutdown()
+        {
+            try
+            {
+                _scannerViewModel.Dispose();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Scanner shutdown error: {ex.Message}");
             }
         }
     }

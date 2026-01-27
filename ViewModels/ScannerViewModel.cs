@@ -15,7 +15,7 @@ using System.Reactive.Linq;
 using Microsoft.Maui.Controls;
 using MarketScanner.Views;
 using MarketScanner.Views.Dialogs;
-
+using Microsoft.Maui.Dispatching;
 namespace MarketScanner.ViewModels;
 
 public partial class ScannerViewModel : ObservableObject
@@ -50,7 +50,7 @@ public partial class ScannerViewModel : ObservableObject
 
     // UI batching for ultra-smooth updates (60 FPS)
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
-    private readonly System.Timers.Timer _batchTimer;
+    private IDispatcherTimer? _batchTimer;
     private readonly Dictionary<string, ScannerRowViewModel> _rowLookup = new();
     private bool _uiReady = false;
 
@@ -107,7 +107,7 @@ public partial class ScannerViewModel : ObservableObject
     public DailyPlViewModel? DailyPlViewModel => _dailyPlViewModel;
 
     // Expose AlgoRunners collection for binding
-    public ObservableCollection<AlgoRunnerViewModel> AlgoRunners => 
+    public ObservableCollection<AlgoRunnerViewModel> AlgoRunners =>
         _algoRunnerManager?.AlgoRunners ?? new ObservableCollection<AlgoRunnerViewModel>();
 
     // Properties for "more algos" indicator
@@ -129,8 +129,7 @@ public partial class ScannerViewModel : ObservableObject
     private Task? _autoTask;
 
     // Market status update timer
-    private System.Timers.Timer? _marketStatusTimer;
-
+    private IDispatcherTimer? _marketStatusTimer;
     // Property change handlers - all use debounced filtering
     partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
     partial void OnVolumeMinTextChanged(string value) => DebouncedApply();
@@ -177,9 +176,11 @@ public partial class ScannerViewModel : ObservableObject
         _algoRunnerManager = algoRunnerManager;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
-        _batchTimer = new System.Timers.Timer(BatchIntervalMs);
-        _batchTimer.Elapsed += (_, _) => FlushBatchedTicks();
-        _batchTimer.AutoReset = true;
+        _batchTimer = Application.Current.Dispatcher.CreateTimer();
+        _batchTimer.Interval = TimeSpan.FromMilliseconds(BatchIntervalMs);
+        _batchTimer.IsRepeating = true;
+        _batchTimer.Tick += OnBatchTimerTick;
+
         // Don't start timer yet - wait for UI to be ready
 
         // Set production defaults AFTER timer is initialized
@@ -261,7 +262,7 @@ public partial class ScannerViewModel : ObservableObject
                 OnPropertyChanged(nameof(MoreAlgosText));
                 OnPropertyChanged(nameof(AlgoRunners));
             };
-            
+
             // Also subscribe to property changes on the manager itself
             _algoRunnerManager.PropertyChanged += (sender, e) =>
             {
@@ -340,7 +341,7 @@ public partial class ScannerViewModel : ObservableObject
             DebugStatus = "Loading data...";
 
             // Start batch timer now that we're refreshing (UI should be ready)
-            StartBatchTimer();
+            // StartBatchTimer();
 
             _logger.LogInformation("Starting data refresh...");
 
@@ -559,72 +560,62 @@ public partial class ScannerViewModel : ObservableObject
 
     private void FlushBatchedTicks()
     {
-        if (_batchedTicks.Count == 0 || !_uiReady) return;
+        if (!_uiReady) return;
 
-        try
+        _dispatcher.OnUI(() =>
         {
-            _dispatcher.OnUI(() =>
-            {
-                var processedCount = 0;
-                var updatedSymbols = new HashSet<string>();
+            if (_disposed || !_uiReady) return;
 
-                while (_batchedTicks.TryDequeue(out var tick) && processedCount < MaxBatchSize)
-                {
-                    // Only process ticks for symbols in our snapshot - skip filtered-out symbols
-                    if (!_rowLookup.TryGetValue(tick.Symbol, out var rowVm))
-                    {
-                        // Symbol not in snapshot - skip this tick (it's filtered out)
-                        continue;
-                    }
-                    tick.ApplyTo(rowVm);  // In-place update!
-                    // RelativeVolume is auto-calculated in ScannerRowViewModel
-                    updatedSymbols.Add(tick.Symbol);
+            var processedCount = 0;
+            var updatedSymbols = new HashSet<string>();
+
+            while (_batchedTicks.TryDequeue(out var tick) &&
+                   processedCount < MaxBatchSize)
+            {
+                if (_disposed) return;
+                if (!_rowLookup.TryGetValue(tick.Symbol, out var rowVm))
+                    continue;
+
+                tick.ApplyTo(rowVm);
+
+                if (updatedSymbols.Add(tick.Symbol))
                     processedCount++;
 
-                    // Check if this completes initial tick loading for MinChgPct filter
-                    if (_pendingInitialTicks != null && rowVm.PrevClose > 0 && _pendingInitialTicks.Remove(tick.Symbol))
+                if (_pendingInitialTicks != null &&
+                    rowVm.PrevClose > 0 &&
+                    _pendingInitialTicks.Remove(tick.Symbol))
+                {
+                    if (_pendingInitialTicks.Count == 0)
                     {
-                        if (_pendingInitialTicks.Count == 0)
+                        _pendingInitialTicks = null;
+
+                        _ = _dispatcher.OnUIAsync(async () =>
                         {
-                            _logger.LogInformation("All {Total} initial ticks received, applying MinChgPct filter", ScannerItems.Count);
-                            _pendingInitialTicks = null;
-                            _ = Task.Run(async () => await ApplyFiltersAsync());
-                        }
-                        else if (_pendingInitialTicks.Count % 10 == 0)
-                        {
-                            _logger.LogDebug("Waiting for {Pending} more ticks", _pendingInitialTicks.Count);
-                        }
+                            await ApplyFiltersAsync();
+                        });
                     }
                 }
+            }
 
-                if (processedCount > 0)
-                {
-                    DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
-                }
-            });
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Unable to find main thread"))
-        {
-            // UI not ready yet - just skip this batch
-            _logger.LogDebug("Skipping tick batch - main thread not available yet");
-        }
+            if (!_disposed && processedCount > 0)
+            {
+                DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
+            }
+        });
     }
 
-    private void StartBatchTimer()
+    public void StartBatchTimer()
     {
-        if (_batchTimer == null)
-        {
-            _logger.LogError("Batch timer is null - cannot start");
+        if (_disposed || _batchTimer.IsRunning)
             return;
-        }
 
-        if (!_batchTimer.Enabled)
-        {
-            _uiReady = true;
-            _batchTimer.Start();
-            _logger.LogInformation("Batch timer started - ready for tick updates");
-        }
+        _uiReady = true;
+        _batchTimer.Start();
+
+        _logger.LogInformation("Batch timer started");
     }
+
+
 
     private ScannerRowViewModel GetOrCreateRow(string symbol)
     {
@@ -1331,48 +1322,37 @@ public partial class ScannerViewModel : ObservableObject
     /// </summary>
     private void SetupMarketStatusTimer()
     {
-        _marketStatusTimer = new System.Timers.Timer(60000); // 60 seconds
-        _marketStatusTimer.Elapsed += (_, _) =>
-        {
-            // Skip if disposed
-            if (_disposed)
-            {
-                _marketStatusTimer?.Stop();
-                return;
-            }
+        if (_marketStatusTimer != null)
+            return;
 
-            try
-            {
-                _dispatcher.OnUI(() =>
-                {
-                    // Double-check disposed state on UI thread
-                    if (!_disposed)
-                    {
-                        UpdateMarketStatus();
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                // Log but don't crash - timer might fire during shutdown
-                _logger.LogDebug(ex, "Failed to update market status from timer");
-                // Stop timer if main thread is no longer available
-                if (ex is InvalidOperationException)
-                {
-                    try
-                    {
-                        _marketStatusTimer?.Stop();
-                    }
-                    catch { }
-                }
-            }
-        };
-        _marketStatusTimer.AutoReset = true;
+        _marketStatusTimer = Application.Current.Dispatcher.CreateTimer();
+        _marketStatusTimer.Interval = TimeSpan.FromMinutes(1);
+        _marketStatusTimer.IsRepeating = true;
+
+        _marketStatusTimer.Tick += OnMarketStatusTimerTick;
         _marketStatusTimer.Start();
+
+        _logger.LogInformation("Market status timer started");
     }
+
+    private void OnMarketStatusTimerTick(object? sender, EventArgs e)
+    {
+        if (_disposed)
+            return;
+
+        UpdateMarketStatus();
+    }
+
+
+    private void OnBatchTimerTick(object? sender, EventArgs e)
+    {
+        FlushBatchedTicks();
+    }
+
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
         _snapshot = Array.Empty<ScannerRowViewModel>();
 
@@ -1406,8 +1386,13 @@ public partial class ScannerViewModel : ObservableObject
         // Stop batch timer
         try
         {
-            _batchTimer?.Stop();
-            _batchTimer?.Dispose();
+            if (_batchTimer != null)
+            {
+                _batchTimer.Tick -= OnBatchTimerTick;
+                _batchTimer.Stop();
+                _batchTimer = null;
+            }
+
         }
         catch (ObjectDisposedException) { }
 
@@ -1444,13 +1429,23 @@ public partial class ScannerViewModel : ObservableObject
         // Stop market status timer
         try
         {
-            _marketStatusTimer?.Stop();
-            _marketStatusTimer?.Dispose();
+            if (_marketStatusTimer != null)
+            {
+                _marketStatusTimer.Tick -= OnMarketStatusTimerTick;
+                _marketStatusTimer.Stop();
+                _marketStatusTimer = null;
+            }
+
         }
         catch (ObjectDisposedException) { }
 
         // Stop scanner
-        _ = Task.Run(async () => await _scanner.StopAsync());
+        try
+        {
+            _scanner.StopAsync().ConfigureAwait(false);
+        }
+        catch { }
+
     }
 
     private async Task AnalyzeSelectedRowAsync(ScannerRowViewModel row)

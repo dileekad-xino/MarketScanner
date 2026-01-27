@@ -24,18 +24,18 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _watchlistItems = new();
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _errorMessage = string.Empty;
-    
+
     // Inline watchlist creation popup
     [ObservableProperty] private bool _isCreatingWatchlist = false;
     [ObservableProperty] private string _newWatchlistName = "";
     [ObservableProperty] private string _watchlistNameError = "";
-    
+
     // Inline watchlist rename popup
     [ObservableProperty] private bool _isRenamingWatchlist = false;
     [ObservableProperty] private int? _renamingWatchlistId = null;
     [ObservableProperty] private string _renamingWatchlistName = "";
     [ObservableProperty] private string _renamingWatchlistError = "";
-    
+
     // Add symbol input
     [ObservableProperty] private string _newSymbolText = "";
     [ObservableProperty] private ObservableCollection<SymbolSearchResult> _searchResults = new();
@@ -45,7 +45,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
-    private readonly System.Timers.Timer _batchTimer;
+    private IDispatcherTimer? _batchTimer;
     private IDisposable? _tickSubscription;
     private IDisposable? _playbackSubscription;
     private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
@@ -70,9 +70,10 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
-        _batchTimer = new System.Timers.Timer(BatchIntervalMs);
-        _batchTimer.Elapsed += (_, _) => FlushBatchedTicks();
-        _batchTimer.AutoReset = true;
+        _batchTimer = Application.Current.Dispatcher.CreateTimer();
+        _batchTimer.Interval = TimeSpan.FromMilliseconds(BatchIntervalMs);
+        _batchTimer.IsRepeating = true;
+        _batchTimer.Tick += OnBatchTimerTick;
         _batchTimer.Start();
 
         // Subscribe to tick updates (IBKR)
@@ -99,6 +100,10 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void OnBatchTimerTick(object? sender, EventArgs e)
+    {
+        FlushBatchedTicks();
+    }
     public async Task InitializeAsync()
     {
         try
@@ -147,7 +152,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         }
 
         var symbols = WatchlistItems.Select(item => item.Symbol).ToList();
-        _logger.LogInformation("WatchlistViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+        _logger.LogInformation("WatchlistViewModel: Resuming subscriptions for {Count} symbols: {Symbols}",
             symbols.Count, string.Join(", ", symbols));
 
         try
@@ -254,7 +259,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             var existingNames = Watchlists.Select(w => w.Name).ToHashSet();
             var number = 1;
             string suggestedName;
-            
+
             do
             {
                 suggestedName = $"{baseName} {number}";
@@ -264,7 +269,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             // Set suggested name and show inline popup
             NewWatchlistName = suggestedName;
             IsCreatingWatchlist = true;
-            
+
             await Task.CompletedTask; // Keep async signature
         }
         catch (Exception ex)
@@ -281,7 +286,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         {
             // Validate name
             var trimmedName = NewWatchlistName?.Trim() ?? "";
-            
+
             // Validation: Empty or whitespace
             if (string.IsNullOrWhiteSpace(trimmedName))
             {
@@ -289,7 +294,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist creation failed - empty name");
                 return;
             }
-            
+
             // Validation: Length (max 100 chars per database schema)
             if (trimmedName.Length > 100)
             {
@@ -297,7 +302,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist creation failed - name too long");
                 return;
             }
-            
+
             // Validation: Duplicate name
             if (Watchlists.Any(w => w.Name.Equals(trimmedName, StringComparison.OrdinalIgnoreCase)))
             {
@@ -305,7 +310,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist creation failed - duplicate name");
                 return;
             }
-            
+
             // Validation: Invalid characters (prevent special chars that might break UI/DB)
             var invalidChars = new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' };
             if (trimmedName.Any(c => invalidChars.Contains(c)))
@@ -321,7 +326,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             SelectedWatchlist = newWatchlist;
 
             _logger.LogInformation("Created empty watchlist '{Name}'", trimmedName);
-            
+
             // Hide popup and clear state
             IsCreatingWatchlist = false;
             NewWatchlistName = "";
@@ -365,7 +370,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             RenamingWatchlistName = watchlist.Name;
             RenamingWatchlistError = "";
             IsRenamingWatchlist = true;
-            
+
             await Task.CompletedTask; // Keep async signature
         }
         catch (Exception ex)
@@ -374,7 +379,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             RenamingWatchlistError = $"Error: {ex.Message}";
         }
     }
-    
+
     [RelayCommand]
     private async Task ConfirmRenameWatchlistAsync()
     {
@@ -385,10 +390,10 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 RenamingWatchlistError = "No watchlist selected for rename";
                 return;
             }
-            
+
             // Validate name
             var trimmedName = RenamingWatchlistName?.Trim() ?? "";
-            
+
             // Validation: Empty or whitespace
             if (string.IsNullOrWhiteSpace(trimmedName))
             {
@@ -396,7 +401,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist rename failed - empty name");
                 return;
             }
-            
+
             // Validation: Length (max 100 chars per database schema)
             if (trimmedName.Length > 100)
             {
@@ -404,7 +409,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist rename failed - name too long");
                 return;
             }
-            
+
             // Validation: Duplicate name (excluding current watchlist)
             if (Watchlists.Any(w => w.Id != RenamingWatchlistId.Value && w.Name.Equals(trimmedName, StringComparison.OrdinalIgnoreCase)))
             {
@@ -412,7 +417,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogDebug("Watchlist rename failed - duplicate name");
                 return;
             }
-            
+
             // Validation: Invalid characters (prevent special chars that might break UI/DB)
             var invalidChars = new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' };
             if (trimmedName.Any(c => invalidChars.Contains(c)))
@@ -430,22 +435,22 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 _logger.LogWarning("RenameWatchlistAsync returned false for watchlist {Id}", RenamingWatchlistId.Value);
                 return;
             }
-            
+
             // Update watchlist in collection
             var watchlist = Watchlists.FirstOrDefault(w => w.Id == RenamingWatchlistId.Value);
             if (watchlist != null)
             {
                 var wasSelected = SelectedWatchlist?.Id == watchlist.Id;
-                
+
                 // Update properties
                 watchlist.Name = trimmedName;
                 watchlist.UpdatedAt = DateTime.UtcNow;
-                
+
                 // Trigger collection update by removing and re-adding (ensures UI refresh)
                 var index = Watchlists.IndexOf(watchlist);
                 Watchlists.RemoveAt(index);
                 Watchlists.Insert(index, watchlist);
-                
+
                 // Update SelectedWatchlist reference to ensure UI updates
                 if (wasSelected)
                 {
@@ -454,7 +459,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             }
 
             _logger.LogInformation("Renamed watchlist {Id} to '{Name}'", RenamingWatchlistId.Value, trimmedName);
-            
+
             // Hide popup and clear state
             IsRenamingWatchlist = false;
             RenamingWatchlistId = null;
@@ -467,7 +472,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             RenamingWatchlistError = "Failed to rename watchlist";
         }
     }
-    
+
     [RelayCommand]
     private void CancelRenameWatchlist()
     {
@@ -477,7 +482,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         RenamingWatchlistError = "";
         _logger.LogInformation("Watchlist rename cancelled");
     }
-    
+
     partial void OnRenamingWatchlistNameChanged(string value)
     {
         // Clear error when user starts typing
@@ -488,7 +493,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     {
         // Clear error when user starts typing
         ErrorMessage = "";
-        
+
         // Trigger search if 2+ characters
         if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
         {
@@ -496,28 +501,28 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             SearchResults.Clear();
             return;
         }
-        
+
         _ = PerformSearchAsync(value);
     }
-    
+
     private async Task PerformSearchAsync(string query)
     {
         // Cancel previous search
         _searchCts?.Cancel();
         _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
-        
+
         try
         {
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
-            
+
             // Try to get symbol search service if not already set
             var symbolSearchService = _symbolSearchService;
             if (symbolSearchService == null)
             {
                 var serviceProvider = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
-                
+
                 if (serviceProvider != null)
                 {
                     symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
@@ -526,22 +531,22 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                         _symbolSearchService = symbolSearchService; // Cache it for future use
                     }
                 }
-                
+
                 if (symbolSearchService == null)
                 {
                     _logger.LogWarning("WatchlistViewModel: Symbol search service is null - search cannot proceed");
                     return;
                 }
             }
-            
+
             if (_searchCts.Token.IsCancellationRequested)
             {
                 return;
             }
-                
+
             IsSearching = true;
             var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
-            
+
             if (!_searchCts.Token.IsCancellationRequested)
             {
                 await _dispatcher.OnUIAsync(() =>
@@ -569,7 +574,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             IsSearching = false;
         }
     }
-    
+
     partial void OnShowSearchResultsChanged(bool value)
     {
     }
@@ -587,8 +592,8 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
     private void NavigateSearchResultsUp()
     {
         if (SearchResults.Count == 0) return;
-        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0 
-            ? SearchResults.Count - 1 
+        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0
+            ? SearchResults.Count - 1
             : SelectedSearchResultIndex - 1;
     }
 
@@ -738,7 +743,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 var latest = fallback.GetLatestSnapshots(new[] { symbol });
                 if (latest.TryGetValue(symbol, out var tick))
                 {
-                    _logger.LogInformation("WatchlistViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                    _logger.LogInformation("WatchlistViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}",
                         symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
                     tick.ApplyTo(rowVm);
                     if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
@@ -746,7 +751,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                         _logger.LogInformation("WatchlistViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
                         rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
                     }
-                    _logger.LogInformation("WatchlistViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                    _logger.LogInformation("WatchlistViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}",
                         rowVm.PrevClose, rowVm.LastPrice, symbol);
                 }
                 else
@@ -763,7 +768,7 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
             WatchlistItems.Add(rowVm);
 
             NewSymbolText = "";
-            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data (PrevClose={PrevClose}, LastPrice={LastPrice})", 
+            _logger.LogInformation("Added symbol {Symbol} to watchlist '{Name}' and subscribed to market data (PrevClose={PrevClose}, LastPrice={LastPrice})",
                 symbol, SelectedWatchlist.Name, rowVm.PrevClose, rowVm.LastPrice);
         }
         catch (Exception ex)
@@ -786,8 +791,13 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
         }
         catch { }
 
-        _batchTimer?.Stop();
-        _batchTimer?.Dispose();
+        if (_batchTimer != null)
+        {
+            _batchTimer.Tick -= OnBatchTimerTick;
+            _batchTimer.Stop();
+            _batchTimer = null;
+        }
+
 
         _tickSubscription?.Dispose();
         _playbackSubscription?.Dispose();

@@ -12,50 +12,17 @@ public sealed class MauiDispatcherService : IDispatcherService
         if (MainThread.IsMainThread)
         {
             action();
-        }
-        else
-        {
-            try
-            {
-                MainThread.BeginInvokeOnMainThread(action);
-            }
-            catch (InvalidOperationException)
-            {
-                // Main thread not available - skip execution
-                // This can happen during app shutdown or when the main thread is no longer available
-            }
-        }
-    }
-
-    public async Task OnUIAsync(Action action)
-    {
-        if (MainThread.IsMainThread)
-        {
-            action();
             return;
         }
-        
+
         try
         {
-            var tcs = new TaskCompletionSource();
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                try 
-                { 
-                    action(); 
-                    tcs.SetResult(); 
-                }
-                catch (Exception ex) 
-                { 
-                    tcs.SetException(ex); 
-                }
-            });
-            await tcs.Task;
+            MainThread.BeginInvokeOnMainThread(action);
         }
         catch (InvalidOperationException)
         {
-            // Main thread not available - execute on current thread as fallback
-            action();
+            // Main thread not available - skip execution
+            // This can happen during app shutdown or when the main thread is no longer available
         }
     }
 
@@ -64,19 +31,26 @@ public sealed class MauiDispatcherService : IDispatcherService
         if (MainThread.IsMainThread)
         {
             await action();
+            return;
         }
-        else
+
+        try
         {
-            try
-            {
-                await MainThread.InvokeOnMainThreadAsync(action);
-            }
-            catch (InvalidOperationException)
-            {
-                // Main thread not available - execute on current thread as fallback
-                await action();
-            }
+            await MainThread.InvokeOnMainThreadAsync(action);
         }
+        catch (InvalidOperationException)
+        {
+            // UI thread is gone → drop work
+        }
+    }
+
+    public Task OnUIAsync(Action action)
+    {
+        return OnUIAsync(() =>
+        {
+            action();
+            return Task.CompletedTask;
+        });
     }
 
     public async Task<T> OnUIAsync<T>(Func<T> func)
@@ -94,7 +68,8 @@ public sealed class MauiDispatcherService : IDispatcherService
             catch (InvalidOperationException)
             {
                 // Main thread not available - execute on current thread as fallback
-                return func();
+                // return func() ;
+                return default!;
             }
         }
     }

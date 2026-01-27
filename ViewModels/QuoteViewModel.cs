@@ -39,7 +39,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
-    private readonly System.Timers.Timer _batchTimer;
+    private IDispatcherTimer? _batchTimer;
+
     private IDisposable? _tickSubscription;
     private IDisposable? _playbackSubscription;
     private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
@@ -72,9 +73,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
-        _batchTimer = new System.Timers.Timer(BatchIntervalMs);
-        _batchTimer.Elapsed += (_, _) => FlushBatchedTicks();
-        _batchTimer.AutoReset = true;
+        _batchTimer = Application.Current.Dispatcher.CreateTimer();
+        _batchTimer.Interval = TimeSpan.FromMilliseconds(BatchIntervalMs);
+        _batchTimer.IsRepeating = true;
+        _batchTimer.Tick += OnBatchTimerTick;
         _batchTimer.Start();
 
         // Subscribe to tick updates (IBKR)
@@ -101,6 +103,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void OnBatchTimerTick(object? sender, EventArgs e)
+    {
+        FlushBatchedTicks();
+    }
+
     public async Task InitializeAsync()
     {
         _logger.LogInformation("Quote panel initialized");
@@ -120,7 +127,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         }
 
         var symbols = QuoteItems.Select(item => item.Symbol).ToList();
-        _logger.LogInformation("QuoteViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+        _logger.LogInformation("QuoteViewModel: Resuming subscriptions for {Count} symbols: {Symbols}",
             symbols.Count, string.Join(", ", symbols));
 
         try
@@ -144,7 +151,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var watchlists = await _watchlistService.GetAllWatchlistsAsync();
 
             Watchlists.Clear();
-            
+
             // Add "Scanner" placeholder as first option to restore saved quotes
             var scannerWatchlist = new Watchlist
             {
@@ -154,7 +161,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 UpdatedAt = DateTime.UtcNow
             };
             Watchlists.Add(scannerWatchlist);
-            
+
             foreach (var w in watchlists)
             {
                 Watchlists.Add(w);
@@ -199,7 +206,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
         // Load watchlist (will save snapshot if coming from Scanner)
         _ = LoadQuotesFromWatchlistAsync(value.Id, shouldSaveSnapshot);
-        
+
         _previousWatchlist = value;
     }
 
@@ -446,7 +453,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(s => s.Trim().ToUpperInvariant())
                 .ToList();
-            
+
             var target = new HashSet<string>(orderedSymbols, StringComparer.OrdinalIgnoreCase);
 
             // Try to get latest snapshots from fallback if available
@@ -470,7 +477,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 {
                     // Mark as not dropped (in case it was previously dropped)
                     existingVm.IsDropped = false;
-                    
+
                     // Update existing item with latest tick data if available
                     if (latest.TryGetValue(s, out var tick))
                     {
@@ -522,13 +529,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             {
                 // Clear all items first to prevent duplicates
                 QuoteItems.Clear();
-                
+
                 // Add active items first (in scanner order)
                 foreach (var item in activeItems)
                 {
                     QuoteItems.Add(item);
                 }
-                
+
                 // Add dropped items below active ones
                 foreach (var item in droppedItems)
                 {
@@ -587,7 +594,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 SelectSearchResult(selectedResult);
                 // Continue to add the symbol (SelectSearchResult sets NewSymbolText)
             }
-            
+
             var symbol = NewSymbolText?.Trim().ToUpperInvariant() ?? "";
 
             if (string.IsNullOrWhiteSpace(symbol))
@@ -649,7 +656,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 var latest = fallback.GetLatestSnapshots(new[] { symbol });
                 if (latest.TryGetValue(symbol, out var tick))
                 {
-                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}",
                         symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
                     tick.ApplyTo(rowVm);
                     if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
@@ -657,7 +664,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                         _logger.LogInformation("QuoteViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
                         rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
                     }
-                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}",
                         rowVm.PrevClose, rowVm.LastPrice, symbol);
                 }
                 else
@@ -759,9 +766,9 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         try
         {
             // Try to get service provider if not already set
-            var serviceProvider = _serviceProvider ?? 
+            var serviceProvider = _serviceProvider ??
                 Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
-            
+
             if (serviceProvider == null)
             {
                 _logger.LogError("ServiceProvider is not available - cannot open algo runner");
@@ -786,7 +793,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 {
                     candlestickBuilder.SubscribeSymbol(row.Symbol);
                     _logger.LogInformation("Subscribed {Symbol} to candlestick builder", row.Symbol);
-                    
+
                     // Preload historical candlesticks so MACD can calculate immediately
                     await candlestickBuilder.PreloadCandlesticksAsync(row.Symbol);
                     _logger.LogInformation("Preloaded historical candlesticks for {Symbol}", row.Symbol);
@@ -830,7 +837,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 cciEngine,
                 cciSettingsService,
                 dispatcher);
-                
+
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);
 
@@ -858,7 +865,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         // Clear error when user starts typing
         ErrorMessage = "";
-        
+
         // Trigger search if 2+ characters
         if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
         {
@@ -866,29 +873,29 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             SearchResults.Clear();
             return;
         }
-        
+
         _ = PerformSearchAsync(value);
     }
-    
+
     private async Task PerformSearchAsync(string query)
     {
         // Cancel previous search
         _searchCts?.Cancel();
         _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
-        
+
         try
         {
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
-            
+
             // Try to get symbol search service if not already set
             var symbolSearchService = _symbolSearchService;
             if (symbolSearchService == null)
             {
-                var serviceProvider = _serviceProvider ?? 
+                var serviceProvider = _serviceProvider ??
                     Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
-                
+
                 if (serviceProvider != null)
                 {
                     symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
@@ -897,22 +904,22 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                         _symbolSearchService = symbolSearchService; // Cache it for future use
                     }
                 }
-                
+
                 if (symbolSearchService == null)
                 {
                     _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
                     return;
                 }
             }
-            
+
             if (_searchCts.Token.IsCancellationRequested)
             {
                 return;
             }
-                
+
             IsSearching = true;
             var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
-            
+
             if (!_searchCts.Token.IsCancellationRequested)
             {
                 await _dispatcher.OnUIAsync(() =>
@@ -940,7 +947,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             IsSearching = false;
         }
     }
-    
+
     partial void OnShowSearchResultsChanged(bool value)
     {
     }
@@ -958,8 +965,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private void NavigateSearchResultsUp()
     {
         if (SearchResults.Count == 0) return;
-        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0 
-            ? SearchResults.Count - 1 
+        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0
+            ? SearchResults.Count - 1
             : SelectedSearchResultIndex - 1;
     }
 
@@ -973,7 +980,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _disposed = true;
-        
+
         try
         {
             _searchCts?.Cancel();
@@ -983,8 +990,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
         try
         {
-            _batchTimer?.Stop();
-            _batchTimer?.Dispose();
+            if (_batchTimer != null)
+            {
+                _batchTimer.Tick -= OnBatchTimerTick;
+                _batchTimer.Stop();
+                _batchTimer = null;
+            }
         }
         catch { }
 

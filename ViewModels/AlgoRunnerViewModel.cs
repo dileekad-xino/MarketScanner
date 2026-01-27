@@ -27,6 +27,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly Config.CandlestickConfig? _config;
     private readonly Services.Impl.CciEngine? _cciEngine;
     private readonly ICciSettingsService? _cciSettingsService;
+    private readonly Services.Impl.EmaEngine? _emaEngine;
     private readonly IDispatcherService? _dispatcher;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
@@ -73,6 +74,11 @@ public partial class AlgoRunnerViewModel : ObservableObject
     // Live CCI display property (updates on every tick)
     [ObservableProperty] private double? _liveCciValue;
 
+    // EMA 20 display properties
+    [ObservableProperty] private decimal _ema20Value;
+    [ObservableProperty] private string _ema20Signal = "Hold";
+    [ObservableProperty] private bool _isEma20AbovePrice;
+
     public AlgoRunnerViewModel(
         IAlgoStrategy algorithm,
         ILogger<AlgoRunnerViewModel> logger,
@@ -87,6 +93,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         Config.CandlestickConfig? config = null,
         Services.Impl.CciEngine? cciEngine = null,
         ICciSettingsService? cciSettingsService = null,
+        Services.Impl.EmaEngine? emaEngine = null,
         IDispatcherService? dispatcher = null)
     {
         _algorithm = algorithm;
@@ -102,6 +109,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _config = config;
         _cciEngine = cciEngine;
         _cciSettingsService = cciSettingsService;
+        _emaEngine = emaEngine;
         _dispatcher = dispatcher;
     }
 
@@ -306,9 +314,20 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 return;
 
             // Capture position state on UI thread before processing
-            var positionState = await (_dispatcher?.OnUIAsync(() => 
-                (HasPosition, PositionClosed, _currentTradeId)) 
-                ?? Task.FromResult((HasPosition, PositionClosed, _currentTradeId)));
+            // Use fallback if dispatcher is unavailable or main thread is gone
+            (bool hadPosition, bool wasPositionClosed, int? tradeId) positionState;
+            try
+            {
+                positionState = await (_dispatcher?.OnUIAsync(() => 
+                    (HasPosition, PositionClosed, _currentTradeId)) 
+                    ?? Task.FromResult((HasPosition, PositionClosed, _currentTradeId)));
+            }
+            catch (InvalidOperationException)
+            {
+                // Main thread not available - use safe fallback values
+                // This can happen during app shutdown
+                positionState = (false, false, null);
+            }
             
             var hadPosition = positionState.Item1;
             var wasPositionClosed = positionState.Item2;
@@ -346,6 +365,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     // Update MACD display
                     UpdateMacdDisplay();
 
+                    // Update EMA 20 display
+                    UpdateEma20Display();
+
                     // Align Reason with current indicator values after strategy run
                     UpdateReasonWithIndicatorValues();
 
@@ -379,6 +401,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                     SelectedSymbol.RsiSignal = Result.RsiSignal;
                 }
                 UpdateMacdDisplay();
+                UpdateEma20Display();
                 UpdateReasonWithIndicatorValues();
                 if (shouldOpenPosition)
                 {
@@ -447,7 +470,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         // Start candlestick builder with streaming bars enabled
         _candlestickBuilder.Start(useStreamingBars: true);
 
-        // Subscribe to streaming bars for MACD and RSI updates
+        // Subscribe to streaming bars for MACD, RSI, and EMA 20 updates
         if (_macdEngine != null && _rsiEngine != null && _config != null)
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
@@ -465,6 +488,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 _rsiEngine.UpdateOnBar(symbol, interval, bar.Close, bar.Timestamp);
                 // CCI updates on every bar close (needs High, Low, Close)
                 _cciEngine?.UpdateOnBar(symbol, interval, bar.High, bar.Low, bar.Close, bar.Timestamp);
+
+                // EMA 20 updates on every bar close (real-time monitoring)
+                _emaEngine?.UpdateOnBar(symbol, interval, 20, bar.Close, bar.Timestamp);
 
                 // Update UI with latest MACD values from engine
                 // Update UI with latest MACD values from engine (marshal to UI thread)
@@ -500,6 +526,13 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 {
                     LiveCciValue = cci.Value; // Update live property for UI (preview CCI)
                     UpdateLiveCciDisplay(symbol, cci.Value);
+                }
+
+                // Update EMA 20 display (shows preview EMA 20 for live intrabar updates)
+                var ema20 = _emaEngine?.GetEma(symbol, interval, 20);
+                if (ema20.HasValue)
+                {
+                    _dispatcher?.OnUI(() => UpdateEma20DisplayFromLive(symbol, ema20.Value, bar.Close));
                 }
 
                 ScheduleTickEvaluation();
@@ -556,6 +589,9 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // Commit CCI on candle close (needs High, Low, Close)
                 _cciEngine?.UpdateOnFinalizedCandle(symbol, candle.Interval, candle.High, candle.Low, candle.Close, candle.Timestamp);
 
+                // Commit EMA 20 on candle close
+                _emaEngine?.UpdateOnFinalizedCandle(symbol, candle.Interval, 20, candle.Close, candle.Timestamp);
+
                 // Update UI immediately to the committed close snapshot
                 // Update UI immediately to the committed close snapshot (marshal to UI thread)
                 var macdResult = _macdEngine.GetLastMacd(symbol, candle.Interval);
@@ -589,6 +625,13 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 {
                     LiveCciValue = cci.Value; // Now shows committed CCI (matches TradingView)
                     UpdateLiveCciDisplay(symbol, cci.Value);
+                }
+
+                // Update EMA 20 display to committed value (matches TradingView)
+                var ema20 = _emaEngine?.GetEma(symbol, candle.Interval, 20);
+                if (ema20.HasValue)
+                {
+                    _dispatcher?.OnUI(() => UpdateEma20DisplayFromLive(symbol, ema20.Value, candle.Close));
                 }
 
                 if (_config.EnableMacdDebugLogging && _macdEngine.TryGetState(symbol, candle.Interval, out var stateAfter))
@@ -763,12 +806,20 @@ public partial class AlgoRunnerViewModel : ObservableObject
         else
             cciPart = "CCI=N/A";
 
+        string ema20Part;
+        if (Ema20Value > 0)
+            ema20Part = $"EMA20={Ema20Value:F2} ({Ema20Signal})";
+        else if (Result.Ema20Value.HasValue)
+            ema20Part = $"EMA20={Result.Ema20Value.Value:F2} ({Result.Ema20Signal ?? "N/A"})";
+        else
+            ema20Part = "EMA20=N/A";
+
         var baseReason = Result.Reason ?? string.Empty;
         var idxMon = baseReason.IndexOf("Monitoring:", StringComparison.OrdinalIgnoreCase);
         if (idxMon >= 0)
             baseReason = baseReason[..idxMon].TrimEnd();
 
-        var monitoringPart = $"Monitoring: {macdPart}; {rsiPart}; {cciPart}";
+        var monitoringPart = $"Monitoring: {macdPart}; {rsiPart}; {cciPart}; {ema20Part}";
         var combined = string.IsNullOrWhiteSpace(baseReason) ? monitoringPart : $"{baseReason} | {monitoringPart}";
 
         Result = Result with { Reason = combined };
@@ -791,6 +842,33 @@ public partial class AlgoRunnerViewModel : ObservableObject
             SelectedSymbol.CciValue = cci;
             // CCI signal logic can be added here if needed
             // For now, just update the value
+        }
+    }
+
+    private void UpdateEma20DisplayFromLive(string symbol, double ema20, decimal currentPrice)
+    {
+        if (SelectedSymbol?.Symbol != symbol)
+            return;
+
+        Ema20Value = (decimal)ema20;
+        IsEma20AbovePrice = currentPrice > (decimal)ema20;
+        Ema20Signal = IsEma20AbovePrice ? "Buy" : "Hold";
+
+        // Keep Reason in sync with the same values shown in the indicator
+        UpdateReasonWithIndicatorValues();
+    }
+
+    private void UpdateEma20Display()
+    {
+        if (Result?.Ema20Value == null)
+            return;
+
+        Ema20Value = (decimal)Result.Ema20Value;
+        Ema20Signal = Result.Ema20Signal ?? "Hold";
+        
+        if (Result.Price.HasValue)
+        {
+            IsEma20AbovePrice = Result.Price.Value > Result.Ema20Value.Value;
         }
     }
 

@@ -402,10 +402,12 @@ public partial class ScannerViewModel : ObservableObject
             _logger.LogInformation("Received {Count} rows from scanner", rows.Count);
 
             // Clear existing rows and rebuild from scanner results
-            await _dispatcher.OnUIAsync(() =>
+            try
             {
-                ScannerItems.Clear();
-                _rowLookup.Clear();
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    ScannerItems.Clear();
+                    _rowLookup.Clear();
 
                 foreach (var row in rows)
                 {
@@ -430,7 +432,19 @@ public partial class ScannerViewModel : ObservableObject
 
                 // Store as immutable snapshot (baseline for filtering)
                 _snapshot = ScannerItems.ToArray();
-            });
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                // Main thread not available - log and continue without updating UI
+                // This can happen during app shutdown
+                _logger.LogWarning("Unable to update UI - main thread not available (app may be shutting down)");
+            }
+            catch (Exception ex)
+            {
+                // Log any other exceptions but don't crash
+                _logger.LogWarning(ex, "Error updating UI with scanner results");
+            }
 
             // Re-apply client-side filters (TopN, MinChangePercent, Volume)
             // If MinChgPct filter is active, wait for all symbols to receive initial tick data

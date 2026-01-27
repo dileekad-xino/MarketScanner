@@ -78,23 +78,29 @@ public class AlgoStrategy : IAlgoStrategy
         var cciValue = results.FirstOrDefault(r => r.CciValue.HasValue)?.CciValue;
         var cciSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.CciSignal))?.CciSignal;
 
+        // Get EMA 20 data from results (take first non-null)
+        var ema20Value = results.FirstOrDefault(r => r.Ema20Value.HasValue)?.Ema20Value;
+        var ema20Signal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.Ema20Signal))?.Ema20Signal;
+
         // Extract individual strategy actions
         var macdResult = results.FirstOrDefault(r => r.Macd != null || r.Crossover != CrossoverStatus.None);
         var cciResult = results.FirstOrDefault(r => r.CciValue.HasValue || !string.IsNullOrEmpty(r.CciSignal));
+        var ema20Result = results.FirstOrDefault(r => r.Ema20Value.HasValue || !string.IsNullOrEmpty(r.Ema20Signal));
 
-        // Get actions from MACD and CCI
+        // Get actions from MACD, CCI, and EMA 20
         var macdAction = macdResult?.Action ?? AlgoAction.Hold;
         var cciAction = cciResult?.Action ?? AlgoAction.Hold;
+        var ema20Action = ema20Result?.Action ?? AlgoAction.Hold;
 
         // Decision logic with CCI priority for SELL
         var action = AlgoAction.Hold;
         var summary = "";
 
-        // BUY: Requires both MACD and CCI to agree
-        if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy)
+        // BUY: Requires MACD, CCI, and EMA20 all to agree
+        if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy && ema20Action == AlgoAction.Buy)
         {
             action = AlgoAction.Buy;
-            summary = "BUY: MACD and CCI both agree on BUY";
+            summary = "BUY: MACD, CCI, and EMA20 all agree on BUY";
         }
         // SELL: CCI has priority (if CCI = SELL, final action = SELL, except when CCI = HOLD)
         else if (cciAction == AlgoAction.Sell)
@@ -119,10 +125,10 @@ public class AlgoStrategy : IAlgoStrategy
         else
         {
             action = AlgoAction.Hold;
-            summary = $"HOLD: MACD={macdAction}, CCI={cciAction}";
+            summary = $"HOLD: MACD={macdAction}, CCI={cciAction}, EMA20={ema20Action}";
         }
 
-        var reasons = string.Join(" | ", new[] { macdResult, cciResult }
+        var reasons = string.Join(" | ", new[] { macdResult, cciResult, ema20Result }
             .Where(r => r != null)
             .Select(r => $"[{r.Action}] {r.Reason}"));
 
@@ -140,7 +146,9 @@ public class AlgoStrategy : IAlgoStrategy
             RsiValue: rsiValue,
             RsiSignal: rsiSignal,
             CciValue: cciValue,
-            CciSignal: cciSignal
+            CciSignal: cciSignal,
+            Ema20Value: ema20Value,
+            Ema20Signal: ema20Signal
         );
     }
 }

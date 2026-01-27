@@ -60,7 +60,7 @@
             <ScrollView Grid.Row="1"
                         Orientation="Vertical"
                         VerticalScrollBarVisibility="Default">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                       Padding="5"
                       BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -223,8 +223,39 @@
                         </VerticalStackLayout>
                     </Grid>
 
-                    <!-- P/L Section -->
+                    <!-- EMA 20 Indicator -->
                     <Grid Grid.Row="3"
+                          ColumnDefinitions="*,*"
+                          ColumnSpacing="8"
+                          Margin="0,0,0,10"
+                          IsVisible="{Binding Result, Converter={StaticResource StringToBoolConverter}}">
+                        <VerticalStackLayout Grid.Column="0">
+                            <Label Text="EMA 20"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding Ema20Value, StringFormat='{0:F2}'}"
+                                   TextColor="{StaticResource OnSurfaceDark}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo"/>
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1">
+                            <Label Text="Signal"
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   FontSize="10"/>
+                            <Label Text="{Binding Ema20Signal}"
+                                   FontSize="11"
+                                   FontFamily="Cascadia Mono, Consolas, Menlo">
+                                <Label.Triggers>
+                                    <DataTrigger TargetType="Label" Binding="{Binding IsEma20AbovePrice}" Value="True">
+                                        <Setter Property="TextColor" Value="{StaticResource PositiveGreen}"/>
+                                    </DataTrigger>
+                                </Label.Triggers>
+                            </Label>
+                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- P/L Section -->
+                    <Grid Grid.Row="4"
                           ColumnDefinitions="*,*,*"
                           ColumnSpacing="8"
                           Margin="0,0,0,10"
@@ -262,7 +293,7 @@
                     </Grid>
 
                     <!-- Buttons -->
-                    <Grid Grid.Row="4"
+                    <Grid Grid.Row="5"
                           ColumnDefinitions="*,*"
                           ColumnSpacing="8">
                         <Button Grid.Column="0"
@@ -292,7 +323,7 @@
                     </Grid>
 
                     <!-- Error Message -->
-                    <Label Grid.Row="4"
+                    <Label Grid.Row="5"
                            Text="{Binding ErrorMessage}"
                            IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
                            TextColor="{StaticResource ErrorColor}"
@@ -301,7 +332,7 @@
                            Margin="0,8,0,0"/>
 
                     <!-- Loading Indicator -->
-                    <ActivityIndicator Grid.Row="4"
+                    <ActivityIndicator Grid.Row="5"
                                        IsRunning="{Binding IsRunning}"
                                        IsVisible="{Binding IsRunning}"
                                        Color="{StaticResource PrimaryDark}"

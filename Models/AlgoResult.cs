@@ -34,6 +34,8 @@ public sealed record AlgoResult(
     double? RsiValue = null,
     string? RsiSignal = null,
     double? CciValue = null,
-    string? CciSignal = null
+    string? CciSignal = null,
+    double? Ema20Value = null,
+    string? Ema20Signal = null
 );
 

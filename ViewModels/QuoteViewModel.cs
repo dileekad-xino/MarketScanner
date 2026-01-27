@@ -821,6 +821,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var config = serviceProvider.GetService<MarketScanner.Config.CandlestickConfig>();
             var cciEngine = serviceProvider.GetService<Services.Impl.CciEngine>();
             var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
+            var emaEngine = serviceProvider.GetService<Services.Impl.EmaEngine>();
             var dispatcher = serviceProvider.GetService<IDispatcherService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
@@ -836,6 +837,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 config,
                 cciEngine,
                 cciSettingsService,
+                emaEngine,
                 dispatcher);
 
             // Initialize with selected symbol

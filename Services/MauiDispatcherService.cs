@@ -7,75 +7,96 @@ namespace MarketScanner.Services;
 /// </summary>
 public sealed class MauiDispatcherService : IDispatcherService
 {
+    private static bool IsUiAvailable =>
+        Application.Current?.Dispatcher is not null;
+
     public void OnUI(Action action)
     {
-        if (MainThread.IsMainThread)
-        {
-            action();
+        if (!IsUiAvailable)
             return;
-        }
 
-        try
-        {
-            MainThread.BeginInvokeOnMainThread(action);
-        }
-        catch (InvalidOperationException)
-        {
-            // Main thread not available - skip execution
-            // This can happen during app shutdown or when the main thread is no longer available
-        }
-    }
+        var dispatcher = Application.Current!.Dispatcher;
 
-    public async Task OnUIAsync(Func<Task> action)
-    {
-        if (MainThread.IsMainThread)
+        if (dispatcher.IsDispatchRequired)
         {
-            await action();
-            return;
+            dispatcher.Dispatch(() =>
+            {
+                try { action(); } catch { }
+            });
         }
-
-        try
+        else
         {
-            await MainThread.InvokeOnMainThreadAsync(action);
-        }
-        catch (InvalidOperationException)
-        {
-            // UI thread is gone → drop work
+            try { action(); } catch { }
         }
     }
 
     public Task OnUIAsync(Action action)
-    {
-        return OnUIAsync(() =>
+        => OnUIAsync(() =>
         {
             action();
             return Task.CompletedTask;
         });
+
+    public async Task OnUIAsync(Func<Task> action)
+    {
+        if (!IsUiAvailable)
+            return;
+
+        var dispatcher = Application.Current!.Dispatcher;
+
+        if (!dispatcher.IsDispatchRequired)
+        {
+            try { await action(); } catch { }
+            return;
+        }
+
+        var tcs = new TaskCompletionSource();
+
+        dispatcher.Dispatch(async () =>
+        {
+            try
+            {
+                await action();
+                tcs.TrySetResult();
+            }
+            catch
+            {
+                tcs.TrySetResult();
+            }
+        });
+
+        await tcs.Task;
     }
 
     public async Task<T> OnUIAsync<T>(Func<T> func)
     {
-        if (MainThread.IsMainThread)
+        if (!IsUiAvailable)
+            return default!;
+
+        var dispatcher = Application.Current!.Dispatcher;
+
+        if (!dispatcher.IsDispatchRequired)
         {
-            return func();
+            try { return func(); } catch { return default!; }
         }
-        else
+
+        var tcs = new TaskCompletionSource<T>();
+
+        dispatcher.Dispatch(() =>
         {
             try
             {
-                return await MainThread.InvokeOnMainThreadAsync(func);
+                tcs.TrySetResult(func());
             }
-            catch (InvalidOperationException)
+            catch
             {
-                // Main thread not available - execute on current thread as fallback
-                // return func() ;
-                return default!;
+                tcs.TrySetResult(default!);
             }
-        }
+        });
+
+        return await tcs.Task;
     }
 
-    public async Task InvokeAsync(Func<Task> action)
-    {
-        await OnUIAsync(action);
-    }
+    public Task InvokeAsync(Func<Task> action) => OnUIAsync(action);
 }
+

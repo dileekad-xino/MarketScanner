@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using MarketScanner.Services;
@@ -158,17 +158,20 @@ namespace MarketScanner
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.RsiEngine>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.CciEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.EmaEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.Ema20AlgoStrategy>();
 
-            // Register composite strategy that combines RSI, MACD, and CCI
+            // Register composite strategy that combines RSI, MACD, CCI, and EMA 20
             builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
             {
                 var rsiStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.RSIAlgoStrategy>();
                 var macdStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.MacdStrategy>();
                 var cciStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.CciAlgoStrategy>();
+                var ema20Strategy = sp.GetRequiredService<MarketScanner.Services.Impl.Ema20AlgoStrategy>();
                 var logger = sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.AlgoStrategy>>();
                 
                 return new MarketScanner.Services.Impl.AlgoStrategy(
-                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy },
+                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy, ema20Strategy },
                     logger);
             });
 

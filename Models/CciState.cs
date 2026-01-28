@@ -12,7 +12,7 @@ public class CciState
 
     // Committed state (candle-close, matches TradingView long-run)
     public double CommittedSma { get; set; }  // Simple Moving Average of Typical Price
-    public double CommittedMeanDeviation { get; set; }  // Mean Deviation
+    public double CommittedMeanDeviation { get; set; }  // The Mean Deviation
     public double CommittedLastTypicalPrice { get; set; }  // Last Typical Price (H+L+C)/3
     public DateTime CommittedLastTimestamp { get; set; }
     

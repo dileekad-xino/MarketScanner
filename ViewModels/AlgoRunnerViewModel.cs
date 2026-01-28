@@ -301,7 +301,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
-            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            bool hasOpenPosition = HasPosition && !PositionClosed;
+            Result = await _algorithm.ExecuteAsync(SelectedSymbol, hasOpenPosition, _cancellationTokenSource.Token);
             if (Result != null && SelectedSymbol != null)
             {
                 SelectedSymbol.RsiValue = Result.RsiValue;
@@ -455,16 +456,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
         _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
 
-        // Request streaming historical bars for MACD and RSI (more stable than tick-by-tick)
+        // Request streaming historical bars for MACD and RSI (bar size must match candlestick/indicator interval)
         if (_ibkrGatewayService != null)
         {
-            // Use 5-second bars for live updates (adjust based on your needs)
+            int barSeconds = _config?.IntervalSeconds ?? 60;
             _ibkrGatewayService.RequestStreamingHistoricalBars(
                 SelectedSymbol.Symbol,
-                barSizeSeconds: 5,  // 5-second bars
+                barSizeSeconds: barSeconds,
                 days: 1             // Get 1 day of history + live updates
             );
-            _logger.LogInformation("Requested streaming historical bars for {Symbol} (5-second bars) for MACD and RSI", SelectedSymbol.Symbol);
+            _logger.LogInformation("Requested streaming historical bars for {Symbol} ({BarSeconds}s bars) for MACD and RSI", SelectedSymbol.Symbol, barSeconds);
         }
 
         // Start candlestick builder with streaming bars enabled

@@ -23,16 +23,16 @@ public class AlgoStrategy : IAlgoStrategy
         _logger = logger;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
     {
         try
         {
             // Execute all strategies in parallel
-            var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, ct));
+            var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, hasOpenPosition, ct));
             var results = await Task.WhenAll(tasks);
 
-            // Combine results
-            var combinedResult = CombineResults(results, symbol);
+            // Combine results with position-aware logic
+            var combinedResult = CombineResults(results, symbol, hasOpenPosition);
 
             return combinedResult;
         }
@@ -49,7 +49,7 @@ public class AlgoStrategy : IAlgoStrategy
         }
     }
 
-    private AlgoResult CombineResults(IReadOnlyList<AlgoResult> results, ScannerRowViewModel symbol)
+    private AlgoResult CombineResults(IReadOnlyList<AlgoResult> results, ScannerRowViewModel symbol, bool hasOpenPosition)
     {
         if (results.Count == 0)
         {
@@ -92,45 +92,53 @@ public class AlgoStrategy : IAlgoStrategy
         var cciAction = cciResult?.Action ?? AlgoAction.Hold;
         var ema20Action = ema20Result?.Action ?? AlgoAction.Hold;
 
-        // Decision logic with CCI priority for SELL
+        // Position-aware decision: only Buy when flat (all agree Buy), only Sell when in position (all agree Sell)
         var action = AlgoAction.Hold;
         var summary = "";
 
-        // BUY: Requires MACD, CCI, and EMA20 all to agree
-        if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy && ema20Action == AlgoAction.Buy)
+        if (hasOpenPosition)
         {
-            action = AlgoAction.Buy;
-            summary = "BUY: MACD, CCI, and EMA20 all agree on BUY";
-        }
-        // SELL: CCI has priority (if CCI = SELL, final action = SELL, except when CCI = HOLD)
-        else if (cciAction == AlgoAction.Sell)
-        {
-            action = AlgoAction.Sell;
-            if (macdAction == AlgoAction.Sell)
+            // In position: only allow Sell when MACD, CCI, and EMA20 all agree on Sell; otherwise Hold; never Buy
+            if (macdAction == AlgoAction.Sell && cciAction == AlgoAction.Sell && ema20Action == AlgoAction.Sell)
             {
-                summary = "SELL: MACD and CCI both agree on SELL (CCI priority)";
+                action = AlgoAction.Sell;
+                summary = "SELL: In position; MACD, CCI, and EMA20 all agree on SELL";
             }
             else
             {
-                summary = $"SELL: CCI priority overrides MACD {macdAction}";
+                action = AlgoAction.Hold;
+                summary = "HOLD: In position; no full SELL agreement";
             }
         }
-        // Exception: CCI = HOLD and MACD = SELL → HOLD
-        else if (cciAction == AlgoAction.Hold && macdAction == AlgoAction.Sell)
-        {
-            action = AlgoAction.Hold;
-            summary = "HOLD: CCI HOLD overrides MACD SELL";
-        }
-        // All other cases: HOLD
         else
         {
-            action = AlgoAction.Hold;
-            summary = $"HOLD: MACD={macdAction}, CCI={cciAction}, EMA20={ema20Action}";
+            // No position: only allow Buy when MACD, CCI, and EMA20 all agree on Buy; otherwise Hold; never Sell
+            if (macdAction == AlgoAction.Buy && cciAction == AlgoAction.Buy && ema20Action == AlgoAction.Buy)
+            {
+                action = AlgoAction.Buy;
+                summary = "BUY: MACD, CCI, and EMA20 all agree on BUY";
+            }
+            else
+            {
+                action = AlgoAction.Hold;
+                // Display: when no position, show Hold for any Sell (we don't act on sell)
+                var displayMacd = macdAction == AlgoAction.Sell ? AlgoAction.Hold : macdAction;
+                var displayCci = cciAction == AlgoAction.Sell ? AlgoAction.Hold : cciAction;
+                var displayEma20 = ema20Action == AlgoAction.Sell ? AlgoAction.Hold : ema20Action;
+                summary = $"HOLD: MACD={displayMacd}, CCI={displayCci}, EMA20={displayEma20}";
+            }
         }
 
+        // Position-aware display: show Hold for Sell when no position (we don't act on sell); show Hold for Buy when in position (we don't act on buy)
         var reasons = string.Join(" | ", new[] { macdResult, cciResult, ema20Result }
             .Where(r => r != null)
-            .Select(r => $"[{r.Action}] {r.Reason}"));
+            .Select(r =>
+            {
+                var displayAction = (r!.Action == AlgoAction.Buy && hasOpenPosition) || (r.Action == AlgoAction.Sell && !hasOpenPosition)
+                    ? AlgoAction.Hold
+                    : r.Action;
+                return $"[{displayAction}] {r.Reason}";
+            }));
 
         // Include RSI info in reason for reference (display only, not used in decision)
         var rsiInfo = rsiValue.HasValue ? $" | RSI: {rsiValue.Value:F2} ({rsiSignal ?? "N/A"}) [DISPLAY ONLY]" : "";

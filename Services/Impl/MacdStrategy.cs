@@ -27,7 +27,7 @@ public class MacdStrategy : IAlgoStrategy
         _macdEngine = engine;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
     {
         try
         {

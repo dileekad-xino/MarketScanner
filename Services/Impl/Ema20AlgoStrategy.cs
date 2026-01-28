@@ -32,7 +32,7 @@ public class Ema20AlgoStrategy : IAlgoStrategy
         _emaEngine = engine;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
     {
         try
         {

@@ -13,4 +13,10 @@ public interface IAppShutdownHandler
     /// </summary>
     /// <returns>True if shutdown should proceed, false if user cancelled.</returns>
     Task<bool> HandleShutdownAsync();
+
+    /// <summary>
+    /// Shutdown without UI (e.g. when main window is closing).
+    /// Closes open positions and does not show confirmation.
+    /// </summary>
+    Task HandleShutdownQuietAsync();
 }

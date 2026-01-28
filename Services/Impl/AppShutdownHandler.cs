@@ -73,4 +73,23 @@ public class AppShutdownHandler : IAppShutdownHandler
             return true;
         }
     }
+
+    public async Task HandleShutdownQuietAsync()
+    {
+        try
+        {
+            var runningAlgosWithPositions = _algoRunnerManagerService.AlgoRunners
+                .Where(ar => ar.IsRunning && ar.HasPosition && !ar.PositionClosed)
+                .ToList();
+            if (runningAlgosWithPositions.Count > 0)
+            {
+                _logger.LogInformation("Quiet shutdown: closing {Count} open position(s)", runningAlgosWithPositions.Count);
+                await _positionClosureService.CloseAllOpenPositionsAsync(runningAlgosWithPositions);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during quiet shutdown");
+        }
+    }
 }

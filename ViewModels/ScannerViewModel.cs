@@ -131,8 +131,36 @@ public partial class ScannerViewModel : ObservableObject
     // Market status update timer
     private IDispatcherTimer? _marketStatusTimer;
     // Property change handlers - all use debounced filtering
-    partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
-    partial void OnVolumeMinTextChanged(string value) => DebouncedApply();
+    partial void OnMinChangePercentTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MinChangePercentText={Value}", value ?? "");
+        DebouncedApply();
+    }
+    partial void OnVolumeMinTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: VolumeMinText={Value}", value ?? "");
+        DebouncedApply();
+    }
+    partial void OnTopNChanged(int value)
+    {
+        _logger.LogInformation("Scanner filter changed: TopN={Value}", value);
+        // DebouncedApply is triggered by PropertyChanged handler for TopN
+    }
+    partial void OnExchangeChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: Exchange={Value}", value ?? "");
+        // DebouncedApply is triggered by PropertyChanged handler for Exchange
+    }
+    partial void OnMinPriceTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MinPriceText={Value}", value ?? "");
+        // Price debouncer is triggered by PropertyChanged handler
+    }
+    partial void OnMaxPriceTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MaxPriceText={Value}", value ?? "");
+        // Price debouncer is triggered by PropertyChanged handler
+    }
 
     // Auto-refresh property change handlers
     partial void OnRefreshIntervalSecondsChanged(int oldValue, int newValue)
@@ -210,6 +238,7 @@ public partial class ScannerViewModel : ObservableObject
             // Use longer debounce for price changes to prevent IBKR rescans on each keystroke
             if (e.PropertyName == nameof(MinPriceText) || e.PropertyName == nameof(MaxPriceText))
             {
+                _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (price debouncer)", e.PropertyName);
                 _ = _priceDebouncer.ExecuteAsync(ApplyFiltersAsync);
             }
             else if (e.PropertyName?.StartsWith("Min") == true ||
@@ -218,6 +247,7 @@ public partial class ScannerViewModel : ObservableObject
                         e.PropertyName?.StartsWith("TopN") == true ||
                         e.PropertyName?.StartsWith("Exchange") == true)
             {
+                _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (debounce)", e.PropertyName);
                 DebouncedApply();
             }
         };
@@ -310,7 +340,11 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogInformation("Filters reset to production defaults");
     }
 
-    private void DebouncedApply() => _ = _debounce.ExecuteAsync(ApplyFiltersAsync);
+    private void DebouncedApply()
+    {
+        if (_disposed) return;
+        _ = _debounce.ExecuteAsync(ApplyFiltersAsync);
+    }
 
     [RelayCommand]
     public async Task RefreshAsync()
@@ -735,7 +769,7 @@ public partial class ScannerViewModel : ObservableObject
             }
             else
             {
-                _logger.LogInformation("Significant filter changes detected, triggering re-scan");
+                _logger.LogInformation("Scan-level filter change (e.g. TopN, price, exchange) detected, triggering RefreshAsync for re-scan");
                 await RefreshAsync();
                 return;
             }
@@ -779,6 +813,8 @@ public partial class ScannerViewModel : ObservableObject
             _logger.LogInformation("  {Symbol}: Price=${Price:F2}, Change={Change:F2}%, Volume={Volume:N0}",
                 row.Symbol, row.LastPrice, row.ChangePercent, row.Volume);
         }
+
+        if (_disposed) return;
 
         // Cancel previous filter operation and create new one
         try
@@ -1160,6 +1196,8 @@ public partial class ScannerViewModel : ObservableObject
     /// <summary>
     /// Add all currently visible scanner items to the Quotes panel and switch to the full Quote view.
     /// </summary>
+    private const string DailyPlWindowTitle = "Daily P/L";
+
     [RelayCommand]
     private async Task OpenDailyPlWindowAsync()
     {
@@ -1177,11 +1215,12 @@ public partial class ScannerViewModel : ObservableObject
                 return;
             }
 
-            // Get the current window/page
-            var page = Application.Current?.MainPage;
-            if (page == null)
+            // Reuse existing Daily P/L window if already open
+            var existing = Application.Current?.Windows?.FirstOrDefault(w =>
+                w.Title == DailyPlWindowTitle || w.Page is DailyPlWindowPage);
+            if (existing != null)
             {
-                _logger.LogError("MainPage is not available - cannot open Daily P/L window");
+                ActivateWindow(existing);
                 return;
             }
 
@@ -1189,16 +1228,30 @@ public partial class ScannerViewModel : ObservableObject
             var dailyPlPage = new DailyPlWindowPage(_dailyPlViewModel);
             var dailyPlWindow = new Window(dailyPlPage)
             {
-                Title = "Daily P/L"
+                Title = DailyPlWindowTitle
             };
 
-            // Open the window
             Application.Current?.OpenWindow(dailyPlWindow);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to open Daily P/L window");
         }
+    }
+
+    private static void ActivateWindow(Window window)
+    {
+#if WINDOWS
+        try
+        {
+            var platformView = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
+            platformView?.Activate();
+        }
+        catch
+        {
+            // Ignore if activation fails (e.g. on other platforms)
+        }
+#endif
     }
 
     [RelayCommand]

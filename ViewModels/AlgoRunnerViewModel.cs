@@ -301,7 +301,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
-            Result = await _algorithm.ExecuteAsync(SelectedSymbol, _cancellationTokenSource.Token);
+            bool hasOpenPosition = HasPosition && !PositionClosed;
+            Result = await _algorithm.ExecuteAsync(SelectedSymbol, hasOpenPosition, _cancellationTokenSource.Token);
             if (Result != null && SelectedSymbol != null)
             {
                 SelectedSymbol.RsiValue = Result.RsiValue;
@@ -455,16 +456,16 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _candlestickBuilder.SubscribeSymbol(SelectedSymbol.Symbol);
         _logger.LogInformation("Subscribed symbol {Symbol} to candlestick builder", SelectedSymbol.Symbol);
 
-        // Request streaming historical bars for MACD and RSI (more stable than tick-by-tick)
+        // Request streaming historical bars for MACD and RSI (bar size must match candlestick/indicator interval)
         if (_ibkrGatewayService != null)
         {
-            // Use 5-second bars for live updates (adjust based on your needs)
+            int barSeconds = _config?.IntervalSeconds ?? 60;
             _ibkrGatewayService.RequestStreamingHistoricalBars(
                 SelectedSymbol.Symbol,
-                barSizeSeconds: 5,  // 5-second bars
+                barSizeSeconds: barSeconds,
                 days: 1             // Get 1 day of history + live updates
             );
-            _logger.LogInformation("Requested streaming historical bars for {Symbol} (5-second bars) for MACD and RSI", SelectedSymbol.Symbol);
+            _logger.LogInformation("Requested streaming historical bars for {Symbol} ({BarSeconds}s bars) for MACD and RSI", SelectedSymbol.Symbol, barSeconds);
         }
 
         // Start candlestick builder with streaming bars enabled
@@ -1206,6 +1207,53 @@ public partial class AlgoRunnerViewModel : ObservableObject
         {
             _logger.LogWarning(ex, "Failed to update peak RSI for {Symbol}", SelectedSymbol?.Symbol);
             // Don't throw - allow algo to continue even if update fails
+        }
+    }
+
+    /// <summary>
+    /// Closes the current open position for this algorithm runner.
+    /// Sets exit price to current price, updates position state, and persists to database.
+    /// </summary>
+    public async Task ClosePositionAsync()
+    {
+        // Only close if we have an open position
+        if (!HasPosition || PositionClosed || SelectedSymbol == null || !EntryPrice.HasValue)
+        {
+            _logger.LogInformation("No open position to close for {Symbol}", SelectedSymbol?.Symbol ?? "Unknown");
+            return;
+        }
+
+        try
+        {
+            _logger.LogInformation("Closing position for {Symbol}", SelectedSymbol.Symbol);
+
+            // Get current price
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            
+            // Update position state
+            ExitPrice = currentPrice;
+            PositionClosed = true;
+            HasPosition = false;
+
+            // Update P/L calculations
+            UpdateProfitLoss();
+
+            // Update trade in database if we have a trade ID
+            if (_currentTradeId.HasValue)
+            {
+                await UpdateTradeAsync();
+            }
+            else
+            {
+                _logger.LogWarning("No trade ID found for {Symbol} - position closed but trade not saved in database", SelectedSymbol.Symbol);
+            }
+
+            _logger.LogInformation("Position closed for {Symbol} at {Price:C2}", SelectedSymbol.Symbol, currentPrice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing position for {Symbol}", SelectedSymbol?.Symbol);
+            // Don't throw - allow operation to continue even if position closure fails
         }
     }
 

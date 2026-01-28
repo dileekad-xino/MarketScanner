@@ -40,7 +40,7 @@ public class CciAlgoStrategy : IAlgoStrategy
         _logger = logger;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
     {
         try
         {

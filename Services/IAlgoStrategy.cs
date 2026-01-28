@@ -23,8 +23,9 @@ public interface IAlgoStrategy
     /// Executes the algorithm on the given symbol.
     /// </summary>
     /// <param name="symbol">The symbol to analyze.</param>
+    /// <param name="hasOpenPosition">True if the runner already has an open position in this symbol.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The algorithm result containing buy/sell/hold recommendation.</returns>
-    Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, CancellationToken ct = default);
+    Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default);
 }
 

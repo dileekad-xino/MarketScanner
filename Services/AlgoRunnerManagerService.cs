@@ -9,12 +9,21 @@ namespace MarketScanner.Services;
 public class AlgoRunnerManagerService : ObservableObject
 {
     private readonly ILogger<AlgoRunnerManagerService> _logger;
+    private readonly IConfirmationDialogService _confirmationDialogService;
+    private readonly IPositionClosureService _positionClosureService;
     private readonly List<AlgoRunnerViewModel> _algoRunners = new();
     private const int MaxAlgoRunners = 3;
 
-    public AlgoRunnerManagerService(ILogger<AlgoRunnerManagerService> logger)
+    public AlgoRunnerManagerService(
+        ILogger<AlgoRunnerManagerService> logger,
+        IConfirmationDialogService confirmationDialogService,
+        IPositionClosureService positionClosureService)
     {
-        _logger = logger;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _confirmationDialogService = confirmationDialogService ?? 
+            throw new ArgumentNullException(nameof(confirmationDialogService));
+        _positionClosureService = positionClosureService ?? 
+            throw new ArgumentNullException(nameof(positionClosureService));
     }
 
     public ObservableCollection<AlgoRunnerViewModel> AlgoRunners { get; } = new();
@@ -46,6 +55,23 @@ public class AlgoRunnerManagerService : ObservableObject
         {
             _logger.LogInformation("User cancelled replacing AlgoRunner");
             return false;
+        }
+
+        // Check if the selected algo is running and has an open position
+        if (result.IsRunning && result.HasPosition && !result.PositionClosed)
+        {
+            var symbol = result.SelectedSymbol?.Symbol ?? "Unknown";
+            var shouldReplace = await _confirmationDialogService.ShowReplaceAlgorithmConfirmationAsync(symbol);
+            
+            if (!shouldReplace)
+            {
+                _logger.LogInformation("User cancelled replacing running algo with open position for {Symbol}", symbol);
+                return false;
+            }
+
+            // User confirmed - close the position before replacing
+            _logger.LogInformation("User confirmed replacement - closing position for {Symbol}", symbol);
+            await _positionClosureService.ClosePositionAsync(result);
         }
 
         // Replace the selected one

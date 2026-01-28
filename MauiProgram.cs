@@ -52,6 +52,13 @@ namespace MarketScanner
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ICciSettingsService, CciSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
+            
+            // Position closure and confirmation dialog services
+            builder.Services.AddSingleton<IConfirmationDialogService, Services.Impl.ConfirmationDialogService>();
+            builder.Services.AddSingleton<IPositionClosureService, Services.Impl.PositionClosureService>();
+            builder.Services.AddSingleton<IAppShutdownHandler, Services.Impl.AppShutdownHandler>();
+            
+            // AlgoRunnerManagerService (depends on confirmation and position closure services)
             builder.Services.AddSingleton<Services.AlgoRunnerManagerService>();
 
             // Register database tables after DatabaseInitializer is registered

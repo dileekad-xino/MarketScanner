@@ -1209,6 +1209,53 @@ public partial class AlgoRunnerViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Closes the current open position for this algorithm runner.
+    /// Sets exit price to current price, updates position state, and persists to database.
+    /// </summary>
+    public async Task ClosePositionAsync()
+    {
+        // Only close if we have an open position
+        if (!HasPosition || PositionClosed || SelectedSymbol == null || !EntryPrice.HasValue)
+        {
+            _logger.LogInformation("No open position to close for {Symbol}", SelectedSymbol?.Symbol ?? "Unknown");
+            return;
+        }
+
+        try
+        {
+            _logger.LogInformation("Closing position for {Symbol}", SelectedSymbol.Symbol);
+
+            // Get current price
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            
+            // Update position state
+            ExitPrice = currentPrice;
+            PositionClosed = true;
+            HasPosition = false;
+
+            // Update P/L calculations
+            UpdateProfitLoss();
+
+            // Update trade in database if we have a trade ID
+            if (_currentTradeId.HasValue)
+            {
+                await UpdateTradeAsync();
+            }
+            else
+            {
+                _logger.LogWarning("No trade ID found for {Symbol} - position closed but trade not saved in database", SelectedSymbol.Symbol);
+            }
+
+            _logger.LogInformation("Position closed for {Symbol} at {Price:C2}", SelectedSymbol.Symbol, currentPrice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing position for {Symbol}", SelectedSymbol?.Symbol);
+            // Don't throw - allow operation to continue even if position closure fails
+        }
+    }
+
     public void Dispose()
     {
         // Stop algo monitoring

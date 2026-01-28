@@ -329,10 +329,9 @@ public partial class ScannerViewModel : ObservableObject
 
         _cts = new CancellationTokenSource();
 
-        // Clear state from previous scan to prevent data leakage
-        _rowLookup.Clear();
-        while (_batchedTicks.TryDequeue(out _)) { } // Clear queued ticks
-        _snapshot = Array.Empty<ScannerRowViewModel>(); // Clear snapshot
+        // Do NOT clear _rowLookup/_snapshot here. Clear only when we have new scan results
+        // (inside OnUIAsync below). Otherwise a cancelled or failed ScanAsync would leave
+        // _rowLookup empty and real-time tick updates would stop applying.
 
         try
         {
@@ -460,7 +459,10 @@ public partial class ScannerViewModel : ObservableObject
                 // Note: SyncQuotesToVisibleAsync is called at the end of ApplyFiltersAsync if _linkedQuotes is true
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Refresh cancelled; keeping current scanner rows for real-time updates");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during refresh");

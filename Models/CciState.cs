@@ -28,6 +28,13 @@ public class CciState
     // Previous preview value (for crossover detection if needed)
     public double? PreviousCci { get; set; }
 
+    // Previous committed CCI value (for crossover detection on candle close)
+    public double? PreviousCommittedCci { get; set; }
+
+    // Entry/exit CCI values for momentum crossover strategy
+    public double? EntryCciValue { get; set; }  // CCI value when BUY signal was generated (cross above +100)
+    public double? ExitCciValue { get; set; }   // CCI value when SELL signal was generated (cross below +100)
+
     public int Period { get; set; }
 
     // Computed committed CCI (authoritative, matches TradingView)

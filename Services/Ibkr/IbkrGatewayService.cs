@@ -87,6 +87,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly Subject<TickData> _tickSubject = new();
     public IObservable<TickData> TickStream => _tickSubject.AsObservable();
 
+    // Streaming historical bars for MACD (keepUpToDate=true)
+    private readonly ConcurrentDictionary<int, (string Symbol, string Interval)> _streamingHistReqMetadata = new();
+    private readonly Subject<Candlestick> _streamingBarSubject = new();
+    public IObservable<Candlestick> StreamingBarStream => _streamingBarSubject.AsObservable();
+
     // Scanner events
     public event Func<ScannerSnapshot, Task>? SnapshotReceived;
 
@@ -807,7 +812,96 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
     }
 
+    /// <summary>
+    /// Requests streaming historical bars with keepUpToDate=true for real-time bar updates.
+    /// Used for MACD calculations to get stable bar close prices instead of tick-by-tick data.
+    /// </summary>
+    public void RequestStreamingHistoricalBars(string symbol, int barSizeSeconds, int days = 1)
+    {
+        if (!_connected || _client == null || !_client.IsConnected())
+        {
+            _logger.LogDebug("Skipping streaming historical bars request - IBKR not connected");
+            return;
+        }
 
+        var reqId = GetNextReqId();
+
+        // Convert barSizeSeconds to IBKR format
+        string barSize = barSizeSeconds switch
+        {
+            5 => "5 secs",
+            10 => "10 secs",
+            15 => "15 secs",
+            30 => "30 secs",
+            60 => "1 min",
+            120 => "2 mins",
+            300 => "5 mins",
+            _ => $"{barSizeSeconds} secs"
+        };
+
+        var interval = GetIntervalString(barSizeSeconds);
+        _streamingHistReqMetadata[reqId] = (symbol, interval);
+
+        var contract = new Contract
+        {
+            Symbol = symbol,
+            SecType = "STK",
+            Exchange = "SMART",
+            Currency = "USD"
+        };
+
+        try
+        {
+            _client.reqHistoricalData(
+                reqId,
+                contract,
+                "",                    // endDateTime: empty = current time
+                $"{days} D",           // duration: number of days
+                barSize,               // barSize: "5 secs", "1 min", etc.
+                "TRADES",              // whatToShow: trade data
+                0,                     // useRTH: include extended hours (pre/post) so keepUpToDate can stream outside RTH
+                1,                     // formatDate: string format
+                true,                  // keepUpToDate: TRUE = streaming updates via historicalDataUpdate
+                null                   // chartOptions
+            );
+            _logger.LogInformation("Requested streaming historical bars for {Symbol} (reqId={ReqId}, barSize={BarSize}, days={Days})",
+                symbol, reqId, barSize, days);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to request streaming historical bars for {Symbol}", symbol);
+            _streamingHistReqMetadata.TryRemove(reqId, out _);
+        }
+    }
+
+    /// <summary>
+    /// Cancels streaming historical bars for a symbol.
+    /// </summary>
+    public void CancelStreamingHistoricalBars(string symbol)
+    {
+        var reqId = _streamingHistReqMetadata.FirstOrDefault(kvp => kvp.Value.Symbol == symbol).Key;
+        if (reqId != 0)
+        {
+            _client?.cancelHistoricalData(reqId);
+            _streamingHistReqMetadata.TryRemove(reqId, out _);
+            _logger.LogInformation("Cancelled streaming historical bars for {Symbol} (reqId={ReqId})", symbol, reqId);
+        }
+    }
+
+    private string GetIntervalString(int seconds)
+    {
+        return seconds switch
+        {
+            5 => "5s",
+            10 => "10s",
+            15 => "15s",
+            30 => "30s",
+            60 => "1min",
+            120 => "2min",
+            300 => "5min",
+            _ => $"{seconds}s"
+        };
+    }
 
     #endregion
 
@@ -986,7 +1080,48 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
             candleBuffer.Add(candle);
             _logger.LogDebug("historicalData: RAW={Raw} ET → UTC={Utc}", bar.Time, timestamp);
+            return; // Don't process as regular historical data
+        }
 
+        // Check if this is a streaming historical data request (initial bars)
+        if (_streamingHistReqMetadata.TryGetValue(reqId, out var streamingMetadata))
+        {
+            // This is the initial historical data for streaming request
+            // Parse and emit as streaming bar (same as historicalDataUpdate)
+            DateTime timestamp;
+            string[] formats = {
+                "yyyyMMdd  HH:mm:ss",
+                "yyyyMMdd HH:mm:ss",
+                "yyyyMMdd"
+            };
+
+            if (DateTime.TryParseExact(
+                    bar.Time,
+                    formats,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var localTime))
+            {
+                var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Local);
+                timestamp = unspecified.ToUniversalTime();
+
+                var candle = new Candlestick(
+                    Symbol: streamingMetadata.Symbol,
+                    Open: (decimal)bar.Open,
+                    High: (decimal)bar.High,
+                    Low: (decimal)bar.Low,
+                    Close: (decimal)bar.Close,
+                    Volume: bar.Volume,
+                    Timestamp: timestamp,
+                    Interval: streamingMetadata.Interval
+                );
+
+                // Emit as streaming bar update
+                _streamingBarSubject.OnNext(candle);
+                _logger.LogInformation("historicalData (streaming): {Symbol} - O={Open}, H={High}, L={Low}, C={Close}, V={Volume}, T={Time:o}",
+                    streamingMetadata.Symbol, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume, timestamp);
+            }
+            return; // Don't process as regular historical data
         }
 
         // Original logic for average volume / prev close
@@ -1033,6 +1168,18 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             return;
         }
 
+        // Check if this is a streaming historical data request
+        // For streaming requests, historicalDataEnd just means initial historical data is complete
+        // Streaming updates continue via historicalDataUpdate, so don't treat this as the end
+        if (_streamingHistReqMetadata.TryGetValue(reqId, out var streamingMetadata))
+        {
+            _logger.LogInformation("historicalDataEnd (streaming): {Symbol} (reqId={ReqId}) - Initial historical data complete, streaming updates will continue via historicalDataUpdate (startDate={StartDate}, endDate={EndDate})",
+                streamingMetadata.Symbol, reqId, startDate, endDate);
+            // Don't remove from _streamingHistReqMetadata - keep it active for historicalDataUpdate callbacks
+            return; // Don't process as regular historical data end
+        }
+
+        // Original logic for regular historical data requests
         if (!_histReqToSymbol.TryGetValue(reqId, out var symbol))
         {
             _logger.LogWarning("historicalDataEnd: Received end for unknown reqId={ReqId}", reqId);
@@ -1239,7 +1386,56 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void updateNewsBulletin(int msgId, int msgType, string message, string origExchange) { }
     public void managedAccounts(string accountsList) { }
     public void receiveFA(int faDataType, string faXmlData) { }
-    public void historicalDataUpdate(int reqId, Bar bar) { }
+    public void historicalDataUpdate(int reqId, Bar bar)
+    {
+        // Check if this is a streaming historical data request
+        if (!_streamingHistReqMetadata.TryGetValue(reqId, out var metadata))
+        {
+            // Not a streaming request, ignore
+            return;
+        }
+
+        // Parse timestamp from bar.Time (same logic as historicalData callback)
+        DateTime timestamp;
+        string[] formats = {
+            "yyyyMMdd  HH:mm:ss",
+            "yyyyMMdd HH:mm:ss",
+            "yyyyMMdd"
+        };
+
+        if (DateTime.TryParseExact(
+                bar.Time,
+                formats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var localTime))
+        {
+            var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Local);
+            timestamp = unspecified.ToUniversalTime();
+        }
+        else
+        {
+            _logger.LogWarning("Could not parse timestamp in historicalDataUpdate: {Time}", bar.Time);
+            return;
+        }
+
+        // Create Candlestick from bar data
+        var candle = new Candlestick(
+            Symbol: metadata.Symbol,
+            Open: (decimal)bar.Open,
+            High: (decimal)bar.High,
+            Low: (decimal)bar.Low,
+            Close: (decimal)bar.Close,
+            Volume: bar.Volume,
+            Timestamp: timestamp,
+            Interval: metadata.Interval
+        );
+
+        // Emit the streaming bar update
+        _streamingBarSubject.OnNext(candle);
+        _logger.LogInformation("historicalDataUpdate: {Symbol} - O={Open}, H={High}, L={Low}, C={Close}, V={Volume}, T={Time:o}",
+            metadata.Symbol, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume, timestamp);
+    }
     public void scannerParameters(string xml) { }
     public void realtimeBar(int reqId, long time, double open, double high, double low, double close, long volume, double WAP, int count) { }
     public void fundamentalData(int reqId, string data) { }

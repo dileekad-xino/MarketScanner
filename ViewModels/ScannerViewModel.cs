@@ -13,8 +13,9 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 using Microsoft.Maui.Controls;
+using MarketScanner.Views;
 using MarketScanner.Views.Dialogs;
-
+using Microsoft.Maui.Dispatching;
 namespace MarketScanner.ViewModels;
 
 public partial class ScannerViewModel : ObservableObject
@@ -26,6 +27,7 @@ public partial class ScannerViewModel : ObservableObject
     private readonly ITradeService _tradeService;
     private readonly IRsiSettingsService _rsiSettingsService;
     private readonly IAlgoStrategy _algoStrategy;
+    private readonly Services.AlgoRunnerManagerService? _algoRunnerManager;
     private WatchlistViewModel? _watchlistViewModel;
     private QuoteViewModel? _quoteViewModel;
     private DailyPlViewModel? _dailyPlViewModel;
@@ -48,7 +50,7 @@ public partial class ScannerViewModel : ObservableObject
 
     // UI batching for ultra-smooth updates (60 FPS)
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
-    private readonly System.Timers.Timer _batchTimer;
+    private IDispatcherTimer? _batchTimer;
     private readonly Dictionary<string, ScannerRowViewModel> _rowLookup = new();
     private bool _uiReady = false;
 
@@ -99,39 +101,20 @@ public partial class ScannerViewModel : ObservableObject
     [ObservableProperty] private bool _autoRefreshEnabled = false;
     [ObservableProperty] private int _refreshIntervalSeconds = 60; // default 60
 
-    // View switching properties
-    [ObservableProperty] private bool _isInScannerView = true;
-    [ObservableProperty] private bool _isInWatchlistView = false;
-    [ObservableProperty] private bool _isInQuoteView = false;
-    [ObservableProperty] private bool _isInDailyPlView = false;
-
-    // Computed property for filter panel visibility
-    public bool ShowFiltersPanel => IsInScannerView;
-
     // Expose ViewModels for binding
     public WatchlistViewModel? WatchlistViewModel => _watchlistViewModel;
     public QuoteViewModel? QuoteViewModel => _quoteViewModel;
     public DailyPlViewModel? DailyPlViewModel => _dailyPlViewModel;
 
-    // Property changed handler for view switching
-    partial void OnIsInWatchlistViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInWatchlistView changed to: {Value}, WatchlistViewModel is null: {IsNull}",
-            value, _watchlistViewModel == null);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
+    // Expose AlgoRunners collection for binding
+    public ObservableCollection<AlgoRunnerViewModel> AlgoRunners =>
+        _algoRunnerManager?.AlgoRunners ?? new ObservableCollection<AlgoRunnerViewModel>();
 
-    partial void OnIsInScannerViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInScannerView changed to: {Value}", value);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
-
-    partial void OnIsInDailyPlViewChanged(bool value)
-    {
-        _logger.LogInformation("IsInDailyPlView changed to: {Value}", value);
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-    }
+    // Properties for "more algos" indicator
+    public bool HasMoreAlgos => _algoRunnerManager != null && _algoRunnerManager.Count > 3;
+    public string MoreAlgosText => _algoRunnerManager != null && _algoRunnerManager.Count > 3
+        ? $"+ {_algoRunnerManager.Count - 3} more algos"
+        : "";
 
     // Options for pickers
 
@@ -146,11 +129,38 @@ public partial class ScannerViewModel : ObservableObject
     private Task? _autoTask;
 
     // Market status update timer
-    private System.Timers.Timer? _marketStatusTimer;
-
+    private IDispatcherTimer? _marketStatusTimer;
     // Property change handlers - all use debounced filtering
-    partial void OnMinChangePercentTextChanged(string value) => DebouncedApply();
-    partial void OnVolumeMinTextChanged(string value) => DebouncedApply();
+    partial void OnMinChangePercentTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MinChangePercentText={Value}", value ?? "");
+        DebouncedApply();
+    }
+    partial void OnVolumeMinTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: VolumeMinText={Value}", value ?? "");
+        DebouncedApply();
+    }
+    partial void OnTopNChanged(int value)
+    {
+        _logger.LogInformation("Scanner filter changed: TopN={Value}", value);
+        // DebouncedApply is triggered by PropertyChanged handler for TopN
+    }
+    partial void OnExchangeChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: Exchange={Value}", value ?? "");
+        // DebouncedApply is triggered by PropertyChanged handler for Exchange
+    }
+    partial void OnMinPriceTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MinPriceText={Value}", value ?? "");
+        // Price debouncer is triggered by PropertyChanged handler
+    }
+    partial void OnMaxPriceTextChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: MaxPriceText={Value}", value ?? "");
+        // Price debouncer is triggered by PropertyChanged handler
+    }
 
     // Auto-refresh property change handlers
     partial void OnRefreshIntervalSecondsChanged(int oldValue, int newValue)
@@ -181,7 +191,8 @@ public partial class ScannerViewModel : ObservableObject
         IWatchlistService watchlistService,
         ITradeService tradeService,
         IRsiSettingsService rsiSettingsService,
-        IAlgoStrategy algoStrategy)
+        IAlgoStrategy algoStrategy,
+        Services.AlgoRunnerManagerService? algoRunnerManager = null)
     {
         _scanner = scanner;
         _dispatcher = dispatcher;
@@ -190,11 +201,14 @@ public partial class ScannerViewModel : ObservableObject
         _tradeService = tradeService;
         _rsiSettingsService = rsiSettingsService;
         _algoStrategy = algoStrategy;
+        _algoRunnerManager = algoRunnerManager;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
-        _batchTimer = new System.Timers.Timer(BatchIntervalMs);
-        _batchTimer.Elapsed += (_, _) => FlushBatchedTicks();
-        _batchTimer.AutoReset = true;
+        _batchTimer = Application.Current.Dispatcher.CreateTimer();
+        _batchTimer.Interval = TimeSpan.FromMilliseconds(BatchIntervalMs);
+        _batchTimer.IsRepeating = true;
+        _batchTimer.Tick += OnBatchTimerTick;
+
         // Don't start timer yet - wait for UI to be ready
 
         // Set production defaults AFTER timer is initialized
@@ -224,6 +238,7 @@ public partial class ScannerViewModel : ObservableObject
             // Use longer debounce for price changes to prevent IBKR rescans on each keystroke
             if (e.PropertyName == nameof(MinPriceText) || e.PropertyName == nameof(MaxPriceText))
             {
+                _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (price debouncer)", e.PropertyName);
                 _ = _priceDebouncer.ExecuteAsync(ApplyFiltersAsync);
             }
             else if (e.PropertyName?.StartsWith("Min") == true ||
@@ -232,6 +247,7 @@ public partial class ScannerViewModel : ObservableObject
                         e.PropertyName?.StartsWith("TopN") == true ||
                         e.PropertyName?.StartsWith("Exchange") == true)
             {
+                _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (debounce)", e.PropertyName);
                 DebouncedApply();
             }
         };
@@ -245,6 +261,56 @@ public partial class ScannerViewModel : ObservableObject
         // Initialize market status and set up periodic updates
         UpdateMarketStatus();
         SetupMarketStatusTimer();
+
+        // Initialize all ViewModels on startup since they're always visible in tiled layout
+        InitializeWatchlistView();
+        InitializeQuoteView();
+        InitializeDailyPlView();
+
+        // Subscribe to AlgoRunner close events if manager is available
+        if (_algoRunnerManager != null)
+        {
+            // Subscribe to collection changes to handle CloseTileRequested events
+            _algoRunnerManager.AlgoRunners.CollectionChanged += (sender, e) =>
+            {
+                if (e.NewItems != null)
+                {
+                    foreach (AlgoRunnerViewModel algoRunner in e.NewItems)
+                    {
+                        algoRunner.CloseTileRequested += OnAlgoRunnerCloseRequested;
+                    }
+                }
+                if (e.OldItems != null)
+                {
+                    foreach (AlgoRunnerViewModel algoRunner in e.OldItems)
+                    {
+                        algoRunner.CloseTileRequested -= OnAlgoRunnerCloseRequested;
+                    }
+                }
+                // Notify that computed properties have changed
+                OnPropertyChanged(nameof(HasMoreAlgos));
+                OnPropertyChanged(nameof(MoreAlgosText));
+                OnPropertyChanged(nameof(AlgoRunners));
+            };
+
+            // Also subscribe to property changes on the manager itself
+            _algoRunnerManager.PropertyChanged += (sender, e) =>
+            {
+                if (e.PropertyName == nameof(Services.AlgoRunnerManagerService.Count))
+                {
+                    OnPropertyChanged(nameof(HasMoreAlgos));
+                    OnPropertyChanged(nameof(MoreAlgosText));
+                }
+            };
+        }
+    }
+
+    private void OnAlgoRunnerCloseRequested(object? sender, EventArgs e)
+    {
+        if (sender is AlgoRunnerViewModel algoRunner && _algoRunnerManager != null)
+        {
+            _algoRunnerManager.RemoveAlgoRunner(algoRunner);
+        }
     }
 
     private void SetProductionDefaults()
@@ -274,7 +340,11 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogInformation("Filters reset to production defaults");
     }
 
-    private void DebouncedApply() => _ = _debounce.ExecuteAsync(ApplyFiltersAsync);
+    private void DebouncedApply()
+    {
+        if (_disposed) return;
+        _ = _debounce.ExecuteAsync(ApplyFiltersAsync);
+    }
 
     [RelayCommand]
     public async Task RefreshAsync()
@@ -293,10 +363,9 @@ public partial class ScannerViewModel : ObservableObject
 
         _cts = new CancellationTokenSource();
 
-        // Clear state from previous scan to prevent data leakage
-        _rowLookup.Clear();
-        while (_batchedTicks.TryDequeue(out _)) { } // Clear queued ticks
-        _snapshot = Array.Empty<ScannerRowViewModel>(); // Clear snapshot
+        // Do NOT clear _rowLookup/_snapshot here. Clear only when we have new scan results
+        // (inside OnUIAsync below). Otherwise a cancelled or failed ScanAsync would leave
+        // _rowLookup empty and real-time tick updates would stop applying.
 
         try
         {
@@ -305,7 +374,7 @@ public partial class ScannerViewModel : ObservableObject
             DebugStatus = "Loading data...";
 
             // Start batch timer now that we're refreshing (UI should be ready)
-            StartBatchTimer();
+            // StartBatchTimer();
 
             _logger.LogInformation("Starting data refresh...");
 
@@ -366,10 +435,12 @@ public partial class ScannerViewModel : ObservableObject
             _logger.LogInformation("Received {Count} rows from scanner", rows.Count);
 
             // Clear existing rows and rebuild from scanner results
-            await MainThread.InvokeOnMainThreadAsync(() =>
+            try
             {
-                ScannerItems.Clear();
-                _rowLookup.Clear();
+                await _dispatcher.OnUIAsync(() =>
+                {
+                    ScannerItems.Clear();
+                    _rowLookup.Clear();
 
                 foreach (var row in rows)
                 {
@@ -394,7 +465,19 @@ public partial class ScannerViewModel : ObservableObject
 
                 // Store as immutable snapshot (baseline for filtering)
                 _snapshot = ScannerItems.ToArray();
-            });
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                // Main thread not available - log and continue without updating UI
+                // This can happen during app shutdown
+                _logger.LogWarning("Unable to update UI - main thread not available (app may be shutting down)");
+            }
+            catch (Exception ex)
+            {
+                // Log any other exceptions but don't crash
+                _logger.LogWarning(ex, "Error updating UI with scanner results");
+            }
 
             // Re-apply client-side filters (TopN, MinChangePercent, Volume)
             // If MinChgPct filter is active, wait for all symbols to receive initial tick data
@@ -410,7 +493,10 @@ public partial class ScannerViewModel : ObservableObject
                 // Note: SyncQuotesToVisibleAsync is called at the end of ApplyFiltersAsync if _linkedQuotes is true
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Refresh cancelled; keeping current scanner rows for real-time updates");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during refresh");
@@ -465,7 +551,7 @@ public partial class ScannerViewModel : ObservableObject
         var rows = new List<ScannerRowViewModel>();
         int scannerItemsCount = 0;
         int snapshotCount = 0;
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await _dispatcher.OnUIAsync(() =>
         {
             // Clear ScannerItems BEFORE building snapshot to ensure clean state
             ScannerItems.Clear();
@@ -524,72 +610,62 @@ public partial class ScannerViewModel : ObservableObject
 
     private void FlushBatchedTicks()
     {
-        if (_batchedTicks.Count == 0 || !_uiReady) return;
+        if (!_uiReady) return;
 
-        try
+        _dispatcher.OnUI(() =>
         {
-            _dispatcher.OnUI(() =>
-            {
-                var processedCount = 0;
-                var updatedSymbols = new HashSet<string>();
+            if (_disposed || !_uiReady) return;
 
-                while (_batchedTicks.TryDequeue(out var tick) && processedCount < MaxBatchSize)
-                {
-                    // Only process ticks for symbols in our snapshot - skip filtered-out symbols
-                    if (!_rowLookup.TryGetValue(tick.Symbol, out var rowVm))
-                    {
-                        // Symbol not in snapshot - skip this tick (it's filtered out)
-                        continue;
-                    }
-                    tick.ApplyTo(rowVm);  // In-place update!
-                    // RelativeVolume is auto-calculated in ScannerRowViewModel
-                    updatedSymbols.Add(tick.Symbol);
+            var processedCount = 0;
+            var updatedSymbols = new HashSet<string>();
+
+            while (_batchedTicks.TryDequeue(out var tick) &&
+                   processedCount < MaxBatchSize)
+            {
+                if (_disposed) return;
+                if (!_rowLookup.TryGetValue(tick.Symbol, out var rowVm))
+                    continue;
+
+                tick.ApplyTo(rowVm);
+
+                if (updatedSymbols.Add(tick.Symbol))
                     processedCount++;
 
-                    // Check if this completes initial tick loading for MinChgPct filter
-                    if (_pendingInitialTicks != null && rowVm.PrevClose > 0 && _pendingInitialTicks.Remove(tick.Symbol))
+                if (_pendingInitialTicks != null &&
+                    rowVm.PrevClose > 0 &&
+                    _pendingInitialTicks.Remove(tick.Symbol))
+                {
+                    if (_pendingInitialTicks.Count == 0)
                     {
-                        if (_pendingInitialTicks.Count == 0)
+                        _pendingInitialTicks = null;
+
+                        _ = _dispatcher.OnUIAsync(async () =>
                         {
-                            _logger.LogInformation("All {Total} initial ticks received, applying MinChgPct filter", ScannerItems.Count);
-                            _pendingInitialTicks = null;
-                            _ = Task.Run(async () => await ApplyFiltersAsync());
-                        }
-                        else if (_pendingInitialTicks.Count % 10 == 0)
-                        {
-                            _logger.LogDebug("Waiting for {Pending} more ticks", _pendingInitialTicks.Count);
-                        }
+                            await ApplyFiltersAsync();
+                        });
                     }
                 }
+            }
 
-                if (processedCount > 0)
-                {
-                    DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
-                }
-            });
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Unable to find main thread"))
-        {
-            // UI not ready yet - just skip this batch
-            _logger.LogDebug("Skipping tick batch - main thread not available yet");
-        }
+            if (!_disposed && processedCount > 0)
+            {
+                DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
+            }
+        });
     }
 
-    private void StartBatchTimer()
+    public void StartBatchTimer()
     {
-        if (_batchTimer == null)
-        {
-            _logger.LogError("Batch timer is null - cannot start");
+        if (_disposed || _batchTimer.IsRunning)
             return;
-        }
 
-        if (!_batchTimer.Enabled)
-        {
-            _uiReady = true;
-            _batchTimer.Start();
-            _logger.LogInformation("Batch timer started - ready for tick updates");
-        }
+        _uiReady = true;
+        _batchTimer.Start();
+
+        _logger.LogInformation("Batch timer started");
     }
+
+
 
     private ScannerRowViewModel GetOrCreateRow(string symbol)
     {
@@ -693,7 +769,7 @@ public partial class ScannerViewModel : ObservableObject
             }
             else
             {
-                _logger.LogInformation("Significant filter changes detected, triggering re-scan");
+                _logger.LogInformation("Scan-level filter change (e.g. TopN, price, exchange) detected, triggering RefreshAsync for re-scan");
                 await RefreshAsync();
                 return;
             }
@@ -738,6 +814,8 @@ public partial class ScannerViewModel : ObservableObject
                 row.Symbol, row.LastPrice, row.ChangePercent, row.Volume);
         }
 
+        if (_disposed) return;
+
         // Cancel previous filter operation and create new one
         try
         {
@@ -774,7 +852,7 @@ public partial class ScannerViewModel : ObservableObject
         }
 
         // Marshal to UI thread once with the FILTERED set
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await _dispatcher.OnUIAsync(() =>
         {
             ScannerItems.Clear();
             foreach (var i in result.TopIndices)
@@ -987,65 +1065,6 @@ public partial class ScannerViewModel : ObservableObject
     /// <summary>
     /// Switches to the scanner view.
     /// </summary>
-    [RelayCommand]
-    private void SwitchToScanner()
-    {
-        IsInScannerView = true;
-        IsInWatchlistView = false;
-        IsInQuoteView = false;
-        IsInDailyPlView = false;
-        PageTitle = "Market Scanner";
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-        _logger.LogInformation("Switched to Scanner view");
-    }
-
-    /// <summary>
-    /// Switches to the watchlist view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToWatchlist()
-    {
-        _logger.LogDebug("SwitchToWatchlist called, _watchlistViewModel is null: {IsNull}", _watchlistViewModel == null);
-
-        // Initialize watchlist ViewModel BEFORE switching to ensure it exists
-        if (_watchlistViewModel == null)
-        {
-            _logger.LogDebug("Creating WatchlistViewModel...");
-            InitializeWatchlistView();
-            _logger.LogDebug("WatchlistViewModel created");
-        }
-
-        _logger.LogDebug("Setting IsInScannerView = false");
-        IsInScannerView = false;
-        _logger.LogDebug("IsInScannerView set to false");
-
-        _logger.LogDebug("Setting IsInWatchlistView = true");
-        IsInScannerView = false;
-        IsInWatchlistView = true;
-        IsInQuoteView = false;
-        IsInDailyPlView = false;
-        _logger.LogDebug("IsInWatchlistView set to true");
-
-        PageTitle = "Watchlists";
-
-        _logger.LogDebug("Calling OnPropertyChanged for ShowFiltersPanel");
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Watchlist view");
-
-        // Resume subscriptions to ensure live updates continue
-        if (_watchlistViewModel != null)
-        {
-            try
-            {
-                await _watchlistViewModel.ResumeSubscriptionsAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resume subscriptions when switching to Watchlist view");
-            }
-        }
-    }
 
     /// <summary>
     /// Initializes the watchlist ViewModel on-demand.
@@ -1088,87 +1107,6 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogInformation("Watchlist view initialized, database loading in background");
     }
 
-    /// <summary>
-    /// Switches to the quote view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToQuote()
-    {
-        _logger.LogDebug("SwitchToQuote called, _quoteViewModel is null: {IsNull}", _quoteViewModel == null);
-
-        // Initialize quote ViewModel BEFORE switching to ensure it exists
-        if (_quoteViewModel == null)
-        {
-            _logger.LogDebug("Creating QuoteViewModel...");
-            InitializeQuoteView();
-            _logger.LogDebug("QuoteViewModel created");
-        }
-
-        IsInScannerView = false;
-        IsInWatchlistView = false;
-        IsInQuoteView = true;
-        IsInDailyPlView = false;
-
-        PageTitle = "Quotes";
-
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Quote view");
-
-        // Resume subscriptions to ensure live updates continue
-        if (_quoteViewModel != null)
-        {
-            try
-            {
-                await _quoteViewModel.ResumeSubscriptionsAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resume subscriptions when switching to Quote view");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Switches to the Daily P/L view.
-    /// </summary>
-    [RelayCommand]
-    private async void SwitchToDailyPl()
-    {
-        _logger.LogDebug("SwitchToDailyPl called, _dailyPlViewModel is null: {IsNull}", _dailyPlViewModel == null);
-
-        // Initialize Daily P/L ViewModel BEFORE switching to ensure it exists
-        if (_dailyPlViewModel == null)
-        {
-            _logger.LogDebug("Creating DailyPlViewModel...");
-            InitializeDailyPlView();
-            _logger.LogDebug("DailyPlViewModel created");
-        }
-
-        IsInScannerView = false;
-        IsInWatchlistView = false;
-        IsInQuoteView = false;
-        IsInDailyPlView = true;
-
-        PageTitle = "Daily P/L";
-
-        OnPropertyChanged(nameof(ShowFiltersPanel));
-
-        _logger.LogInformation("Switched to Daily P/L view");
-
-        // Load trades for the selected date
-        if (_dailyPlViewModel != null)
-        {
-            try
-            {
-                await _dailyPlViewModel.LoadTradesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load trades when switching to Daily P/L view");
-            }
-        }
-    }
 
     /// <summary>
     /// Initializes the quote ViewModel on-demand.
@@ -1258,6 +1196,64 @@ public partial class ScannerViewModel : ObservableObject
     /// <summary>
     /// Add all currently visible scanner items to the Quotes panel and switch to the full Quote view.
     /// </summary>
+    private const string DailyPlWindowTitle = "Daily P/L";
+
+    [RelayCommand]
+    private async Task OpenDailyPlWindowAsync()
+    {
+        try
+        {
+            // Ensure DailyPlViewModel is initialized
+            if (_dailyPlViewModel == null)
+            {
+                InitializeDailyPlView();
+            }
+
+            if (_dailyPlViewModel == null)
+            {
+                _logger.LogError("DailyPlViewModel is not available");
+                return;
+            }
+
+            // Reuse existing Daily P/L window if already open
+            var existing = Application.Current?.Windows?.FirstOrDefault(w =>
+                w.Title == DailyPlWindowTitle || w.Page is DailyPlWindowPage);
+            if (existing != null)
+            {
+                ActivateWindow(existing);
+                return;
+            }
+
+            // Create the Daily P/L window page
+            var dailyPlPage = new DailyPlWindowPage(_dailyPlViewModel);
+            var dailyPlWindow = new Window(dailyPlPage)
+            {
+                Title = DailyPlWindowTitle
+            };
+
+            Application.Current?.OpenWindow(dailyPlWindow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open Daily P/L window");
+        }
+    }
+
+    private static void ActivateWindow(Window window)
+    {
+#if WINDOWS
+        try
+        {
+            var platformView = window.Handler?.PlatformView as Microsoft.UI.Xaml.Window;
+            platformView?.Activate();
+        }
+        catch
+        {
+            // Ignore if activation fails (e.g. on other platforms)
+        }
+#endif
+    }
+
     [RelayCommand]
     private async Task AddAllVisibleToQuotesAsync()
     {
@@ -1290,7 +1286,7 @@ public partial class ScannerViewModel : ObservableObject
             _linkedQuotes = true;
 
             // Switch to full Quotes view (do not alter the scanner right panel state beyond view switch)
-            SwitchToQuote();
+            // View switching removed - all views are now always visible in tiled layout
         }
         catch (Exception ex)
         {
@@ -1395,20 +1391,37 @@ public partial class ScannerViewModel : ObservableObject
     /// </summary>
     private void SetupMarketStatusTimer()
     {
-        _marketStatusTimer = new System.Timers.Timer(60000); // 60 seconds
-        _marketStatusTimer.Elapsed += (_, _) =>
-        {
-            _dispatcher.OnUI(() =>
-            {
-                UpdateMarketStatus();
-            });
-        };
-        _marketStatusTimer.AutoReset = true;
+        if (_marketStatusTimer != null)
+            return;
+
+        _marketStatusTimer = Application.Current.Dispatcher.CreateTimer();
+        _marketStatusTimer.Interval = TimeSpan.FromMinutes(1);
+        _marketStatusTimer.IsRepeating = true;
+
+        _marketStatusTimer.Tick += OnMarketStatusTimerTick;
         _marketStatusTimer.Start();
+
+        _logger.LogInformation("Market status timer started");
     }
+
+    private void OnMarketStatusTimerTick(object? sender, EventArgs e)
+    {
+        if (_disposed)
+            return;
+
+        UpdateMarketStatus();
+    }
+
+
+    private void OnBatchTimerTick(object? sender, EventArgs e)
+    {
+        FlushBatchedTicks();
+    }
+
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
         _snapshot = Array.Empty<ScannerRowViewModel>();
 
@@ -1442,8 +1455,13 @@ public partial class ScannerViewModel : ObservableObject
         // Stop batch timer
         try
         {
-            _batchTimer?.Stop();
-            _batchTimer?.Dispose();
+            if (_batchTimer != null)
+            {
+                _batchTimer.Tick -= OnBatchTimerTick;
+                _batchTimer.Stop();
+                _batchTimer = null;
+            }
+
         }
         catch (ObjectDisposedException) { }
 
@@ -1480,13 +1498,23 @@ public partial class ScannerViewModel : ObservableObject
         // Stop market status timer
         try
         {
-            _marketStatusTimer?.Stop();
-            _marketStatusTimer?.Dispose();
+            if (_marketStatusTimer != null)
+            {
+                _marketStatusTimer.Tick -= OnMarketStatusTimerTick;
+                _marketStatusTimer.Stop();
+                _marketStatusTimer = null;
+            }
+
         }
         catch (ObjectDisposedException) { }
 
         // Stop scanner
-        _ = Task.Run(async () => await _scanner.StopAsync());
+        try
+        {
+            _scanner.StopAsync().ConfigureAwait(false);
+        }
+        catch { }
+
     }
 
     private async Task AnalyzeSelectedRowAsync(ScannerRowViewModel row)
@@ -1498,6 +1526,8 @@ public partial class ScannerViewModel : ObservableObject
             {
                 row.RsiValue = result.RsiValue;
                 row.RsiSignal = result.RsiSignal;
+                row.CciValue = result.CciValue;
+                row.CciSignal = result.CciSignal;
             }
         }
         catch (Exception ex)

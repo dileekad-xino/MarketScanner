@@ -13,24 +13,25 @@
         </ResourceDictionary>
     </ContentView.Resources>
 
-    <!-- Two-row Grid: checkbox+label then the radios; on wide screens it still looks inline because radios are right-aligned -->
-    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*" ColumnSpacing="8" RowSpacing="8" Padding="0">
-
+    <!-- Single horizontal row: checkbox, label, and radio buttons inline -->
+    <HorizontalStackLayout Spacing="0" VerticalOptions="Center" Padding="0">
         <!-- Checkbox -->
-        <CheckBox Grid.Row="0" Grid.Column="0"
-                  IsChecked="{Binding AutoRefreshEnabled, Mode=TwoWay}" 
-                  VerticalOptions="Center" />
+        <CheckBox IsChecked="{Binding AutoRefreshEnabled, Mode=TwoWay}" 
+                  VerticalOptions="Center"
+                  Margin="0,0,-75,0" />
 
         <!-- Label -->
-        <Label Grid.Row="0" Grid.Column="1"
-               Text="Auto-refresh every"
+        <Label Text="Auto-refresh every"
                TextColor="{DynamicResource TextPrimary}"
-               VerticalTextAlignment="Center" />
+               VerticalTextAlignment="Center"
+               VerticalOptions="Center"
+               HorizontalOptions="Start"
+               Margin="-4,0,0,0"
+               FontSize="11" />
 
         <!-- Segmented radio container -->
-        <Border Grid.Row="1" Grid.ColumnSpan="2" Style="{DynamicResource SegmentHost}">
-            <!-- Flex wraps on small widths; never clips the 60s button -->
-            <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Center" AlignContent="Start" JustifyContent="Start">
+        <Border Style="{DynamicResource SegmentHost}">
+            <FlexLayout Direction="Row" Wrap="NoWrap" AlignItems="Center" AlignContent="Start" JustifyContent="Start">
                 <RadioButton Style="{DynamicResource ChipRadio}" GroupName="AutoRefreshInterval"
                              Content="30s"
                              IsChecked="{Binding RefreshIntervalSeconds, Mode=TwoWay,
@@ -41,5 +42,5 @@
                                          Converter={StaticResource EqInt}, ConverterParameter=60}"/>
             </FlexLayout>
         </Border>
-    </Grid>
+    </HorizontalStackLayout>
 </ContentView>

@@ -5,9 +5,9 @@ namespace MarketScanner.Models;
 /// </summary>
 public class RsiSettings
 {
-    public int Period { get; set; } = 14;
-    public double Oversold { get; set; } = 35.0;
-    public double Overbought { get; set; } = 65.0;
+    public int Period { get; set; } = 14;  // Default for 1m, but will be auto-adjusted based on timeframe
+    public double Oversold { get; set; } = 40.0;  // Updated to match professional intraday logic
+    public double Overbought { get; set; } = 75.0;  // Updated to match professional intraday logic
     public int HistoricalDays { get; set; } = 2;
     
     // Trailing Stop Configuration
@@ -24,9 +24,9 @@ public class RsiSettings
 
     public static RsiSettings CreateDefaults() => new()
     {
-        Period = 14,
-        Oversold = 35.0,
-        Overbought = 65.0,
+        Period = 14,  // Default for 1m, but will be auto-adjusted based on timeframe
+        Oversold = 40.0,  // Updated to match professional intraday logic
+        Overbought = 75.0,  // Updated to match professional intraday logic
         HistoricalDays = 2,
         TrailingStopMode = TrailingStopMode.Percentage,
         TrailingStopDistance = 1.0,

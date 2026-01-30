@@ -32,6 +32,10 @@ public sealed record AlgoResult(
     MacdData? Macd = null,
     CrossoverStatus Crossover = CrossoverStatus.None,
     double? RsiValue = null,
-    string? RsiSignal = null
+    string? RsiSignal = null,
+    double? CciValue = null,
+    string? CciSignal = null,
+    double? Ema20Value = null,
+    string? Ema20Signal = null
 );
 

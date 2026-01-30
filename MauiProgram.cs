@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using MarketScanner.Services;
@@ -50,7 +50,16 @@ namespace MarketScanner
             // Services
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
+            builder.Services.AddSingleton<ICciSettingsService, CciSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
+            
+            // Position closure and confirmation dialog services
+            builder.Services.AddSingleton<IConfirmationDialogService, Services.Impl.ConfirmationDialogService>();
+            builder.Services.AddSingleton<IPositionClosureService, Services.Impl.PositionClosureService>();
+            builder.Services.AddSingleton<IAppShutdownHandler, Services.Impl.AppShutdownHandler>();
+            
+            // AlgoRunnerManagerService (depends on confirmation and position closure services)
+            builder.Services.AddSingleton<Services.AlgoRunnerManagerService>();
 
             // Register database tables after DatabaseInitializer is registered
             builder.Services.AddSingleton<IWatchlistService>(sp =>
@@ -138,20 +147,38 @@ namespace MarketScanner
                     sp.GetRequiredService<ICandlestickStorage>(),
                     sp.GetRequiredService<CandlestickConfig>(),
                     sp.GetRequiredService<IRsiSettingsService>(),
+                    sp.GetRequiredService<MarketScanner.Services.Impl.RsiEngine>(),
                     sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.RSIAlgoStrategy>>(),
                     sp.GetService<ITradeService>()); // Optional dependency
             });
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.CciAlgoStrategy>(sp =>
+            {
+                return new MarketScanner.Services.Impl.CciAlgoStrategy(
+                    sp.GetRequiredService<ICandlestickStorage>(),
+                    sp.GetRequiredService<CandlestickConfig>(),
+                    sp.GetRequiredService<ICciSettingsService>(),
+                    sp.GetRequiredService<MarketScanner.Services.Impl.CciEngine>(),
+                    sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.CciAlgoStrategy>>(),
+                    sp.GetService<ITradeService>()); // Optional dependency
+            });
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdEngine>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.RsiEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.CciEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.EmaEngine>();
+            builder.Services.AddSingleton<MarketScanner.Services.Impl.Ema20AlgoStrategy>();
 
-            // Register composite strategy that combines both RSI and MACD
+            // Register composite strategy that combines RSI, MACD, CCI, and EMA 20
             builder.Services.AddSingleton<MarketScanner.Services.IAlgoStrategy>(sp =>
             {
                 var rsiStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.RSIAlgoStrategy>();
                 var macdStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.MacdStrategy>();
+                var cciStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.CciAlgoStrategy>();
+                var ema20Strategy = sp.GetRequiredService<MarketScanner.Services.Impl.Ema20AlgoStrategy>();
                 var logger = sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.AlgoStrategy>>();
                 
                 return new MarketScanner.Services.Impl.AlgoStrategy(
-                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy },
+                    new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy, ema20Strategy },
                     logger);
             });
 
@@ -165,7 +192,8 @@ namespace MarketScanner
                     sp.GetRequiredService<IWatchlistService>(),
                     sp.GetRequiredService<ITradeService>(),
                     sp.GetRequiredService<IRsiSettingsService>(),
-                    sp.GetRequiredService<IAlgoStrategy>());
+                    sp.GetRequiredService<IAlgoStrategy>(),
+                    sp.GetRequiredService<Services.AlgoRunnerManagerService>());
             });
             // WatchlistViewModel is created on-demand by ScannerViewModel
 

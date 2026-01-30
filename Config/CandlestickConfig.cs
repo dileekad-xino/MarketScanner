@@ -38,6 +38,12 @@ public class CandlestickConfig
     public bool EnablePollingFallback { get; set; } = false;
     public int PollingIntervalSeconds { get; set; } = 10;
     public int PollingBarsToFetch { get; set; } = 3;
+
+    /// <summary>
+    /// When enabled, logs MACD debug snapshots at each finalized candle:
+    /// preview (last tick) vs committed (candle close) values.
+    /// </summary>
+    public bool EnableMacdDebugLogging { get; set; } = false;
 }
 
 /// <summary>

@@ -19,7 +19,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private readonly IDispatcherService _dispatcher;
     private readonly IWatchlistService _watchlistService;
     private readonly ILogger<QuoteViewModel> _logger;
-    private readonly ISymbolSearchService? _symbolSearchService;
+    private ISymbolSearchService? _symbolSearchService;
 
     [ObservableProperty] private ObservableCollection<ScannerRowViewModel> _quoteItems = new();
     [ObservableProperty] private string _newSymbolText = "";
@@ -39,7 +39,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
     private readonly Dictionary<string, ScannerRowViewModel> _rowCache = new();
     private readonly ConcurrentQueue<TickData> _batchedTicks = new();
-    private readonly System.Timers.Timer _batchTimer;
+    private IDispatcherTimer? _batchTimer;
+
     private IDisposable? _tickSubscription;
     private IDisposable? _playbackSubscription;
     private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
@@ -72,9 +73,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         _symbolSearchService = symbolSearchService;
 
         // Setup batch timer for smooth updates (60 FPS)
-        _batchTimer = new System.Timers.Timer(BatchIntervalMs);
-        _batchTimer.Elapsed += (_, _) => FlushBatchedTicks();
-        _batchTimer.AutoReset = true;
+        _batchTimer = Application.Current.Dispatcher.CreateTimer();
+        _batchTimer.Interval = TimeSpan.FromMilliseconds(BatchIntervalMs);
+        _batchTimer.IsRepeating = true;
+        _batchTimer.Tick += OnBatchTimerTick;
         _batchTimer.Start();
 
         // Subscribe to tick updates (IBKR)
@@ -101,6 +103,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void OnBatchTimerTick(object? sender, EventArgs e)
+    {
+        FlushBatchedTicks();
+    }
+
     public async Task InitializeAsync()
     {
         _logger.LogInformation("Quote panel initialized");
@@ -120,7 +127,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         }
 
         var symbols = QuoteItems.Select(item => item.Symbol).ToList();
-        _logger.LogInformation("QuoteViewModel: Resuming subscriptions for {Count} symbols: {Symbols}", 
+        _logger.LogInformation("QuoteViewModel: Resuming subscriptions for {Count} symbols: {Symbols}",
             symbols.Count, string.Join(", ", symbols));
 
         try
@@ -144,7 +151,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var watchlists = await _watchlistService.GetAllWatchlistsAsync();
 
             Watchlists.Clear();
-            
+
             // Add "Scanner" placeholder as first option to restore saved quotes
             var scannerWatchlist = new Watchlist
             {
@@ -154,7 +161,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 UpdatedAt = DateTime.UtcNow
             };
             Watchlists.Add(scannerWatchlist);
-            
+
             foreach (var w in watchlists)
             {
                 Watchlists.Add(w);
@@ -199,7 +206,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
         // Load watchlist (will save snapshot if coming from Scanner)
         _ = LoadQuotesFromWatchlistAsync(value.Id, shouldSaveSnapshot);
-        
+
         _previousWatchlist = value;
     }
 
@@ -446,7 +453,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(s => s.Trim().ToUpperInvariant())
                 .ToList();
-            
+
             var target = new HashSet<string>(orderedSymbols, StringComparer.OrdinalIgnoreCase);
 
             // Try to get latest snapshots from fallback if available
@@ -470,7 +477,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 {
                     // Mark as not dropped (in case it was previously dropped)
                     existingVm.IsDropped = false;
-                    
+
                     // Update existing item with latest tick data if available
                     if (latest.TryGetValue(s, out var tick))
                     {
@@ -522,13 +529,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             {
                 // Clear all items first to prevent duplicates
                 QuoteItems.Clear();
-                
+
                 // Add active items first (in scanner order)
                 foreach (var item in activeItems)
                 {
                     QuoteItems.Add(item);
                 }
-                
+
                 // Add dropped items below active ones
                 foreach (var item in droppedItems)
                 {
@@ -587,12 +594,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 SelectSearchResult(selectedResult);
                 // Continue to add the symbol (SelectSearchResult sets NewSymbolText)
             }
-            
+
             var symbol = NewSymbolText?.Trim().ToUpperInvariant() ?? "";
 
             if (string.IsNullOrWhiteSpace(symbol))
             {
-                ErrorMessage = "Please enter a symbol";
                 return;
             }
 
@@ -650,7 +656,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 var latest = fallback.GetLatestSnapshots(new[] { symbol });
                 if (latest.TryGetValue(symbol, out var tick))
                 {
-                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}", 
+                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}",
                         symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
                     tick.ApplyTo(rowVm);
                     if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
@@ -658,7 +664,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                         _logger.LogInformation("QuoteViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
                         rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
                     }
-                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}", 
+                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}",
                         rowVm.PrevClose, rowVm.LastPrice, symbol);
                 }
                 else
@@ -759,31 +765,35 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (_serviceProvider == null)
+            // Try to get service provider if not already set
+            var serviceProvider = _serviceProvider ??
+                Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+
+            if (serviceProvider == null)
             {
                 _logger.LogError("ServiceProvider is not available - cannot open algo runner");
-                ErrorMessage = "Algo runner is not available";
+                ErrorMessage = "Algo runner is not available. Please restart the application.";
                 return;
             }
 
-            // Get the current page to navigate from
-            var currentPage = Application.Current?.MainPage;
-            if (currentPage == null)
+            // Get AlgoRunnerManagerService
+            var algoRunnerManager = serviceProvider.GetService<Services.AlgoRunnerManagerService>();
+            if (algoRunnerManager == null)
             {
-                _logger.LogError("MainPage is not available - cannot open algo runner");
-                ErrorMessage = "Cannot open algo runner - main page not available";
+                _logger.LogError("AlgoRunnerManagerService is not available - cannot add algo runner");
+                ErrorMessage = "Algo runner manager is not available. Please restart the application.";
                 return;
             }
 
             // Get candlestick builder and subscribe symbol (so candlesticks are built for this symbol)
-            var candlestickBuilder = _serviceProvider.GetService<ICandlestickBuilder>();
+            var candlestickBuilder = serviceProvider.GetService<ICandlestickBuilder>();
             try
             {
                 if (candlestickBuilder != null)
                 {
                     candlestickBuilder.SubscribeSymbol(row.Symbol);
                     _logger.LogInformation("Subscribed {Symbol} to candlestick builder", row.Symbol);
-                    
+
                     // Preload historical candlesticks so MACD can calculate immediately
                     await candlestickBuilder.PreloadCandlesticksAsync(row.Symbol);
                     _logger.LogInformation("Preloaded historical candlesticks for {Symbol}", row.Symbol);
@@ -800,31 +810,56 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             }
 
             // Create algo runner view model
-            var algorithm = _serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
-            var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
-            var tradeService = _serviceProvider.GetService<ITradeService>();
+            var algorithm = serviceProvider.GetRequiredService<MarketScanner.Services.IAlgoStrategy>();
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            var tradeService = serviceProvider.GetService<ITradeService>();
+            var macdStrategy = serviceProvider.GetService<MarketScanner.Services.Impl.MacdStrategy>();
+            var macdEngine = serviceProvider.GetService<MarketScanner.Services.Impl.MacdEngine>();
+            var rsiEngine = serviceProvider.GetService<MarketScanner.Services.Impl.RsiEngine>();
+            var rsiSettingsService = serviceProvider.GetService<IRsiSettingsService>();
+            var candlestickStorage = serviceProvider.GetService<ICandlestickStorage>();
+            var config = serviceProvider.GetService<MarketScanner.Config.CandlestickConfig>();
+            var cciEngine = serviceProvider.GetService<Services.Impl.CciEngine>();
+            var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
+            var emaEngine = serviceProvider.GetService<Services.Impl.EmaEngine>();
+            var dispatcher = serviceProvider.GetService<IDispatcherService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
                 candlestickBuilder,
                 _ibkrService,
-                tradeService);
+                tradeService,
+                macdStrategy,
+                macdEngine,
+                rsiEngine,
+                rsiSettingsService,
+                candlestickStorage,
+                config,
+                cciEngine,
+                cciSettingsService,
+                emaEngine,
+                dispatcher);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);
 
-            // Create and show algo runner page
-            var algoRunnerPage = new Views.AlgoRunnerPage(algoRunnerViewModel);
-            
-            // Navigate to algo runner page
-            await currentPage.Navigation.PushModalAsync(algoRunnerPage);
-
-            _logger.LogInformation("Opened algo runner for symbol {Symbol}", row.Symbol);
+            // Add to manager (will handle max 3 limit and replacement dialog)
+            var added = await algoRunnerManager.AddAlgoRunnerAsync(algoRunnerViewModel);
+            if (added)
+            {
+                _logger.LogInformation("Added algo runner tile for symbol {Symbol}", row.Symbol);
+            }
+            else
+            {
+                _logger.LogInformation("Failed to add algo runner for symbol {Symbol} (user cancelled or error)", row.Symbol);
+                // Dispose the ViewModel if it wasn't added
+                algoRunnerViewModel.Dispose();
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to open algo runner");
-            ErrorMessage = $"Failed to open algo runner: {ex.Message}";
+            _logger.LogError(ex, "Failed to add algo runner");
+            ErrorMessage = $"Failed to add algo runner: {ex.Message}";
         }
     }
 
@@ -832,7 +867,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     {
         // Clear error when user starts typing
         ErrorMessage = "";
-        
+
         // Trigger search if 2+ characters
         if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
         {
@@ -840,36 +875,53 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             SearchResults.Clear();
             return;
         }
-        
+
         _ = PerformSearchAsync(value);
     }
-    
+
     private async Task PerformSearchAsync(string query)
     {
         // Cancel previous search
         _searchCts?.Cancel();
         _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
-        
+
         try
         {
             // Debounce
             await Task.Delay(_searchDebounceDelay, _searchCts.Token);
-            
-            if (_symbolSearchService == null)
+
+            // Try to get symbol search service if not already set
+            var symbolSearchService = _symbolSearchService;
+            if (symbolSearchService == null)
             {
-                _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
-                return;
+                var serviceProvider = _serviceProvider ??
+                    Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
+
+                if (serviceProvider != null)
+                {
+                    symbolSearchService = serviceProvider.GetService<ISymbolSearchService>();
+                    if (symbolSearchService != null)
+                    {
+                        _symbolSearchService = symbolSearchService; // Cache it for future use
+                    }
+                }
+
+                if (symbolSearchService == null)
+                {
+                    _logger.LogWarning("QuoteViewModel: Symbol search service is null - search cannot proceed");
+                    return;
+                }
             }
-            
+
             if (_searchCts.Token.IsCancellationRequested)
             {
                 return;
             }
-                
+
             IsSearching = true;
-            var results = await _symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
-            
+            var results = await symbolSearchService.SearchSymbolsAsync(query, _searchCts.Token);
+
             if (!_searchCts.Token.IsCancellationRequested)
             {
                 await _dispatcher.OnUIAsync(() =>
@@ -897,7 +949,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             IsSearching = false;
         }
     }
-    
+
     partial void OnShowSearchResultsChanged(bool value)
     {
     }
@@ -915,8 +967,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private void NavigateSearchResultsUp()
     {
         if (SearchResults.Count == 0) return;
-        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0 
-            ? SearchResults.Count - 1 
+        SelectedSearchResultIndex = SelectedSearchResultIndex <= 0
+            ? SearchResults.Count - 1
             : SelectedSearchResultIndex - 1;
     }
 
@@ -930,7 +982,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _disposed = true;
-        
+
         try
         {
             _searchCts?.Cancel();
@@ -940,8 +992,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
         try
         {
-            _batchTimer?.Stop();
-            _batchTimer?.Dispose();
+            if (_batchTimer != null)
+            {
+                _batchTimer.Tick -= OnBatchTimerTick;
+                _batchTimer.Stop();
+                _batchTimer = null;
+            }
         }
         catch { }
 

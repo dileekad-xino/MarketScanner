@@ -91,12 +91,12 @@ public class CciAlgoStrategy : IAlgoStrategy
             string reason;
 
             // Momentum crossover strategy logic
-            if (crossedAbove)
+            if (crossedAbove && currentCci.Value > 100)
             {
                 action = AlgoAction.Buy;
                 signal = "BUY_CROSS_ABOVE";
                 reason = $"CCI crossed above +{threshold:F0}: {previousCci.Value:F2} → {currentCci.Value:F2}";
-                
+
                 // Update EntryCciValue in state
                 if (_cciEngine.TryGetState(symbol.Symbol, interval, out var state))
                 {
@@ -108,7 +108,7 @@ public class CciAlgoStrategy : IAlgoStrategy
                 action = AlgoAction.Sell;
                 signal = "SELL_CROSS_BELOW";
                 reason = $"CCI crossed below +{threshold:F0}: {previousCci.Value:F2} → {currentCci.Value:F2}";
-                
+
                 // Update ExitCciValue in state
                 if (_cciEngine.TryGetState(symbol.Symbol, interval, out var state))
                 {

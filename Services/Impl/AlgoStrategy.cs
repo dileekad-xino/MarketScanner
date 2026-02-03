@@ -11,6 +11,8 @@ public class AlgoStrategy : IAlgoStrategy
 {
     private readonly IReadOnlyList<IAlgoStrategy> _strategies;
     private readonly ILogger<AlgoStrategy> _logger;
+    private readonly Dictionary<string, decimal> _lastMacdHistogram = new();
+
 
     public string Name => "Composite Algorithm";
     public string Description => $"Combines {_strategies.Count} strategies: {string.Join(", ", _strategies.Select(s => s.Name))}";
@@ -197,11 +199,30 @@ public class AlgoStrategy : IAlgoStrategy
         // Confirmation logic
         // =========================
 
+        decimal? prevHist = null;
+        if (macdData != null && _lastMacdHistogram.TryGetValue(symbol.Symbol, out var h))
+        {
+            prevHist = h;
+        }
+
         bool macdDarkGreen =
             macdData != null &&
             macdData.IsBullish &&
             macdData.HasPositiveHistogram &&
-            macdData.IsHistogramGrowing;
+            prevHist.HasValue &&
+            macdData.Histogram > prevHist.Value;
+
+        bool macdLightGreen =
+            macdData != null &&
+            macdData.HasPositiveHistogram &&
+            prevHist.HasValue &&
+            macdData.Histogram < prevHist.Value;
+
+        if (macdData != null)
+        {
+            _lastMacdHistogram[symbol.Symbol] = macdData.Histogram;
+        }
+
 
         bool aboveEma20 =
             ema20.HasValue &&
@@ -216,10 +237,10 @@ public class AlgoStrategy : IAlgoStrategy
 
         if (hasOpenPosition)
         {
-            if (cciAction == AlgoAction.Sell)
+            if (macdLightGreen)
             {
                 finalAction = AlgoAction.Sell;
-                summary = "SELL: CCI exit signal";
+                summary = "SELL: MACD turned light green (momentum weakening)";
             }
             else
             {

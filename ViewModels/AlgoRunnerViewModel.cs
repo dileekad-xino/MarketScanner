@@ -230,27 +230,27 @@ public partial class AlgoRunnerViewModel : ObservableObject
         try
         {
             _logger.LogInformation("Stopping algorithm for {Symbol}", SelectedSymbol?.Symbol);
-            
+
             // Cancel streaming historical bars
             if (SelectedSymbol != null && _ibkrGatewayService != null)
             {
                 _ibkrGatewayService.CancelStreamingHistoricalBars(SelectedSymbol.Symbol);
             }
-            
+
             // Cancel execution
             _cancellationTokenSource?.Cancel();
-            
+
             // Unsubscribe from updates
             UnsubscribeFromCandlestickBuilder();
             _tickSubscription?.Dispose();
             _tickSubscription = null;
             _streamingBarSubscription?.Dispose();
             _streamingBarSubscription = null;
-            
+
             // Update state
             IsRunning = false;
             ErrorMessage = string.Empty;
-            
+
             _logger.LogInformation("Algorithm stopped successfully");
         }
         catch (Exception ex)
@@ -265,15 +265,15 @@ public partial class AlgoRunnerViewModel : ObservableObject
     {
         try
         {
-            _logger.LogInformation("Closing AlgoRunner page for {Symbol} (algo continues in background: {IsRunning})", 
+            _logger.LogInformation("Closing AlgoRunner page for {Symbol} (algo continues in background: {IsRunning})",
                 SelectedSymbol?.Symbol, IsRunning);
-            
+
             // Navigate back (dismiss modal)
             if (Application.Current?.MainPage != null)
             {
                 await Application.Current.MainPage.Navigation.PopModalAsync();
             }
-            
+
             // Note: Dispose() is NOT called here - algorithm keeps running in background
             _logger.LogInformation("AlgoRunner page closed, algorithm still running: {IsRunning}", IsRunning);
         }
@@ -310,7 +310,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 SelectedSymbol.CciValue = Result.CciValue;
                 SelectedSymbol.CciSignal = Result.CciSignal;
             }
-            
+
             if (Result == null)
                 return;
 
@@ -319,8 +319,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
             (bool hadPosition, bool wasPositionClosed, int? tradeId) positionState;
             try
             {
-                positionState = await (_dispatcher?.OnUIAsync(() => 
-                    (HasPosition, PositionClosed, _currentTradeId)) 
+                positionState = await (_dispatcher?.OnUIAsync(() =>
+                    (HasPosition, PositionClosed, _currentTradeId))
                     ?? Task.FromResult((HasPosition, PositionClosed, _currentTradeId)));
             }
             catch (InvalidOperationException)
@@ -329,7 +329,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
                 // This can happen during app shutdown
                 positionState = (false, false, null);
             }
-            
+
             var hadPosition = positionState.Item1;
             var wasPositionClosed = positionState.Item2;
             var tradeId = positionState.Item3;
@@ -866,7 +866,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         Ema20Value = (decimal)Result.Ema20Value;
         Ema20Signal = Result.Ema20Signal ?? "Hold";
-        
+
         if (Result.Price.HasValue)
         {
             IsEma20AbovePrice = Result.Price.Value > Result.Ema20Value.Value;
@@ -896,7 +896,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             {
                 // Initialize RsiEngine from historical warmup once
                 _rsiEngine?.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
-                
+
                 _logger.LogInformation("AlgoRunnerViewModel: Initialized RSI state for {Symbol} with {Count} candlesticks",
                     SelectedSymbol.Symbol, candlesticks.Count);
             }
@@ -935,7 +935,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
             {
                 // Initialize CciEngine from historical warmup once
                 _cciEngine?.Initialize(SelectedSymbol.Symbol, interval, candlesticks, settings.Period);
-                
+
                 _logger.LogInformation("AlgoRunnerViewModel: Initialized CCI state for {Symbol} with {Count} candlesticks",
                     SelectedSymbol.Symbol, candlesticks.Count);
             }
@@ -1229,7 +1229,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             // Get current price
             var currentPrice = (decimal)SelectedSymbol.LastPrice;
-            
+
             // Update position state
             ExitPrice = currentPrice;
             PositionClosed = true;

@@ -52,12 +52,12 @@ namespace MarketScanner
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ICciSettingsService, CciSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
-            
+
             // Position closure and confirmation dialog services
             builder.Services.AddSingleton<IConfirmationDialogService, Services.Impl.ConfirmationDialogService>();
             builder.Services.AddSingleton<IPositionClosureService, Services.Impl.PositionClosureService>();
             builder.Services.AddSingleton<IAppShutdownHandler, Services.Impl.AppShutdownHandler>();
-            
+
             // AlgoRunnerManagerService (depends on confirmation and position closure services)
             builder.Services.AddSingleton<Services.AlgoRunnerManagerService>();
 
@@ -154,12 +154,12 @@ namespace MarketScanner
             builder.Services.AddSingleton<MarketScanner.Services.Impl.CciAlgoStrategy>(sp =>
             {
                 return new MarketScanner.Services.Impl.CciAlgoStrategy(
-                    sp.GetRequiredService<ICandlestickStorage>(),
-                    sp.GetRequiredService<CandlestickConfig>(),
-                    sp.GetRequiredService<ICciSettingsService>(),
-                    sp.GetRequiredService<MarketScanner.Services.Impl.CciEngine>(),
-                    sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.CciAlgoStrategy>>(),
-                    sp.GetService<ITradeService>()); // Optional dependency
+                sp.GetRequiredService<ICandlestickStorage>(),
+                sp.GetRequiredService<CandlestickConfig>(),
+                sp.GetRequiredService<ICciSettingsService>(),
+                sp.GetRequiredService<MarketScanner.Services.Impl.CciEngine>(),
+                sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.CciAlgoStrategy>>()
+                );
             });
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdEngine>();
             builder.Services.AddSingleton<MarketScanner.Services.Impl.MacdStrategy>();
@@ -176,7 +176,7 @@ namespace MarketScanner
                 var cciStrategy = sp.GetRequiredService<MarketScanner.Services.Impl.CciAlgoStrategy>();
                 var ema20Strategy = sp.GetRequiredService<MarketScanner.Services.Impl.Ema20AlgoStrategy>();
                 var logger = sp.GetRequiredService<ILogger<MarketScanner.Services.Impl.AlgoStrategy>>();
-                
+
                 return new MarketScanner.Services.Impl.AlgoStrategy(
                     new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy, ema20Strategy },
                     logger);

@@ -2,23 +2,35 @@ using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
+using System.Linq;
 
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
-/// EMA 20 strategy that generates buy signals when price is above EMA 20.
-/// Uses the generic EmaEngine for real-time monitoring.
+/// Pure EMA-20 indicator (stateless).
+///
+/// Responsibilities:
+/// - Calculate EMA-20
+/// - Report price position relative to EMA-20
+///
+/// Non-responsibilities:
+/// - NO Buy / Sell decisions
+/// - NO position awareness
+/// - NO execution logic
+///
+/// Trade execution is handled exclusively by AlgoStrategy.
 /// </summary>
-public class Ema20AlgoStrategy : IAlgoStrategy
+public sealed class Ema20AlgoStrategy : IAlgoStrategy
 {
     private const int Period = 20;
+
     private readonly ICandlestickStorage _candlestickStorage;
     private readonly CandlestickConfig _config;
     private readonly ILogger<Ema20AlgoStrategy> _logger;
     private readonly EmaEngine _emaEngine;
 
-    public string Name => "EMA 20 Strategy";
-    public string Description => "Generates buy signal when price is above EMA 20.";
+    public string Name => "EMA-20 Indicator";
+    public string Description => "Pure EMA-20 trend indicator (above / below EMA-20).";
 
     public Ema20AlgoStrategy(
         ICandlestickStorage storage,
@@ -32,13 +44,19 @@ public class Ema20AlgoStrategy : IAlgoStrategy
         _emaEngine = engine;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(
+        ScannerRowViewModel symbol,
+        bool hasOpenPosition = false,
+        CancellationToken ct = default)
     {
         try
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // Initialize once if needed (historical warm-up)
+            // =========================
+            // Initialize engine once
+            // =========================
+
             if (!_emaEngine.TryGetState(symbol.Symbol, interval, Period, out _))
             {
                 var candles = _candlestickStorage
@@ -46,58 +64,68 @@ public class Ema20AlgoStrategy : IAlgoStrategy
                     .OrderBy(c => c.Timestamp)
                     .ToList();
 
-                _logger.LogInformation("Initializing EMA 20 engine for {Symbol} (warm-up from {Count} candles)", symbol.Symbol, candles.Count);
+                if (candles.Count == 0)
+                {
+                    return Neutral(symbol, "No candles available for EMA-20 initialization");
+                }
+
                 _emaEngine.Initialize(symbol.Symbol, interval, candles, Period);
             }
+
+            // =========================
+            // Get EMA-20 value
+            // =========================
 
             var ema20 = _emaEngine.GetEma(symbol.Symbol, interval, Period);
             if (!ema20.HasValue)
             {
-                return Hold(symbol, "EMA 20 unavailable (engine not initialized yet)");
+                return Neutral(symbol, "EMA-20 unavailable");
             }
 
-            var currentPrice = (double)symbol.LastPrice;
-            var ema20Value = ema20.Value;
+            var price = (double)symbol.LastPrice;
+            var emaValue = ema20.Value;
 
-            // Signal logic: BUY if price > EMA 20, otherwise HOLD
-            AlgoAction action;
-            string signal;
-            string reason;
+            string emaSignal =
+                price > emaValue
+                    ? "ABOVE_EMA20"
+                    : "BELOW_EMA20";
 
-            if (currentPrice > ema20Value)
-            {
-                action = AlgoAction.Buy;
-                signal = "Buy";
-                reason = $"Price {currentPrice:F2} > EMA 20 {ema20Value:F2}";
-            }
-            else
-            {
-                action = AlgoAction.Hold;
-                signal = "Hold";
-                reason = $"Price {currentPrice:F2} <= EMA 20 {ema20Value:F2}";
-            }
+            // =========================
+            // PURE indicator result
+            // =========================
 
             return new AlgoResult(
-                symbol.Symbol,
-                action,
-                symbol.LastPrice,
-                reason,
-                DateTime.UtcNow,
-                Ema20Value: ema20Value,
-                Ema20Signal: signal
+                Symbol: symbol.Symbol,
+                Action: AlgoAction.Hold, // <-- always HOLD
+                Price: symbol.LastPrice,
+                Reason: $"Price {price:F2} {(price > emaValue ? ">" : "<=")} EMA-20 {emaValue:F2}",
+                Timestamp: DateTime.UtcNow,
+                Ema20Value: emaValue,
+                Ema20Signal: emaSignal
             );
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "EMA 20 failed for {Symbol}", symbol.Symbol);
-            return Hold(symbol, $"EMA 20 error: {ex.Message}");
+            _logger.LogError(ex, "EMA-20 indicator failed for {Symbol}", symbol.Symbol);
+            return Neutral(symbol, $"EMA-20 error: {ex.Message}");
         }
     }
 
-    private AlgoResult Hold(ScannerRowViewModel s, string reason) =>
-        new(s.Symbol, AlgoAction.Hold, s.LastPrice, reason, DateTime.UtcNow);
+    // =========================
+    // Helpers
+    // =========================
 
-    private string GetIntervalString(int s) =>
+    private static AlgoResult Neutral(ScannerRowViewModel symbol, string reason) =>
+        new(
+            Symbol: symbol.Symbol,
+            Action: AlgoAction.Hold,
+            Price: symbol.LastPrice,
+            Reason: reason,
+            Timestamp: DateTime.UtcNow,
+            Ema20Signal: "NEUTRAL"
+        );
+
+    private static string GetIntervalString(int s) =>
         s switch
         {
             15 => "15s",

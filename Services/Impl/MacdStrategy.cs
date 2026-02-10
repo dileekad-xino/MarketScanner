@@ -2,18 +2,36 @@ using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
+using System.Linq;
 
 namespace MarketScanner.Services.Impl;
 
-public class MacdStrategy : IAlgoStrategy
+/// <summary>
+/// Pure MACD momentum indicator (stateless).
+///
+/// Responsibilities:
+/// - Calculate MACD
+/// - Report bullish momentum state:
+///     DARK_GREEN  -> histogram > 0 and expanding
+///     LIGHT_GREEN -> histogram > 0 but contracting
+///     NEUTRAL     -> histogram <= 0
+///
+/// Non-responsibilities:
+/// - NO Buy / Sell
+/// - NO position awareness
+/// - NO execution logic
+///
+/// Trade decisions are handled exclusively by AlgoStrategy.
+/// </summary>
+public sealed class MacdStrategy : IAlgoStrategy
 {
     private readonly ICandlestickStorage _candlestickStorage;
     private readonly CandlestickConfig _config;
     private readonly ILogger<MacdStrategy> _logger;
     private readonly MacdEngine _macdEngine;
 
-    public string Name => "MACD Strategy";
-    public string Description => "Generates trading signals based on MACD crossovers.";
+    public string Name => "MACD Indicator";
+    public string Description => "Pure MACD momentum indicator (dark green / light green).";
 
     public MacdStrategy(
         ICandlestickStorage storage,
@@ -27,12 +45,19 @@ public class MacdStrategy : IAlgoStrategy
         _macdEngine = engine;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(
+        ScannerRowViewModel symbol,
+        bool hasOpenPosition = false,
+        CancellationToken ct = default)
     {
         try
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
-            // Live-only: initialize once from historical warmup (if needed), then read tick-updated engine state
+
+            // =========================
+            // Initialize engine once
+            // =========================
+
             if (!_macdEngine.TryGetState(symbol.Symbol, interval, out _))
             {
                 var candles = _candlestickStorage
@@ -40,7 +65,11 @@ public class MacdStrategy : IAlgoStrategy
                     .OrderBy(c => c.Timestamp)
                     .ToList();
 
-                _logger.LogInformation("Initializing MACD engine for {Symbol} (warm-up from {Count} candles)", symbol.Symbol, candles.Count);
+                if (candles.Count == 0)
+                {
+                    return Neutral(symbol, "No candles available for MACD initialization");
+                }
+
                 _macdEngine.Initialize(
                     symbol.Symbol,
                     interval,
@@ -50,25 +79,41 @@ public class MacdStrategy : IAlgoStrategy
                     _config.Macd.SignalPeriod);
             }
 
-            var result = _macdEngine.GetLastMacd(symbol.Symbol, interval);
-            if (result == null)
-                return Hold(symbol, "MACD unavailable (engine not initialized yet)");
+            // =========================
+            // Get MACD snapshot
+            // =========================
 
-            var (macd, signal, histRaw) = result.Value;
+            var last = _macdEngine.GetLastMacd(symbol.Symbol, interval);
+            if (last == null)
+                return Neutral(symbol, "MACD unavailable");
 
+            var (macd, signal, histRaw) = last.Value;
             decimal hist = (decimal)histRaw;
 
-            // Previous MACD (for momentum)
             var prev = _macdEngine.GetPreviousMacd(symbol.Symbol, interval);
             decimal? prevHist = null;
 
             if (prev != null)
                 prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
 
-            bool isHistogramGrowing =
-                hist > 0m &&
-                prevHist.HasValue &&
-                hist > prevHist.Value;
+            // =========================
+            // Momentum classification
+            // =========================
+
+            string macdSignal;
+
+            if (hist > 0m && prevHist.HasValue && hist > prevHist.Value)
+            {
+                macdSignal = "DARK_GREEN";   // bullish + expanding
+            }
+            else if (hist > 0m && prevHist.HasValue && hist <= prevHist.Value)
+            {
+                macdSignal = "LIGHT_GREEN";  // bullish but weakening
+            }
+            else
+            {
+                macdSignal = "NEUTRAL";      // not bullish
+            }
 
             var macdData = new MacdData(
                 symbol.Symbol,
@@ -77,114 +122,41 @@ public class MacdStrategy : IAlgoStrategy
                 hist,
                 DateTime.UtcNow,
                 interval
-            )
-            {
-                IsHistogramGrowing = isHistogramGrowing
-            };
-
-            var (action, reason, cross) = DetectSignals(macdData);
+            );
 
             return new AlgoResult(
-                symbol.Symbol,
-                action,
-                symbol.LastPrice,
-                reason,
-                DateTime.UtcNow,
-                macdData,
-                cross
+                Symbol: symbol.Symbol,
+                Action: AlgoAction.Hold, // <-- always HOLD
+                Price: symbol.LastPrice,
+                Reason: $"MACD {macdSignal}: Hist={hist:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"}",
+                Timestamp: DateTime.UtcNow,
+                Macd: macdData,
+                Crossover: CrossoverStatus.None,
+                MacdSignal: macdSignal
             );
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MACD failed for {Symbol}", symbol.Symbol);
-            return Hold(symbol, $"MACD error: {ex.Message}");
+            _logger.LogError(ex, "MACD indicator failed for {Symbol}", symbol.Symbol);
+            return Neutral(symbol, $"MACD error: {ex.Message}");
         }
     }
 
+    // =========================
+    // Helpers
+    // =========================
 
-    private (AlgoAction, string, CrossoverStatus) DetectSignals(MacdData m)
-    {
-        const decimal EPS = 0.000001m;
+    private static AlgoResult Neutral(ScannerRowViewModel symbol, string reason) =>
+        new(
+            Symbol: symbol.Symbol,
+            Action: AlgoAction.Hold,
+            Price: symbol.LastPrice,
+            Reason: reason,
+            Timestamp: DateTime.UtcNow,
+            MacdSignal: "NEUTRAL"
+        );
 
-        bool above = m.MacdLine > m.SignalLine + EPS;
-        bool below = m.MacdLine < m.SignalLine - EPS;
-
-        var prev = _macdEngine.GetPreviousMacd(m.Symbol, m.Interval);
-
-        // Calculate previous histogram (since GetPreviousMacd doesn't return it)
-        decimal? prevHist = null;
-        if (prev != null)
-        {
-            prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
-        }
-
-        bool bullish = false;
-        bool bearish = false;
-
-        if (prev != null)
-        {
-            decimal prevMacd = (decimal)prev.Value.Macd;
-            decimal prevSignal = (decimal)prev.Value.Signal;
-
-            bullish = prevMacd <= prevSignal + EPS && above;
-            bearish = prevMacd >= prevSignal - EPS && below;
-        }
-
-        // Histogram momentum analysis
-        bool histGrowing = m.Histogram > 0 && prevHist.HasValue && m.Histogram > prevHist.Value;
-        bool histFalling = prevHist.HasValue && m.Histogram < prevHist.Value;
-
-        // Priority 1: Full bearish reversal (highest priority - exit immediately)
-        if (bearish && m.MacdLine < 0)
-        {
-            return (AlgoAction.Sell,
-                $"Bearish MACD reversal: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}",
-                CrossoverStatus.CrossedDown);
-        }
-
-        // Priority 2: Momentum failure exit (early exit signal)
-        if (histFalling && m.MacdLine > 0)
-        {
-            return (AlgoAction.Sell,
-                $"MACD momentum weakening (histogram contraction): Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"}",
-                CrossoverStatus.None);
-        }
-
-        // Priority 3: Bullish ignition (entry signal)
-        if (bullish && m.MacdLine > -0.05m)
-        {
-            return (AlgoAction.Buy,
-                $"Bullish MACD ignition: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
-                CrossoverStatus.CrossedUp);
-        }
-
-        // Priority 4: Trend continuation (add-on signal)
-        if (above && m.MacdLine > 0 && histGrowing)
-        {
-            return (AlgoAction.Buy,
-                $"MACD continuation: momentum expanding (Hist={m.Histogram:F4}, PrevHist={prevHist?.ToString("F4") ?? "N/A"})",
-                CrossoverStatus.None);
-        }
-
-        // Default: HOLD
-        return (AlgoAction.Hold,
-            $"MACD stable: MACD={m.MacdLine:F4}, Signal={m.SignalLine:F4}, Hist={m.Histogram:F4}",
-            CrossoverStatus.None);
-    }
-
-    /// <summary>
-    /// Evaluate MACD signals from a supplied MacdData snapshot (live or candle).
-    /// </summary>
-    public (AlgoAction action, string reason, CrossoverStatus cross) EvaluateFromMacdData(MacdData macdData)
-    {
-        var (a, r, c) = DetectSignals(macdData);
-        return (a, r, c);
-    }
-
-    private AlgoResult Hold(ScannerRowViewModel s, string reason) =>
-        new(s.Symbol, AlgoAction.Hold, s.LastPrice, reason, DateTime.UtcNow);
-
-    private string GetIntervalString(int s) =>
+    private static string GetIntervalString(int s) =>
         s switch
         {
             15 => "15s",

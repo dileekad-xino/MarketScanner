@@ -5,17 +5,23 @@ using Microsoft.Extensions.Logging;
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
-/// Composite algorithm strategy that combines multiple individual strategies.
+/// Central trade decision engine.
+/// 
+/// Indicators are PURE and stateless.
+/// AlgoStrategy is the ONLY place that:
+/// - knows about positions
+/// - decides BUY / SELL
+/// - enforces trade rules
 /// </summary>
-public class AlgoStrategy : IAlgoStrategy
+public sealed class AlgoStrategy : IAlgoStrategy
 {
     private readonly IReadOnlyList<IAlgoStrategy> _strategies;
     private readonly ILogger<AlgoStrategy> _logger;
-    private readonly Dictionary<string, decimal> _lastMacdHistogram = new();
-
 
     public string Name => "Composite Algorithm";
-    public string Description => $"Combines {_strategies.Count} strategies: {string.Join(", ", _strategies.Select(s => s.Name))}";
+    public string Description =>
+        "BUY: CCI>100 + MACD dark green + price above EMA20 (no position). " +
+        "SELL: CCI<100 (in position).";
 
     public AlgoStrategy(
         IEnumerable<IAlgoStrategy> strategies,
@@ -25,149 +31,32 @@ public class AlgoStrategy : IAlgoStrategy
         _logger = logger;
     }
 
-    public async Task<AlgoResult> ExecuteAsync(ScannerRowViewModel symbol, bool hasOpenPosition = false, CancellationToken ct = default)
+    public async Task<AlgoResult> ExecuteAsync(
+        ScannerRowViewModel symbol,
+        bool hasOpenPosition = false,
+        CancellationToken ct = default)
     {
         try
         {
-            // Execute all strategies in parallel
+            // =========================
+            // Run all indicators
+            // =========================
+
             var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, hasOpenPosition, ct));
             var results = await Task.WhenAll(tasks);
 
-            // Combine results with position-aware logic
-            var combinedResult = CombineResults(results, symbol, hasOpenPosition);
-
-            return combinedResult;
+            return CombineResults(results, symbol, hasOpenPosition);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Composite strategy failed for {Symbol}", symbol.Symbol);
-            return new AlgoResult(
-                Symbol: symbol.Symbol,
-                Action: AlgoAction.Hold,
-                Price: symbol.LastPrice,
-                Reason: $"Composite strategy error: {ex.Message}",
-                Timestamp: DateTime.UtcNow
-            );
+            _logger.LogError(ex, "AlgoStrategy failed for {Symbol}", symbol.Symbol);
+            return Hold(symbol, $"Algo error: {ex.Message}");
         }
     }
 
-    // private AlgoResult CombineResults(IReadOnlyList<AlgoResult> results, ScannerRowViewModel symbol, bool hasOpenPosition)
-    // {
-    //     if (results.Count == 0)
-    //     {
-    //         return new AlgoResult(
-    //             Symbol: symbol.Symbol,
-    //             Action: AlgoAction.Hold,
-    //             Price: symbol.LastPrice,
-    //             Reason: "No strategy results available",
-    //             Timestamp: DateTime.UtcNow
-    //         );
-    //     }
-
-    //     // Get average price from results, fallback to symbol price
-    //     var prices = results.Where(r => r.Price.HasValue).Select(r => r.Price!.Value).ToList();
-    //     var avgPrice = prices.Count > 0 ? prices.Average() : symbol.LastPrice;
-
-    //     // Get MACD data from results (take first non-null)
-    //     var macdData = results.FirstOrDefault(r => r.Macd != null)?.Macd;
-    //     var crossover = results.FirstOrDefault(r => r.Crossover != CrossoverStatus.None)?.Crossover ?? CrossoverStatus.None;
-
-    //     // Get RSI data from results (take first non-null) - FOR DISPLAY ONLY
-    //     var rsiValue = results.FirstOrDefault(r => r.RsiValue.HasValue)?.RsiValue;
-    //     var rsiSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.RsiSignal))?.RsiSignal;
-
-    //     // Get CCI data from results (take first non-null)
-    //     var cciValue = results.FirstOrDefault(r => r.CciValue.HasValue)?.CciValue;
-    //     var cciSignal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.CciSignal))?.CciSignal;
-
-    //     // Get EMA 20 data from results (take first non-null)
-    //     var ema20Value = results.FirstOrDefault(r => r.Ema20Value.HasValue)?.Ema20Value;
-    //     var ema20Signal = results.FirstOrDefault(r => !string.IsNullOrEmpty(r.Ema20Signal))?.Ema20Signal;
-
-    //     // Extract individual strategy actions
-    //     var macdResult = results.FirstOrDefault(r => r.Macd != null || r.Crossover != CrossoverStatus.None);
-    //     var cciResult = results.FirstOrDefault(r => r.CciValue.HasValue || !string.IsNullOrEmpty(r.CciSignal));
-    //     var ema20Result = results.FirstOrDefault(r => r.Ema20Value.HasValue || !string.IsNullOrEmpty(r.Ema20Signal));
-
-    //     // Get actions from MACD, CCI, and EMA 20
-    //     var macdAction = macdResult?.Action ?? AlgoAction.Hold;
-    //     var cciAction = cciResult?.Action ?? AlgoAction.Hold;
-    //     var ema20Action = ema20Result?.Action ?? AlgoAction.Hold;
-
-    //     // Position-aware decision: only Buy when flat (all agree Buy), only Sell when in position (all agree Sell)
-    //     var action = AlgoAction.Hold;
-    //     var summary = "";
-
-    //     if (hasOpenPosition)
-    //     {
-    //         // In position: only allow Sell when cci agree
-    //         if (cciAction == AlgoAction.Sell)
-    //         {
-    //             action = AlgoAction.Sell;
-    //             summary = "SELL: In position; CCI agrees on SELL";
-    //         }
-    //         else
-    //         {
-    //             action = AlgoAction.Hold;
-    //             summary = "HOLD: In position; CCI does not agree on SELL";
-    //         }
-    //     }
-    //     else
-    //     {
-
-    //         bool isCciActionBuy = cciAction == AlgoAction.Buy;
-    //         bool isMacdDarkGreen = macdData != null
-    //             && macdData.IsBullish
-    //             && macdData.HasPositiveHistogram;
-    //         bool isPriceAboveEma20 = ema20Value.HasValue && symbol.LastPrice > ema20Value.Value;
-
-    //         // No position: only allow Buy when MACD, CCI, and EMA20 all agree on Buy; otherwise Hold; never Sell
-    //         if (isCciActionBuy && isMacdDarkGreen && isPriceAboveEma20)
-    //         {
-    //             action = AlgoAction.Buy;
-    //             summary = "BUY: MACD, CCI, and EMA20 all agree on BUY";
-    //         }
-    //         else
-    //         {
-    //             action = AlgoAction.Hold;
-    //             // Display: when no position, show Hold for any Sell (we don't act on sell)
-    //             var displayMacd = macdAction == AlgoAction.Sell ? AlgoAction.Hold : macdAction;
-    //             var displayCci = cciAction == AlgoAction.Sell ? AlgoAction.Hold : cciAction;
-    //             var displayEma20 = ema20Action == AlgoAction.Sell ? AlgoAction.Hold : ema20Action;
-    //             summary = $"HOLD: MACD={displayMacd}, CCI={displayCci}, EMA20={displayEma20}";
-    //         }
-    //     }
-
-    //     // Position-aware display: show Hold for Sell when no position (we don't act on sell); show Hold for Buy when in position (we don't act on buy)
-    //     var reasons = string.Join(" | ", new[] { macdResult, cciResult, ema20Result }
-    //         .Where(r => r != null)
-    //         .Select(r =>
-    //         {
-    //             var displayAction = (r!.Action == AlgoAction.Buy && hasOpenPosition) || (r.Action == AlgoAction.Sell && !hasOpenPosition)
-    //                 ? AlgoAction.Hold
-    //                 : r.Action;
-    //             return $"[{displayAction}] {r.Reason}";
-    //         }));
-
-    //     // Include RSI info in reason for reference (display only, not used in decision)
-    //     var rsiInfo = rsiValue.HasValue ? $" | RSI: {rsiValue.Value:F2} ({rsiSignal ?? "N/A"}) [DISPLAY ONLY]" : "";
-
-    //     return new AlgoResult(
-    //         Symbol: symbol.Symbol,
-    //         Action: action,
-    //         Price: avgPrice,
-    //         Reason: $"{summary} | {reasons}{rsiInfo}",
-    //         Timestamp: DateTime.UtcNow,
-    //         Macd: macdData,
-    //         Crossover: crossover,
-    //         RsiValue: rsiValue,
-    //         RsiSignal: rsiSignal,
-    //         CciValue: cciValue,
-    //         CciSignal: cciSignal,
-    //         Ema20Value: ema20Value,
-    //         Ema20Signal: ema20Signal
-    //     );
-    // }
+    // =====================================================
+    // CORE DECISION LOGIC
+    // =====================================================
 
     private AlgoResult CombineResults(
         IReadOnlyList<AlgoResult> results,
@@ -175,98 +64,67 @@ public class AlgoStrategy : IAlgoStrategy
         bool hasOpenPosition)
     {
         if (results.Count == 0)
-            return Hold(symbol, "No strategy results");
+            return Hold(symbol, "No indicator results");
 
         // =========================
-        // Extract data
+        // Extract indicator states
         // =========================
 
-        var macd = results.FirstOrDefault(r => r.Macd != null);
-        var cci = results.FirstOrDefault(r => r.CciValue.HasValue);
-        var ema = results.FirstOrDefault(r => r.Ema20Value.HasValue);
+        var cci = results.FirstOrDefault(r => r.CciSignal != null);
+        var macd = results.FirstOrDefault(r => r.MacdSignal != null);
+        var ema = results.FirstOrDefault(r => r.Ema20Signal != null);
 
-        var macdData = macd?.Macd;
-        var cciAction = cci?.Action ?? AlgoAction.Hold;
-        var ema20 = ema?.Ema20Value;
+        bool cciAbove =
+            cci?.CciSignal == "ABOVE_THRESHOLD";
 
-        var avgPrice = results
-            .Where(r => r.Price.HasValue)
-            .Select(r => r.Price!.Value)
-            .DefaultIfEmpty(symbol.LastPrice)
-            .Average();
-
-        // =========================
-        // Confirmation logic
-        // =========================
-
-        decimal? prevHist = null;
-        if (macdData != null && _lastMacdHistogram.TryGetValue(symbol.Symbol, out var h))
-        {
-            prevHist = h;
-        }
+        bool cciBelow =
+            cci?.CciSignal == "BELOW_THRESHOLD";
 
         bool macdDarkGreen =
-            macdData != null &&
-            macdData.IsBullish &&
-            macdData.HasPositiveHistogram &&
-            prevHist.HasValue &&
-            macdData.Histogram > prevHist.Value;
-
-        bool macdLightGreen =
-            macdData != null &&
-            macdData.HasPositiveHistogram &&
-            prevHist.HasValue &&
-            macdData.Histogram < prevHist.Value;
-
-        if (macdData != null)
-        {
-            _lastMacdHistogram[symbol.Symbol] = macdData.Histogram;
-        }
-
+            macd?.MacdSignal == "DARK_GREEN";
 
         bool aboveEma20 =
-            ema20.HasValue &&
-            symbol.LastPrice > ema20.Value;
+            ema?.Ema20Signal == "ABOVE_EMA20";
+
+        var price = symbol.LastPrice;
 
         // =========================
-        // Position-aware decision
+        // DECISION
         // =========================
 
-        AlgoAction finalAction;
+        AlgoAction action;
         string summary;
 
-        if (hasOpenPosition)
+        if (!hasOpenPosition)
         {
-            if (macdLightGreen)
+            // ---------- ENTRY ----------
+            if (cciAbove && macdDarkGreen && aboveEma20)
             {
-                finalAction = AlgoAction.Sell;
-                summary = "SELL: MACD turned light green (momentum weakening)";
+                action = AlgoAction.Buy;
+                summary = "BUY: CCI>100 + MACD dark green + price above EMA20";
             }
             else
             {
-                finalAction = AlgoAction.Hold;
-                summary = "HOLD: In position, no exit";
+                action = AlgoAction.Hold;
+                summary =
+                    $"HOLD (flat): " +
+                    $"CCI={(cciAbove ? ">100" : "<=100")}, " +
+                    $"MACD={(macdDarkGreen ? "DarkGreen" : "NotDarkGreen")}, " +
+                    $"EMA20={(aboveEma20 ? "Above" : "Below")}";
             }
         }
         else
         {
-            bool canBuy =
-                cciAction == AlgoAction.Buy &&
-                macdDarkGreen &&
-                aboveEma20;
-
-            if (canBuy)
+            // ---------- EXIT ----------
+            if (cciBelow)
             {
-                finalAction = AlgoAction.Buy;
-                summary = "BUY: CCI + MACD dark green + EMA20";
+                action = AlgoAction.Sell;
+                summary = "SELL: CCI dropped below 100";
             }
             else
             {
-                finalAction = AlgoAction.Hold;
-                summary =
-                    $"HOLD: CCI={cciAction}, " +
-                    $"MACD={(macdDarkGreen ? "Strong" : "Weak")}, " +
-                    $"EMA20={(aboveEma20 ? "Above" : "Below")}";
+                action = AlgoAction.Hold;
+                summary = "HOLD (in position): CCI still above 100";
             }
         }
 
@@ -275,43 +133,35 @@ public class AlgoStrategy : IAlgoStrategy
         // =========================
 
         var reasons = string.Join(" | ",
-            new[] { macd, cci, ema }
-                .Where(r => r != null)
-                .Select(r =>
-                {
-                    var displayAction =
-                        (r!.Action == AlgoAction.Buy && hasOpenPosition) ||
-                        (r.Action == AlgoAction.Sell && !hasOpenPosition)
-                            ? AlgoAction.Hold
-                            : r.Action;
-
-                    return $"[{displayAction}] {r.Reason}";
-                })
+            results.Select(r =>
+                $"[{r.Action}] {r.Reason}")
         );
 
         return new AlgoResult(
             Symbol: symbol.Symbol,
-            Action: finalAction,
-            Price: avgPrice,
+            Action: action,
+            Price: price,
             Reason: $"{summary} | {reasons}",
             Timestamp: DateTime.UtcNow,
-            Macd: macdData,
-            Crossover: macd?.Crossover ?? CrossoverStatus.None,
             CciValue: cci?.CciValue,
             CciSignal: cci?.CciSignal,
-            Ema20Value: ema20,
+            Macd: macd?.Macd,
+            MacdSignal: macd?.MacdSignal,
+            Ema20Value: ema?.Ema20Value,
             Ema20Signal: ema?.Ema20Signal
         );
     }
 
-    private AlgoResult Hold(ScannerRowViewModel symbol, string reason) =>
-    new(
-        Symbol: symbol.Symbol,
-        Action: AlgoAction.Hold,
-        Price: symbol.LastPrice,
-        Reason: reason,
-        Timestamp: DateTime.UtcNow
-    );
+    // =========================
+    // Helpers
+    // =========================
 
+    private static AlgoResult Hold(ScannerRowViewModel symbol, string reason) =>
+        new(
+            Symbol: symbol.Symbol,
+            Action: AlgoAction.Hold,
+            Price: symbol.LastPrice,
+            Reason: reason,
+            Timestamp: DateTime.UtcNow
+        );
 }
-

@@ -65,19 +65,16 @@
 
                         <Grid RowDefinitions="Auto,Auto,Auto"
                               RowSpacing="4">
-                            <!-- Filters Row -->
-                            <ScrollView Grid.Row="0"
-                                        x:Name="FiltersScroll"
-                                        Orientation="Horizontal"
-                                        HorizontalScrollBarVisibility="Never"
-                                        VerticalOptions="Center"
-                                        Scrolled="OnFiltersScrollScrolled">
-                                <HorizontalStackLayout Spacing="6"
-                                                       VerticalOptions="Center"
-                                                       Padding="0,4">
-                                    <!-- Exchange Filter -->
-                                    <HorizontalStackLayout Spacing="4"
-                                                           VerticalOptions="Center">
+                                <!-- Filters Row -->
+                                <FlexLayout Grid.Row="0"
+                                            Direction="Row"
+                                            Wrap="Wrap"
+                                            AlignItems="Center"
+                                            AlignContent="Start"
+                                            JustifyContent="Start">
+                                        <!-- Exchange Filter -->
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
                                         <Label Text="Exchange"
                                                FontSize="11"
                                                TextColor="{StaticResource OnSurfaceVariantDark}"
@@ -177,9 +174,9 @@
                                            VerticalOptions="Center"/>
 
                                     <!-- Top N Filter -->
-                                    <HorizontalStackLayout Spacing="4"
-                                                           VerticalOptions="Center">
-                                        <Label Text="Top N"
+                                        <HorizontalStackLayout Spacing="4"
+                                                               VerticalOptions="Center">
+                                            <Label Text="Top N"
                                                FontSize="11"
                                                TextColor="{StaticResource OnSurfaceVariantDark}"
                                                VerticalOptions="Center"/>
@@ -188,14 +185,16 @@
                                                 HeightRequest="28"
                                                 FontSize="11"
                                                 WidthRequest="80"/>
-                                    </HorizontalStackLayout>
-                                </HorizontalStackLayout>
-                            </ScrollView>
+                                        </HorizontalStackLayout>
+                                </FlexLayout>
 
-                            <!-- Buttons Row -->
-                            <HorizontalStackLayout Grid.Row="1"
-                                                   Spacing="8"
-                                                   VerticalOptions="Center">
+                                <!-- Buttons Row -->
+                                <FlexLayout Grid.Row="1"
+                                            Direction="Row"
+                                            Wrap="Wrap"
+                                            AlignItems="Center"
+                                            AlignContent="Start"
+                                            JustifyContent="Start">
                                 <!-- Auto-refresh control -->
                                 <controls:AutoRefreshControl
                                     AutoRefreshEnabled="{Binding AutoRefreshEnabled, Mode=TwoWay}"
@@ -207,7 +206,8 @@
                                         Command="{Binding RefreshCommand}"
                                         FontSize="12"
                                         Padding="8,6"
-                                        HeightRequest="32"/>
+                                        HeightRequest="32"
+                                        Margin="8,0,0,0"/>
 
                                 <!-- Reset button -->
                                 <Button Text="Reset Filters"
@@ -215,8 +215,9 @@
                                         Command="{Binding ResetFiltersCommand}"
                                         FontSize="12"
                                         Padding="8,6"
-                                        HeightRequest="32"/>
-                            </HorizontalStackLayout>
+                                        HeightRequest="32"
+                                        Margin="8,0,0,0"/>
+                            </FlexLayout>
 
                             <!-- Error Message -->
                             <Label Grid.Row="2"

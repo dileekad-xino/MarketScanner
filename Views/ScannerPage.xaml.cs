@@ -9,6 +9,8 @@ namespace MarketScanner.Views;
 public partial class ScannerPage : ContentPage
 {
     private readonly ColumnLayoutService _layout;
+    private readonly double[] _preferredColumnWidths = new double[ColumnLayoutService.ColumnCount];
+    private double _lastFittedViewportWidth;
 
     public ScannerPage(ColumnLayoutService layout)
     {
@@ -24,6 +26,9 @@ public partial class ScannerPage : ContentPage
 
         // Set up CollectionView with shared columns
         SetupCollectionView();
+
+        CapturePreferredColumnWidths();
+        _layout.ColumnsChanged += OnLayoutColumnsChanged;
     }
 
     public ScannerPage(ScannerViewModel viewModel, ColumnLayoutService layout) : this(layout)
@@ -389,6 +394,69 @@ public partial class ScannerPage : ContentPage
         // Disposal will happen when app closes via App lifecycle
     }
 
+    private void OnLayoutColumnsChanged(object? sender, EventArgs e)
+    {
+        CapturePreferredColumnWidths();
+        FitColumnsToViewport();
+    }
+
+    private void CapturePreferredColumnWidths()
+    {
+        for (int i = 0; i < ColumnLayoutService.ColumnCount; i++)
+        {
+            _preferredColumnWidths[i] = _layout.Get(i);
+        }
+    }
+
+    private void FitColumnsToViewport()
+    {
+        if (TableScroll == null || HeaderGrid == null) return;
+        if (HeaderGrid.ColumnDefinitions.Count < ColumnLayoutService.ColumnCount) return;
+
+        var viewportWidth = TableScroll.Width;
+        if (viewportWidth <= 0) return;
+
+        if (Math.Abs(viewportWidth - _lastFittedViewportWidth) < 2)
+            return;
+
+        _lastFittedViewportWidth = viewportWidth;
+
+        var count = ColumnLayoutService.ColumnCount;
+        var min = ColumnLayoutService.MinWidth;
+        var preferredTotal = _preferredColumnWidths.Sum();
+        var minTotal = min * count;
+        var targetTotal = Math.Max(viewportWidth, minTotal);
+        var applyPreferred = targetTotal >= preferredTotal;
+
+        var widths = new double[count];
+        if (applyPreferred)
+        {
+            Array.Copy(_preferredColumnWidths, widths, count);
+        }
+        else
+        {
+            var shrinkNeeded = preferredTotal - targetTotal;
+            var shrinkableTotal = _preferredColumnWidths.Sum(w => Math.Max(0, w - min));
+            var shrinkFactor = shrinkableTotal > 0 ? Math.Min(1.0, shrinkNeeded / shrinkableTotal) : 1.0;
+
+            for (int i = 0; i < count; i++)
+            {
+                var shrinkable = Math.Max(0, _preferredColumnWidths[i] - min);
+                widths[i] = _preferredColumnWidths[i] - (shrinkable * shrinkFactor);
+            }
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            var col = HeaderGrid.ColumnDefinitions[i];
+            var current = col.Width.Value;
+            if (Math.Abs(current - widths[i]) > 0.5)
+            {
+                col.Width = new GridLength(widths[i], GridUnitType.Absolute);
+            }
+        }
+    }
+
     private bool _isSyncingScroll = false;
 
     private void OnTableScrollScrolled(object? sender, ScrolledEventArgs e)
@@ -401,12 +469,6 @@ public partial class ScannerPage : ContentPage
         if (BottomScrollBar != null)
         {
             BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
-        }
-
-        // Sync filters scroll
-        if (FiltersScroll != null)
-        {
-            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
         }
 
         _isSyncingScroll = false;
@@ -424,39 +486,14 @@ public partial class ScannerPage : ContentPage
             TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
         }
 
-        // Sync filters scroll
-        if (FiltersScroll != null)
-        {
-            FiltersScroll.ScrollToAsync(e.ScrollX, 0, false);
-        }
-
-        _isSyncingScroll = false;
-    }
-
-    private void OnFiltersScrollScrolled(object? sender, ScrolledEventArgs e)
-    {
-        if (_isSyncingScroll) return;
-
-        _isSyncingScroll = true;
-
-        // Sync table scroll
-        if (TableScroll != null)
-        {
-            TableScroll.ScrollToAsync(e.ScrollX, TableScroll.ScrollY, false);
-        }
-
-        // Sync bottom scrollbar
-        if (BottomScrollBar != null)
-        {
-            BottomScrollBar.ScrollToAsync(e.ScrollX, 0, false);
-        }
-
         _isSyncingScroll = false;
     }
 
     protected override void OnSizeAllocated(double width, double height)
     {
         base.OnSizeAllocated(width, height);
+
+        FitColumnsToViewport();
 
         // Update bottom scrollbar track width to match table content width
         if (TableScroll != null && ScrollBarTrack != null)
@@ -468,16 +505,6 @@ public partial class ScannerPage : ContentPage
             }
         }
 
-        // Sync filters scroll content width with table content width
-        if (TableScroll != null && FiltersScroll != null)
-        {
-            var tableContentWidth = TableScroll.ContentSize.Width;
-            if (tableContentWidth > 0)
-            {
-                // The filters HorizontalStackLayout will naturally size to its content
-                // We just need to ensure they're in sync when scrolling
-            }
-        }
     }
 
     private void OnFilterTextChanged(object sender, TextChangedEventArgs e)

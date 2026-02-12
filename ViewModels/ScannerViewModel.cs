@@ -123,6 +123,7 @@ public partial class ScannerViewModel : ObservableObject
 
     private readonly Debounce _debounce = new(TimeSpan.FromMilliseconds(50)); // very responsive for production use
     private readonly Debounce _priceDebouncer = new(TimeSpan.FromMilliseconds(800)); // longer delay for price to prevent rescans on each keystroke
+    private readonly Debounce _liveTickFilterDebouncer = new(TimeSpan.FromMilliseconds(400)); // throttle live re-ordering after tick bursts
 
     // Auto-refresh timer fields
     private CancellationTokenSource? _autoCts;
@@ -381,6 +382,7 @@ public partial class ScannerViewModel : ObservableObject
             // Get current scan-level filter values
             var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
             var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
+            var minVol = ParseDecimalSafe(VolumeMinText) ?? 100000;
             const string product = "stocks";  // Always stocks
             var exchange = IsAnyValue(Exchange) ? "us stocks" : Exchange.ToLowerInvariant();
 
@@ -409,8 +411,10 @@ public partial class ScannerViewModel : ObservableObject
             try
             {
                 rows = (_scanner is IbkrGatewayService ibkrGateway)
-                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, product, exchange, TopN, _cts.Token)
+                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, TopN, _cts.Token)
                     : await _scanner.ScanAsync(_cts.Token);
+                await ApplyFiltersAsync();
+
             }
             catch (Exception ex) when (IsConnectivityOrTimeout(ex))
             {
@@ -442,29 +446,29 @@ public partial class ScannerViewModel : ObservableObject
                     ScannerItems.Clear();
                     _rowLookup.Clear();
 
-                foreach (var row in rows)
-                {
-                    var rowVm = new ScannerRowViewModel
+                    foreach (var row in rows)
                     {
-                        Symbol = row.Symbol,
-                        Company = row.Company ?? row.Symbol,
-                        Region = "United States",  // Always US
-                        Product = row.Meta.Product ?? "Stocks",
-                        Exchange = row.Meta.Exchange ?? Exchange,
-                        LastPrice = (double)row.LastPrice,
-                        PrevClose = (double)row.LastPrice, // Will be updated by market data
-                        Volume = (long)row.Volume,
-                        AvgVolume = (long)row.AvgVolume
-                    };
-                    // RelativeVolume is auto-calculated in ScannerRowViewModel
-                    _rowLookup[row.Symbol] = rowVm;
-                    ScannerItems.Add(rowVm);
-                }
+                        var rowVm = new ScannerRowViewModel
+                        {
+                            Symbol = row.Symbol,
+                            Company = row.Company ?? row.Symbol,
+                            Region = "United States",  // Always US
+                            Product = row.Meta.Product ?? "Stocks",
+                            Exchange = row.Meta.Exchange ?? Exchange,
+                            LastPrice = (double)row.LastPrice,
+                            PrevClose = (double)row.LastPrice, // Will be updated by market data
+                            Volume = (long)row.Volume,
+                            AvgVolume = (long)row.AvgVolume
+                        };
+                        // RelativeVolume is auto-calculated in ScannerRowViewModel
+                        _rowLookup[row.Symbol] = rowVm;
+                        ScannerItems.Add(rowVm);
+                    }
 
-                _logger.LogInformation("Created {Count} ScannerRowViewModel instances", ScannerItems.Count);
+                    _logger.LogInformation("Created {Count} ScannerRowViewModel instances", ScannerItems.Count);
 
-                // Store as immutable snapshot (baseline for filtering)
-                _snapshot = ScannerItems.ToArray();
+                    // Store as immutable snapshot (baseline for filtering)
+                    _snapshot = ScannerItems.ToArray();
                 });
             }
             catch (InvalidOperationException)
@@ -649,6 +653,13 @@ public partial class ScannerViewModel : ObservableObject
 
             if (!_disposed && processedCount > 0)
             {
+                // Re-apply existing filter/sort pipeline after live ticks so initial and live ordering
+                // follows Change% without adding a second sort path.
+                if (_pendingInitialTicks == null)
+                {
+                    _ = _liveTickFilterDebouncer.ExecuteAsync(ApplyFiltersAsync);
+                }
+
                 DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
             }
         });
@@ -1486,6 +1497,12 @@ public partial class ScannerViewModel : ObservableObject
         try
         {
             _priceDebouncer.Dispose();
+        }
+        catch (ObjectDisposedException) { }
+
+        try
+        {
+            _liveTickFilterDebouncer.Dispose();
         }
         catch (ObjectDisposedException) { }
 

@@ -47,175 +47,183 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="4"/>
                 </Border.StrokeShape>
-                
+
                 <!-- Scanner Content with Filters -->
                 <Grid RowDefinitions="Auto,*,Auto"
                       BackgroundColor="{StaticResource BackgroundDark}">
-                    
+
                     <!-- Filters Panel (fixed at top) -->
                     <Border Grid.Row="0"
-                                StrokeThickness="1"
-                                Stroke="{StaticResource BorderDark}"
-                                BackgroundColor="{StaticResource SurfaceDark}"
-                                Padding="6"
-                                Margin="8,8,8,4">
-                            <Border.StrokeShape>
-                                <RoundRectangle CornerRadius="4"/>
-                            </Border.StrokeShape>
-                            
-                            <Grid RowDefinitions="Auto,Auto,Auto"
-                                  RowSpacing="4">
-                                <!-- Filters Row -->
-                                <ScrollView Grid.Row="0"
-                                            x:Name="FiltersScroll"
-                                            Orientation="Horizontal"
-                                            HorizontalScrollBarVisibility="Never"
-                                            VerticalOptions="Center"
-                                            Scrolled="OnFiltersScrollScrolled">
-                                    <HorizontalStackLayout Spacing="6"
-                                                           VerticalOptions="Center"
-                                                           Padding="0,4">
-                                        <!-- Exchange Filter -->
-                                        <HorizontalStackLayout Spacing="4"
-                                                               VerticalOptions="Center">
-                                            <Label Text="Exchange"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Picker ItemsSource="{Binding ExchangeOptions}"
-                                                    SelectedItem="{Binding Exchange, Mode=TwoWay}"
-                                                    HeightRequest="28"
-                                                    FontSize="11"
-                                                    WidthRequest="100"/>
-                                        </HorizontalStackLayout>
-                                        
-                                        <!-- Separator -->
-                                        <Label Text="|"
+                            StrokeThickness="1"
+                            Stroke="{StaticResource BorderDark}"
+                            BackgroundColor="{StaticResource SurfaceDark}"
+                            Padding="6"
+                            Margin="8,8,8,4">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="4"/>
+                        </Border.StrokeShape>
+
+                        <Grid RowDefinitions="Auto,Auto,Auto"
+                              RowSpacing="4">
+                            <!-- Filters Row -->
+                            <ScrollView Grid.Row="0"
+                                        x:Name="FiltersScroll"
+                                        Orientation="Horizontal"
+                                        HorizontalScrollBarVisibility="Never"
+                                        VerticalOptions="Center"
+                                        Scrolled="OnFiltersScrollScrolled">
+                                <HorizontalStackLayout Spacing="6"
+                                                       VerticalOptions="Center"
+                                                       Padding="0,4">
+                                    <!-- Exchange Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center">
+                                        <Label Text="Exchange"
                                                FontSize="11"
                                                TextColor="{StaticResource OnSurfaceVariantDark}"
-                                               Margin="4,0"
                                                VerticalOptions="Center"/>
-                                        
-                                        <!-- Price Range Filter -->
-                                        <HorizontalStackLayout Spacing="4"
-                                                               VerticalOptions="Center">
-                                            <Label Text="Price Range"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Entry Text="{Binding MinPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="Min"
-                                                   HeightRequest="28"
-                                                   FontSize="11"
-                                                   WidthRequest="60"
-                                                   Keyboard="Numeric"
-                                                   TextChanged="OnFilterTextChanged"/>
-                                            <Label Text="to"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Entry Text="{Binding MaxPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="Max"
-                                                   HeightRequest="28"
-                                                   FontSize="11"
-                                                   WidthRequest="60"
-                                                   Keyboard="Numeric"
-                                                   TextChanged="OnFilterTextChanged"/>
-                                        </HorizontalStackLayout>
-                                        
-                                        <!-- Separator -->
-                                        <Label Text="|"
-                                               FontSize="11"
-                                               TextColor="{StaticResource OnSurfaceVariantDark}"
-                                               Margin="4,0"
-                                               VerticalOptions="Center"/>
-                                        
-                                        <!-- Min Vol Filter -->
-                                        <HorizontalStackLayout Spacing="4"
-                                                               VerticalOptions="Center">
-                                            <Label Text="Min Vol"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Entry Text="{Binding VolumeMinText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="e.g., 100000"
-                                                   HeightRequest="28"
-                                                   FontSize="11"
-                                                   WidthRequest="80"
-                                                   Keyboard="Numeric"
-                                                   TextChanged="OnFilterTextChanged"/>
-                                        </HorizontalStackLayout>
-                                        
-                                        <!-- Separator -->
-                                        <Label Text="|"
-                                               FontSize="11"
-                                               TextColor="{StaticResource OnSurfaceVariantDark}"
-                                               Margin="4,0"
-                                               VerticalOptions="Center"/>
-                                        
-                                        <!-- Min Chg% Filter -->
-                                        <HorizontalStackLayout Spacing="4"
-                                                               VerticalOptions="Center">
-                                            <Label Text="Min Chg%"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Entry Text="{Binding MinChangePercentText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
-                                                   Placeholder="e.g., 5"
-                                                   HeightRequest="28"
-                                                   FontSize="11"
-                                                   WidthRequest="60"
-                                                   Keyboard="Numeric"
-                                                   TextChanged="OnFilterTextChanged"/>
-                                        </HorizontalStackLayout>
-                                        
-                                        <!-- Separator -->
-                                        <Label Text="|"
-                                               FontSize="11"
-                                               TextColor="{StaticResource OnSurfaceVariantDark}"
-                                               Margin="4,0"
-                                               VerticalOptions="Center"/>
-                                        
-                                        <!-- Top N Filter -->
-                                        <HorizontalStackLayout Spacing="4"
-                                                               VerticalOptions="Center">
-                                            <Label Text="Top N"
-                                                   FontSize="11"
-                                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                   VerticalOptions="Center"/>
-                                            <Picker ItemsSource="{Binding TopNOptions}"
-                                                    SelectedItem="{Binding TopN, Mode=TwoWay}"
-                                                    HeightRequest="28"
-                                                    FontSize="11"
-                                                    WidthRequest="80"/>
-                                        </HorizontalStackLayout>
+                                        <Picker ItemsSource="{Binding ExchangeOptions}"
+                                                SelectedItem="{Binding Exchange, Mode=TwoWay}"
+                                                HeightRequest="28"
+                                                FontSize="11"
+                                                WidthRequest="100"/>
                                     </HorizontalStackLayout>
-                                </ScrollView>
-                                
-                                <!-- Buttons Row -->
-                                <HorizontalStackLayout Grid.Row="1"
-                                                       Spacing="8"
-                                                       VerticalOptions="Center">
-                                    <!-- Auto-refresh control -->
-                                    <controls:AutoRefreshControl
-                                        AutoRefreshEnabled="{Binding AutoRefreshEnabled, Mode=TwoWay}"
-                                        RefreshIntervalSeconds="{Binding RefreshIntervalSeconds, Mode=TwoWay}"/>
-                                    
-                                    <!-- Reset button -->
-                                    <Button Text="Reset Filters"
-                                            Style="{StaticResource ResetButtonStyle}"
-                                            Command="{Binding ResetFiltersCommand}"
-                                            FontSize="12"
-                                            Padding="8,6"
-                                            HeightRequest="32"/>
+
+                                    <!-- Separator -->
+                                    <Label Text="|"
+                                           FontSize="11"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           Margin="4,0"
+                                           VerticalOptions="Center"/>
+
+                                    <!-- Price Range Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center">
+                                        <Label Text="Price Range"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Entry Text="{Binding MinPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                               Placeholder="Min"
+                                               HeightRequest="28"
+                                               FontSize="11"
+                                               WidthRequest="60"
+                                               Keyboard="Numeric"
+                                               TextChanged="OnFilterTextChanged"/>
+                                        <Label Text="to"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Entry Text="{Binding MaxPriceText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                               Placeholder="Max"
+                                               HeightRequest="28"
+                                               FontSize="11"
+                                               WidthRequest="60"
+                                               Keyboard="Numeric"
+                                               TextChanged="OnFilterTextChanged"/>
+                                    </HorizontalStackLayout>
+
+                                    <!-- Separator -->
+                                    <Label Text="|"
+                                           FontSize="11"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           Margin="4,0"
+                                           VerticalOptions="Center"/>
+
+                                    <!-- Min Vol Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center">
+                                        <Label Text="Min Vol"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Entry Text="{Binding VolumeMinText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                               Placeholder="e.g., 100000"
+                                               HeightRequest="28"
+                                               FontSize="11"
+                                               WidthRequest="80"
+                                               Keyboard="Numeric"
+                                               TextChanged="OnFilterTextChanged"/>
+                                    </HorizontalStackLayout>
+
+                                    <!-- Separator -->
+                                    <Label Text="|"
+                                           FontSize="11"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           Margin="4,0"
+                                           VerticalOptions="Center"/>
+
+                                    <!-- Min Chg% Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center">
+                                        <Label Text="Min Chg%"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Entry Text="{Binding MinChangePercentText, Mode=TwoWay, Converter={StaticResource NullableDecimal}}"
+                                               Placeholder="e.g., 5"
+                                               HeightRequest="28"
+                                               FontSize="11"
+                                               WidthRequest="60"
+                                               Keyboard="Numeric"
+                                               TextChanged="OnFilterTextChanged"/>
+                                    </HorizontalStackLayout>
+
+                                    <!-- Separator -->
+                                    <Label Text="|"
+                                           FontSize="11"
+                                           TextColor="{StaticResource OnSurfaceVariantDark}"
+                                           Margin="4,0"
+                                           VerticalOptions="Center"/>
+
+                                    <!-- Top N Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center">
+                                        <Label Text="Top N"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Picker ItemsSource="{Binding TopNOptions}"
+                                                SelectedItem="{Binding TopN, Mode=TwoWay}"
+                                                HeightRequest="28"
+                                                FontSize="11"
+                                                WidthRequest="80"/>
+                                    </HorizontalStackLayout>
                                 </HorizontalStackLayout>
-                                
-                                <!-- Error Message -->
-                                <Label Grid.Row="2"
-                                       Text="{Binding ErrorMessage}"
-                                       IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
-                                       Style="{StaticResource ErrorLabelStyle}"/>
-                            </Grid>
+                            </ScrollView>
+
+                            <!-- Buttons Row -->
+                            <HorizontalStackLayout Grid.Row="1"
+                                                   Spacing="8"
+                                                   VerticalOptions="Center">
+                                <!-- Auto-refresh control -->
+                                <controls:AutoRefreshControl
+                                    AutoRefreshEnabled="{Binding AutoRefreshEnabled, Mode=TwoWay}"
+                                    RefreshIntervalSeconds="{Binding RefreshIntervalSeconds, Mode=TwoWay}"/>
+
+                                <!-- Manual refresh button -->
+                                <Button Text="Manual Refresh"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Command="{Binding RefreshCommand}"
+                                        FontSize="12"
+                                        Padding="8,6"
+                                        HeightRequest="32"/>
+
+                                <!-- Reset button -->
+                                <Button Text="Reset Filters"
+                                        Style="{StaticResource ResetButtonStyle}"
+                                        Command="{Binding ResetFiltersCommand}"
+                                        FontSize="12"
+                                        Padding="8,6"
+                                        HeightRequest="32"/>
+                            </HorizontalStackLayout>
+
+                            <!-- Error Message -->
+                            <Label Grid.Row="2"
+                                   Text="{Binding ErrorMessage}"
+                                   IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
+                                   Style="{StaticResource ErrorLabelStyle}"/>
+                        </Grid>
                     </Border>
 
                     <!-- Scanner Table (scrollable vertically) -->
@@ -223,7 +231,7 @@
                                 Orientation="Vertical"
                                 VerticalScrollBarVisibility="Default">
                         <Grid BackgroundColor="{StaticResource BackgroundDark}">
-                            
+
                             <ScrollView x:Name="TableScroll"
                                         Orientation="Horizontal"
                                         HorizontalScrollBarVisibility="Always"
@@ -254,163 +262,163 @@
                                             </Label.Behaviors>
                                         </Label>
 
-                                            <!-- Company Header -->
-                                            <Label Grid.Column="1"
-                                                   Text="Company"
-                                                   Style="{StaticResource HeaderLabel}"
-                                                   HorizontalOptions="Start">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="1"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Company Header -->
+                                        <Label Grid.Column="1"
+                                               Text="Company"
+                                               Style="{StaticResource HeaderLabel}"
+                                               HorizontalOptions="Start">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="1"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Change % Header -->
-                                            <Label Grid.Column="2"
-                                                   Text="Change %"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="2"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Change % Header -->
+                                        <Label Grid.Column="2"
+                                               Text="Change %"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="2"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Change Header -->
-                                            <Label Grid.Column="3"
-                                                   Text="Change"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="3"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Change Header -->
+                                        <Label Grid.Column="3"
+                                               Text="Change"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="3"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Last Price Header -->
-                                            <Label Grid.Column="4"
-                                                   Text="Last Price"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="4"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Last Price Header -->
+                                        <Label Grid.Column="4"
+                                               Text="Last Price"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="4"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- RV Header -->
-                                            <Label Grid.Column="5"
-                                                   Text="RV"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="5"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- RV Header -->
+                                        <Label Grid.Column="5"
+                                               Text="RV"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="5"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Volume Header -->
-                                            <Label Grid.Column="6"
-                                                   Text="Volume"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="6"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Volume Header -->
+                                        <Label Grid.Column="6"
+                                               Text="Volume"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="6"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Avg Vol Header -->
-                                            <Label Grid.Column="7"
-                                                   Text="Avg Vol"
-                                                   Style="{StaticResource HeaderLabel}">
-                                                <Label.GestureRecognizers>
-                                                    <TapGestureRecognizer NumberOfTapsRequired="2"/>
-                                                </Label.GestureRecognizers>
-                                                <Label.Behaviors>
-                                                    <beh:HeaderAutoSizeBehavior ColumnIndex="7"/>
-                                                </Label.Behaviors>
-                                            </Label>
+                                        <!-- Avg Vol Header -->
+                                        <Label Grid.Column="7"
+                                               Text="Avg Vol"
+                                               Style="{StaticResource HeaderLabel}">
+                                            <Label.GestureRecognizers>
+                                                <TapGestureRecognizer NumberOfTapsRequired="2"/>
+                                            </Label.GestureRecognizers>
+                                            <Label.Behaviors>
+                                                <beh:HeaderAutoSizeBehavior ColumnIndex="7"/>
+                                            </Label.Behaviors>
+                                        </Label>
 
-                                            <!-- Resize Grips -->
-                                            <BoxView Grid.Column="0"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="0"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <!-- Resize Grips -->
+                                        <BoxView Grid.Column="0"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="0"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="1"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="1"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="1"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="1"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="2"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="2"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="2"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="2"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="3"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="3"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="3"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="3"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="4"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="4"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="4"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="4"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="5"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="5"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="5"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="5"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="6"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="6"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="6"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="6"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
-                                            <BoxView Grid.Column="7"
-                                                     Style="{StaticResource HeaderGrip}"
-                                                     Margin="-4,0,-4,0"
-                                                     ZIndex="10">
-                                                <BoxView.Behaviors>
-                                                    <utils:ColumnResizeBehavior ColumnIndex="7"/>
-                                                </BoxView.Behaviors>
-                                            </BoxView>
+                                        <BoxView Grid.Column="7"
+                                                 Style="{StaticResource HeaderGrip}"
+                                                 Margin="-4,0,-4,0"
+                                                 ZIndex="10">
+                                            <BoxView.Behaviors>
+                                                <utils:ColumnResizeBehavior ColumnIndex="7"/>
+                                            </BoxView.Behaviors>
+                                        </BoxView>
 
                                     </Grid>
 
@@ -423,34 +431,34 @@
                                                     ItemsUpdatingScrollMode="KeepScrollOffset"
                                                     ItemsLayout="VerticalList">
 
-                                            <!-- DataTemplate is set programmatically in code-behind -->
+                                        <!-- DataTemplate is set programmatically in code-behind -->
 
-                                            <CollectionView.EmptyView>
-                                                <StackLayout VerticalOptions="CenterAndExpand"
-                                                             HorizontalOptions="CenterAndExpand">
-                                                    <ActivityIndicator IsRunning="{Binding IsLoading}"
-                                                                       IsVisible="{Binding IsLoading}"
-                                                                       Color="{StaticResource PrimaryDark}"/>
-                                                    <Label Text="No data available. Adjust filters or try again."
-                                                           IsVisible="{Binding IsLoading, Converter={StaticResource InvertedBoolConverter}}"
-                                                           TextColor="{StaticResource OnSurfaceVariantDark}"
-                                                           HorizontalOptions="Center"
-                                                           Margin="0,16,0,0"/>
-                                                    <Label Text="{Binding ErrorMessage}"
-                                                           IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
-                                                           Style="{StaticResource ErrorLabelStyle}"/>
-                                                    <Button Text="Retry"
-                                                            Command="{Binding LoadDataCommand}"
-                                                            IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
-                                                            Style="{StaticResource PrimaryButtonStyle}"/>
-                                                </StackLayout>
+                                        <CollectionView.EmptyView>
+                                            <StackLayout VerticalOptions="CenterAndExpand"
+                                                         HorizontalOptions="CenterAndExpand">
+                                                <ActivityIndicator IsRunning="{Binding IsLoading}"
+                                                                   IsVisible="{Binding IsLoading}"
+                                                                   Color="{StaticResource PrimaryDark}"/>
+                                                <Label Text="No data available. Adjust filters or try again."
+                                                       IsVisible="{Binding IsLoading, Converter={StaticResource InvertedBoolConverter}}"
+                                                       TextColor="{StaticResource OnSurfaceVariantDark}"
+                                                       HorizontalOptions="Center"
+                                                       Margin="0,16,0,0"/>
+                                                <Label Text="{Binding ErrorMessage}"
+                                                       IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
+                                                       Style="{StaticResource ErrorLabelStyle}"/>
+                                                <Button Text="Retry"
+                                                        Command="{Binding LoadDataCommand}"
+                                                        IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
+                                                        Style="{StaticResource PrimaryButtonStyle}"/>
+                                            </StackLayout>
                                         </CollectionView.EmptyView>
                                     </CollectionView>
                                 </Grid>
                             </ScrollView>
                         </Grid>
                     </ScrollView>
-                    
+
                     <!-- Fixed Horizontal Scrollbar at Bottom (always accessible) -->
                     <ScrollView Grid.Row="2"
                                 x:Name="BottomScrollBar"
@@ -474,7 +482,7 @@
                   Grid.Row="1"
                   ColumnDefinitions="Auto,*"
                   ColumnSpacing="8">
-                
+
                 <!-- Quotes Tile -->
                 <Border Grid.Column="0"
                         StrokeThickness="1"
@@ -484,7 +492,7 @@
                     <Border.StrokeShape>
                         <RoundRectangle CornerRadius="4"/>
                     </Border.StrokeShape>
-                    
+
                     <Grid RowDefinitions="Auto,*"
                           BackgroundColor="{StaticResource BackgroundDark}">
                         <Label Grid.Row="0"
@@ -497,8 +505,8 @@
                         <ScrollView Grid.Row="1"
                                     Orientation="Vertical"
                                     VerticalScrollBarVisibility="Default">
-                            <local:QuoteContentView 
-                                BindingContext="{Binding QuoteViewModel}" />
+                            <local:QuoteContentView
+                                BindingContext="{Binding QuoteViewModel}"/>
                         </ScrollView>
                     </Grid>
                 </Border>
@@ -509,65 +517,65 @@
                         Stroke="{StaticResource BorderDark}"
                         BackgroundColor="{StaticResource BackgroundDark}"
                         HorizontalOptions="FillAndExpand">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="4"/>
-                </Border.StrokeShape>
-                
-                <Grid RowDefinitions="Auto,*"
-                      BackgroundColor="{StaticResource BackgroundDark}"
-                      HorizontalOptions="FillAndExpand"
-                      VerticalOptions="FillAndExpand">
-                    <Label Grid.Row="0"
-                           Text="Algo Runner"
-                           TextColor="{StaticResource OnSurfaceDark}"
-                           FontSize="16"
-                           FontAttributes="Bold"
-                           Padding="10,8"
-                           BackgroundColor="{StaticResource SurfaceDark}"/>
-                    <Grid Grid.Row="1"
-                          ColumnDefinitions="*,*,*"
-                          ColumnSpacing="8"
-                          Padding="8"
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="4"/>
+                    </Border.StrokeShape>
+
+                    <Grid RowDefinitions="Auto,*"
+                          BackgroundColor="{StaticResource BackgroundDark}"
                           HorizontalOptions="FillAndExpand"
                           VerticalOptions="FillAndExpand">
-                        <local:AlgoRunnerTile Grid.Column="0"
-                                              x:Name="AlgoTile0"
-                                              HorizontalOptions="FillAndExpand"
-                                              VerticalOptions="FillAndExpand"/>
-                        <local:AlgoRunnerTile Grid.Column="1"
-                                              x:Name="AlgoTile1"
-                                              HorizontalOptions="FillAndExpand"
-                                              VerticalOptions="FillAndExpand"/>
-                        <local:AlgoRunnerTile Grid.Column="2"
-                                              x:Name="AlgoTile2"
-                                              HorizontalOptions="FillAndExpand"
-                                              VerticalOptions="FillAndExpand"/>
-                        
-                        <!-- Empty view when no algos -->
-                        <Label Grid.Column="0"
-                               Grid.ColumnSpan="3"
-                               Text="No active algo runners. Right-click a symbol in Quotes to run an algorithm."
+                        <Label Grid.Row="0"
+                               Text="Algo Runner"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="16"
+                               FontAttributes="Bold"
+                               Padding="10,8"
+                               BackgroundColor="{StaticResource SurfaceDark}"/>
+                        <Grid Grid.Row="1"
+                              ColumnDefinitions="*,*,*"
+                              ColumnSpacing="8"
+                              Padding="8"
+                              HorizontalOptions="FillAndExpand"
+                              VerticalOptions="FillAndExpand">
+                            <local:AlgoRunnerTile Grid.Column="0"
+                                                  x:Name="AlgoTile0"
+                                                  HorizontalOptions="FillAndExpand"
+                                                  VerticalOptions="FillAndExpand"/>
+                            <local:AlgoRunnerTile Grid.Column="1"
+                                                  x:Name="AlgoTile1"
+                                                  HorizontalOptions="FillAndExpand"
+                                                  VerticalOptions="FillAndExpand"/>
+                            <local:AlgoRunnerTile Grid.Column="2"
+                                                  x:Name="AlgoTile2"
+                                                  HorizontalOptions="FillAndExpand"
+                                                  VerticalOptions="FillAndExpand"/>
+
+                            <!-- Empty view when no algos -->
+                            <Label Grid.Column="0"
+                                   Grid.ColumnSpan="3"
+                                   Text="No active algo runners. Right-click a symbol in Quotes to run an algorithm."
+                                   TextColor="{StaticResource OnSurfaceVariantDark}"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center"
+                                   Padding="20"
+                                   HorizontalTextAlignment="Center"
+                                   IsVisible="{Binding AlgoRunners.Count, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=-1}"/>
+                        </Grid>
+
+                        <!-- Show "+ X more algos" if there are more than 3 -->
+                        <Label Grid.Row="1"
+                               Text="{Binding BindingContext.MoreAlgosText, Source={x:Reference ScannerPageRoot}}"
+                               IsVisible="{Binding BindingContext.HasMoreAlgos, Source={x:Reference ScannerPageRoot}}"
                                TextColor="{StaticResource OnSurfaceVariantDark}"
-                               HorizontalOptions="Center"
-                               VerticalOptions="Center"
-                               Padding="20"
-                               HorizontalTextAlignment="Center"
-                               IsVisible="{Binding AlgoRunners.Count, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=-1}"/>
+                               FontSize="12"
+                               HorizontalOptions="End"
+                               VerticalOptions="End"
+                               Margin="8"
+                               Padding="8"
+                               BackgroundColor="{StaticResource SurfaceDark}"/>
                     </Grid>
-                    
-                    <!-- Show "+ X more algos" if there are more than 3 -->
-                    <Label Grid.Row="1"
-                           Text="{Binding BindingContext.MoreAlgosText, Source={x:Reference ScannerPageRoot}}"
-                           IsVisible="{Binding BindingContext.HasMoreAlgos, Source={x:Reference ScannerPageRoot}}"
-                           TextColor="{StaticResource OnSurfaceVariantDark}"
-                           FontSize="12"
-                           HorizontalOptions="End"
-                           VerticalOptions="End"
-                           Margin="8"
-                           Padding="8"
-                           BackgroundColor="{StaticResource SurfaceDark}"/>
-                </Grid>
-            </Border>
+                </Border>
             </Grid>
 
             <!-- Right Column - Top: Watchlists Tile -->
@@ -579,7 +587,7 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="4"/>
                 </Border.StrokeShape>
-                
+
                 <Grid RowDefinitions="Auto,*"
                       BackgroundColor="{StaticResource BackgroundDark}">
                     <Label Grid.Row="0"
@@ -592,8 +600,8 @@
                     <ScrollView Grid.Row="1"
                                 Orientation="Vertical"
                                 VerticalScrollBarVisibility="Default">
-                        <local:WatchlistContentView 
-                            BindingContext="{Binding WatchlistViewModel}" />
+                        <local:WatchlistContentView
+                            BindingContext="{Binding WatchlistViewModel}"/>
                     </ScrollView>
                 </Grid>
             </Border>

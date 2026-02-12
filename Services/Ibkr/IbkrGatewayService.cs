@@ -170,12 +170,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(CancellationToken ct)
     {
-        return await ScanAsync(2, 20, "stocks", "us stocks", 50, ct);
+        return await ScanAsync(2, 20, 100000, "stocks", "us stocks", 50, ct);
     }
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(
         decimal minPrice = 2,
         decimal maxPrice = 20,
+        decimal minVol = 100000,
         string product = "stocks",
         string exchange = "us stocks",
         int topN = 50,
@@ -231,7 +232,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             new TagValue("priceAbove", minPrice.ToString("F2")),
             new TagValue("priceBelow", maxPrice.ToString("F2")),
-            new TagValue("volumeAbove", "100000")  // Keep volume filter (even though it's broken)
+            new TagValue("volumeAbove", minVol.ToString("F2"))  // Keep volume filter (even though it's broken)
         };
 
         // Add exchange filter if specified (not "any" or "us stocks")

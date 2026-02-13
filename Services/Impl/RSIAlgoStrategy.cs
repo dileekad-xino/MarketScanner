@@ -1,6 +1,7 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
 using MarketScanner.Services;
+using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
 using System.Linq;
@@ -137,13 +138,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
     }
 
     private string GetIntervalString(int intervalSeconds) =>
-        intervalSeconds switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{intervalSeconds}s"
-        };
+        TimeframeMap.ToIntervalKey(intervalSeconds);
 
     /// <summary>
     /// Calculates RSI period based on candlestick interval for professional intraday scalping.
@@ -156,6 +151,7 @@ public class RSIAlgoStrategy : IAlgoStrategy
             15 => 8,   // 15s: period 7-9, use 8 (middle)
             30 => 10,  // 30s: period 9-12, use 10 (middle)
             60 => 14,  // 1m: period 14 (standard)
+            300 => 14, // 5m: keep standard 14
             _ => intervalSeconds <= 20 ? 8 : intervalSeconds <= 45 ? 10 : 14  // Fallback logic
         };
     }

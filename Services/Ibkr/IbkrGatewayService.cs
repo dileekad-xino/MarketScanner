@@ -137,7 +137,21 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             while (_client.IsConnected())
             {
                 _signal.waitForSignal();
-                reader.processMsgs();
+                try
+                {
+                    reader.processMsgs();
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogError(ex, "IBKR reader parse error. Disconnecting to recover cleanly.");
+                    try { _client.eDisconnect(); } catch { }
+                    _connected = false;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "IBKR reader loop error. Continuing.");
+                }
             }
         }, ct);
 
@@ -302,11 +316,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
         finally
         {
-            _client.cancelScannerSubscription(requestId);
+            if (_currentScannerId == requestId)
+            {
+                _client.cancelScannerSubscription(requestId);
+            }
             _scannerWaiters.TryRemove(requestId, out _);
             _scannerBuffers.TryRemove(requestId, out _);
             _scannerRequestIds.TryRemove(requestId, out _); // Clean up Error 162 suppression tracking
-            _currentScannerId = 0; // Reset current scanner ID
+            if (_currentScannerId == requestId)
+            {
+                _currentScannerId = 0; // Reset current scanner ID
+            }
         }
     }
 
@@ -692,7 +712,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     /// Fetches historical bars for candlestick preloading.
     /// </summary>
     /// <param name="symbol">The symbol to fetch bars for</param>
-    /// <param name="barSizeSeconds">Bar size in seconds (30 or 60)</param>
+    /// <param name="barSizeSeconds">Bar size in seconds (15, 30, 60, 300)</param>
     /// <param name="count">Number of bars to fetch</param>
     /// <returns>List of candlesticks in chronological order (oldest first)</returns>
     public async Task<IReadOnlyList<Candlestick>> GetHistoricalBarsAsync(
@@ -708,13 +728,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         _histBarsWaiters[reqId] = tcs;
         _histBarsBuffers[reqId] = new List<Candlestick>();
 
-        var interval = barSizeSeconds switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{barSizeSeconds}s"
-        };
+        var interval = TimeframeMap.ToIntervalKey(barSizeSeconds);
         _histBarsMetadata[reqId] = (symbol, interval);
 
         var contract = new Contract
@@ -744,13 +758,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             durationStr = $"{days} D";
         }
 
-        var barSizeStr = barSizeSeconds switch
-        {
-            15 => "15 secs",
-            30 => "30 secs",
-            60 => "1 min",
-            _ => "30 secs"
-        };
+        var barSizeStr = TimeframeMap.ToIbBarSize(barSizeSeconds);
 
         try
         {
@@ -828,19 +836,9 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         var reqId = GetNextReqId();
 
         // Convert barSizeSeconds to IBKR format
-        string barSize = barSizeSeconds switch
-        {
-            5 => "5 secs",
-            10 => "10 secs",
-            15 => "15 secs",
-            30 => "30 secs",
-            60 => "1 min",
-            120 => "2 mins",
-            300 => "5 mins",
-            _ => $"{barSizeSeconds} secs"
-        };
+        string barSize = TimeframeMap.ToIbBarSize(barSizeSeconds);
 
-        var interval = GetIntervalString(barSizeSeconds);
+        var interval = TimeframeMap.ToIntervalKey(barSizeSeconds);
         _streamingHistReqMetadata[reqId] = (symbol, interval);
 
         var contract = new Contract
@@ -887,21 +885,6 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _streamingHistReqMetadata.TryRemove(reqId, out _);
             _logger.LogInformation("Cancelled streaming historical bars for {Symbol} (reqId={ReqId})", symbol, reqId);
         }
-    }
-
-    private string GetIntervalString(int seconds)
-    {
-        return seconds switch
-        {
-            5 => "5s",
-            10 => "10s",
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            120 => "2min",
-            300 => "5min",
-            _ => $"{seconds}s"
-        };
     }
 
     #endregion
@@ -968,6 +951,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 _logger.LogDebug("scannerDataEnd: reqId={ReqId}, rows={Count}", reqId, buffer.Count);
 
                 tcs.TrySetResult(buffer);
+                if (_currentScannerId == reqId)
+                {
+                    _currentScannerId = 0;
+                }
             }
             else
             {
@@ -1312,6 +1299,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             _logger.LogWarning("IBKR Scanner Error {Code}: {Message}. This usually indicates region/exchange mismatch or missing subscriptions.", errorCode, errorMsg);
         }
+        else if (errorCode == 365)
+        {
+            // "No scanner subscription found for ticker id" can occur if the scanner ended before a cancel call.
+            _logger.LogWarning("IBKR Scanner Warning {Code} for reqId {Id}: {Message}", errorCode, id, errorMsg);
+        }
         else if (errorCode == 165)
         {
             _logger.LogWarning("IBKR Error 165 (Session Conflict): {Message}. Scanner will return empty results. This is expected if another TWS/Gateway instance is running.", errorMsg);
@@ -1350,7 +1342,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // Handle scanner-specific errors
         if (_scannerWaiters.TryGetValue(id, out var tcs))
         {
-            if (errorCode == 165 || errorCode == 162 || errorCode == 492)
+            if (errorCode == 165 || errorCode == 162 || errorCode == 492 || errorCode == 365)
             {
                 // Complete with empty result for these errors
                 tcs.TrySetResult(new List<ScannerRow>());

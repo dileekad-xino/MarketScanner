@@ -1,5 +1,6 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
 using System.Linq;
@@ -157,11 +158,5 @@ public sealed class MacdStrategy : IAlgoStrategy
         );
 
     private static string GetIntervalString(int s) =>
-        s switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{s}s"
-        };
+        TimeframeMap.ToIntervalKey(s);
 }

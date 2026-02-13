@@ -7,9 +7,9 @@ public class CandlestickConfig
 {
     /// <summary>
     /// Time interval in seconds for building candlesticks (default: 30).
-    /// Supported values: 15, 30, 60 (1 minute).
+    /// Supported values: 15, 30, 60 (1 minute), 300 (5 minutes).
     /// </summary>
-    public int IntervalSeconds { get; set; } = 60;
+    public int IntervalSeconds { get; set; } = 300;
 
     /// <summary>
     /// Maximum number of candlesticks to store per symbol (rolling window).

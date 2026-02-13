@@ -435,13 +435,7 @@ public class CandlestickBuilder : ICandlestickBuilder, IDisposable
 
     private string GetIntervalString(int intervalSeconds)
     {
-        return intervalSeconds switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{intervalSeconds}s"
-        };
+        return TimeframeMap.ToIntervalKey(intervalSeconds);
     }
 
     public void SubscribeSymbol(string symbol)

@@ -1,5 +1,6 @@
 using MarketScanner.Config;
 using MarketScanner.Models;
+using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
 
@@ -53,7 +54,7 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
         {
             var settings = await _settingsService.GetAsync(ct).ConfigureAwait(false);
             var interval = GetIntervalString(_config.IntervalSeconds);
-            var cciPeriod = CalculateCciPeriod(_config.IntervalSeconds);
+            var cciPeriod = settings.Period > 1 ? settings.Period : 20;
             var threshold = settings.Overbought;
 
             // =========================
@@ -67,9 +68,9 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
                     .OrderBy(c => c.Timestamp)
                     .ToList();
 
-                if (candles.Count == 0)
+                if (candles.Count < cciPeriod)
                 {
-                    return Neutral(symbol, "No candles available for CCI initialization");
+                    return Neutral(symbol, $"Insufficient candles for CCI initialization (need {cciPeriod}, got {candles.Count})");
                 }
 
                 _cciEngine.Initialize(symbol.Symbol, interval, candles, cciPeriod);
@@ -127,25 +128,6 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
         );
 
     private static string GetIntervalString(int intervalSeconds) =>
-        intervalSeconds switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{intervalSeconds}s"
-        };
+        TimeframeMap.ToIntervalKey(intervalSeconds);
 
-    /// <summary>
-    /// Calculates CCI period based on timeframe (scalping-friendly).
-    /// </summary>
-    private static int CalculateCciPeriod(int intervalSeconds) =>
-        intervalSeconds switch
-        {
-            15 => 8,
-            30 => 10,
-            60 => 14,
-            _ => intervalSeconds <= 20 ? 8
-               : intervalSeconds <= 45 ? 10
-               : 14
-        };
 }

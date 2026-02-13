@@ -98,7 +98,7 @@ public sealed class AlgoStrategy : IAlgoStrategy
         if (!hasOpenPosition)
         {
             // ---------- ENTRY ----------
-            if (cciAbove && macdDarkGreen && aboveEma20)
+            if (cciAbove /*&& macdDarkGreen*/ && aboveEma20)
             {
                 action = AlgoAction.Buy;
                 summary = "BUY: CCI>100 + MACD dark green + price above EMA20";
@@ -109,7 +109,7 @@ public sealed class AlgoStrategy : IAlgoStrategy
                 summary =
                     $"HOLD (flat): " +
                     $"CCI={(cciAbove ? ">100" : "<=100")}, " +
-                    $"MACD={(macdDarkGreen ? "DarkGreen" : "NotDarkGreen")}, " +
+                    // $"MACD={(macdDarkGreen ? "DarkGreen" : "NotDarkGreen")}, " +
                     $"EMA20={(aboveEma20 ? "Above" : "Below")}";
             }
         }

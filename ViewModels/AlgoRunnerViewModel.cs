@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using MarketScanner.Models;
 using MarketScanner.Services;
 using MarketScanner.Services.Ibkr;
+using MarketScanner.Utilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using MarketScanner.Services.Impl;
@@ -197,6 +198,12 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             _logger.LogInformation("Starting continuous monitoring for {Symbol} with algorithm {AlgorithmName}",
                 SelectedSymbol.Symbol, _algorithm.Name);
+
+            // Warm up candle storage before first strategy evaluation (important for 5-min bars).
+            if (_candlestickBuilder != null)
+            {
+                await _candlestickBuilder.PreloadCandlesticksAsync(SelectedSymbol.Symbol, _cancellationTokenSource.Token);
+            }
 
             // Run initial algo execution
             await ExecuteAlgoOnceAsync();
@@ -953,13 +960,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
     private string GetIntervalString(int intervalSeconds)
     {
-        return intervalSeconds switch
-        {
-            15 => "15s",
-            30 => "30s",
-            60 => "1min",
-            _ => $"{intervalSeconds}s"
-        };
+        return TimeframeMap.ToIntervalKey(intervalSeconds);
     }
 
     private void UpdateProfitLoss()

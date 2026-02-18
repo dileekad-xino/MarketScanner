@@ -336,9 +336,9 @@
                                             </Label.Behaviors>
                                         </Label>
 
-                                        <!-- Avg Vol Header -->
+                                        <!-- Avg Vol (30D) Header -->
                                         <Label Grid.Column="7"
-                                               Text="Avg Vol"
+                                               Text="Avg Vol (30D)"
                                                Style="{StaticResource HeaderLabel}">
                                             <Label.GestureRecognizers>
                                                 <TapGestureRecognizer NumberOfTapsRequired="2"/>

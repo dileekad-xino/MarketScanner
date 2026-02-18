@@ -33,6 +33,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private const int TICK_DELAYED_OPEN = 73;
     private const int TICK_DELAYED_HIGH = 69;
     private const int TICK_DELAYED_LOW = 70;
+    private const int TICK_RT_VOLUME = 48;
+    private const int TICK_DELAYED_RT_VOLUME = 77;
+    private const int US_STOCK_VOLUME_MULTIPLIER = 100;
+    private const int AvgVolumeLookbackTradingDays = 30;
+    private const string AvgVolumeRequestDuration = "60 D";
 
     private readonly ILogger<IbkrGatewayService> _logger;
     private readonly IConfiguration _config;
@@ -104,6 +109,16 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         public decimal? PrevClose { get; set; }
         public long? Volume { get; set; }
         public long? AverageVolume { get; set; }
+    }
+
+    /// <summary>
+    /// IBKR often reports US stock market-data volume in lots.
+    /// Normalize to shares so scanner/filter thresholds match user expectations.
+    /// </summary>
+    private static long NormalizeReportedVolume(long rawVolume)
+    {
+        if (rawVolume <= 0) return rawVolume;
+        return checked(rawVolume * US_STOCK_VOLUME_MULTIPLIER);
     }
 
     public IbkrGatewayService(ILogger<IbkrGatewayService> logger, IConfiguration config)
@@ -307,7 +322,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             var symbols = rows.Select(r => r.Symbol).ToList();
             SubscribeToMarketData(symbols, isFromScanner: true);
 
-            return rows;
+            // Initial hydration pass from reqMktData (last/close/volume) so first render
+            // is less likely to show all-zero pending values.
+            await WaitForInitialMarketDataAsync(symbols, TimeSpan.FromSeconds(2), ct);
+            return HydrateScannerRowsFromMarketState(rows);
         }
         catch (TaskCanceledException)
         {
@@ -328,6 +346,97 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 _currentScannerId = 0; // Reset current scanner ID
             }
         }
+    }
+
+    private async Task WaitForInitialMarketDataAsync(
+        IReadOnlyCollection<string> symbols,
+        TimeSpan maxWait,
+        CancellationToken ct)
+    {
+        if (symbols.Count == 0)
+            return;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < maxWait && !ct.IsCancellationRequested)
+        {
+            var ready = 0;
+            foreach (var symbol in symbols)
+            {
+                if (_marketState.TryGetValue(symbol, out var state) &&
+                    state.LastPrice.HasValue && state.LastPrice.Value > 0 &&
+                    state.Volume.HasValue && state.Volume.Value > 0)
+                {
+                    ready++;
+                }
+            }
+
+            if (ready == symbols.Count)
+            {
+                break;
+            }
+
+            await Task.Delay(50, ct);
+        }
+    }
+
+    private IReadOnlyList<ScannerRow> HydrateScannerRowsFromMarketState(IReadOnlyList<ScannerRow> rows)
+    {
+        var enriched = new List<ScannerRow>(rows.Count);
+
+        foreach (var row in rows)
+        {
+            if (!_marketState.TryGetValue(row.Symbol, out var state))
+            {
+                enriched.Add(row);
+                continue;
+            }
+
+            var lastPrice = state.LastPrice.HasValue && state.LastPrice.Value > 0
+                ? state.LastPrice.Value
+                : row.LastPrice;
+
+            var prevClose = state.PrevClose.HasValue && state.PrevClose.Value > 0
+                ? state.PrevClose.Value
+                : 0m;
+
+            var volume = state.Volume.HasValue && state.Volume.Value > 0
+                ? state.Volume.Value
+                : row.Volume;
+
+            var avgVolume = state.AverageVolume.HasValue && state.AverageVolume.Value > 0
+                ? state.AverageVolume.Value
+                : _averageVolumes.GetValueOrDefault(row.Symbol, row.AvgVolume);
+
+            var change = row.Change;
+            var changePct = row.ChangePct;
+            if (prevClose > 0 && lastPrice > 0)
+            {
+                change = lastPrice - prevClose;
+                changePct = (change / prevClose) * 100m;
+            }
+
+            var relativeVolume = avgVolume > 0
+                ? (decimal)VolumeCalculations.CalculateRelativeVolume(volume, avgVolume)
+                : row.RelativeVolume;
+
+            enriched.Add(new ScannerRow
+            {
+                ReqId = row.ReqId,
+                Symbol = row.Symbol,
+                Company = row.Company,
+                LastPrice = lastPrice,
+                Change = change,
+                ChangePct = changePct,
+                RelativeVolume = relativeVolume,
+                Volume = volume,
+                AvgVolume = avgVolume,
+                Float = row.Float,
+                High52W = row.High52W,
+                Meta = row.Meta
+            });
+        }
+
+        return enriched;
     }
 
     public Task CancelScannerAsync()
@@ -497,7 +606,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // Note: Close price will come from historical data (most recent bar's close) and from streaming ticks
             try
             {
-                _client.reqMktData(tickerId, contract, "", false, false, null);
+                // Request RTVolume (233) so cumulative day volume can be read from tickString (48/77).
+                _client.reqMktData(tickerId, contract, "233", false, false, null);
                 _logger.LogInformation("SubscribeToMarketData: Requested streaming market data for {Symbol} (tickerId={TickerId})", symbol, tickerId);
             }
             catch (Exception ex)
@@ -526,8 +636,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         try
         {
             _client.reqHistoricalData(
-                reqId, contract, "", "30 D", "1 day", "TRADES", 1, 1, false, null);
-            _logger.LogInformation("RequestHistoricalData: Requested historical data for {Symbol} (reqId={ReqId}) to get average volume and previous close", symbol, reqId);
+                reqId, contract, "", AvgVolumeRequestDuration, "1 day", "TRADES", 1, 1, false, null);
+            _logger.LogInformation(
+                "RequestHistoricalData: Requested {Duration} historical data for {Symbol} (reqId={ReqId}) to compute {LookbackDays}-day avg volume and previous close",
+                AvgVolumeRequestDuration, symbol, reqId, AvgVolumeLookbackTradingDays);
         }
         catch (Exception ex)
         {
@@ -1008,8 +1120,9 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         if (!_idToSymbol.TryGetValue(tickerId, out var symbol)) return;
         if (!_marketState.TryGetValue(symbol, out var state)) return;
 
-        state.Volume = (long)size;
-        _logger.LogDebug("Volume update: {Symbol} = {Volume:N0}", symbol, (long)size);
+        var normalizedVolume = NormalizeReportedVolume((long)size);
+        state.Volume = normalizedVolume;
+        _logger.LogDebug("Volume update: {Symbol} raw={RawVolume:N0} normalized={NormalizedVolume:N0}", symbol, (long)size, normalizedVolume);
         EmitTickUpdate(symbol, state);
     }
 
@@ -1127,7 +1240,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
         if (_histVolumes.TryGetValue(reqId, out var volumes) && bar.Volume > 0)
         {
-            volumes.Add(bar.Volume);
+            volumes.Add(NormalizeReportedVolume(bar.Volume));
         }
 
         // Track the most recent close price (historical data comes in reverse chronological order, so first bar is most recent)
@@ -1181,7 +1294,9 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             if (volumes.Count > 0)
             {
-                var avgVolume = (long)volumes.Average();
+                // IBKR daily bars arrive newest-first for this request; use the most recent N bars.
+                var lookbackCount = Math.Min(AvgVolumeLookbackTradingDays, volumes.Count);
+                var avgVolume = (long)volumes.Take(lookbackCount).Average();
                 _averageVolumes[symbol] = avgVolume;
 
                 if (_marketState.TryGetValue(symbol, out var state))
@@ -1192,13 +1307,15 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                     if (_histClosePrices.TryGetValue(reqId, out var closePrice) && closePrice.HasValue)
                     {
                         state.PrevClose = (decimal)closePrice.Value;
-                        _logger.LogInformation("historicalDataEnd: {Symbol} - Setting PrevClose={PrevClose} from historical data, avgVolume={AvgVolume:N0} (received {BarCount} bars)",
-                            symbol, closePrice.Value, avgVolume, volumes.Count);
+                        _logger.LogInformation(
+                            "historicalDataEnd: {Symbol} - Setting PrevClose={PrevClose} from historical data, avgVolume({LookbackDays}D)={AvgVolume:N0} (used {UsedBarCount}/{TotalBarCount} bars)",
+                            symbol, closePrice.Value, AvgVolumeLookbackTradingDays, avgVolume, lookbackCount, volumes.Count);
                     }
                     else
                     {
-                        _logger.LogWarning("historicalDataEnd: {Symbol} - No close price in historical data (received {BarCount} bars, avgVolume={AvgVolume:N0})",
-                            symbol, volumes.Count, avgVolume);
+                        _logger.LogWarning(
+                            "historicalDataEnd: {Symbol} - No close price in historical data (used {UsedBarCount}/{TotalBarCount} bars, avgVolume({LookbackDays}D)={AvgVolume:N0})",
+                            symbol, lookbackCount, volumes.Count, AvgVolumeLookbackTradingDays, avgVolume);
                     }
 
                     EmitTickUpdate(symbol, state);
@@ -1355,7 +1472,28 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void currentTime(long time) { }
     public void tickOptionComputation(int tickerId, int field, double impliedVolatility, double delta, double optPrice, double pvDividend, double gamma, double vega, double theta, double undPrice) { }
     public void tickGeneric(int tickerId, int field, double value) { }
-    public void tickString(int tickerId, int field, string value) { }
+    public void tickString(int tickerId, int field, string value)
+    {
+        if (field != TICK_RT_VOLUME && field != TICK_DELAYED_RT_VOLUME) return;
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!_idToSymbol.TryGetValue(tickerId, out var symbol)) return;
+        if (!_marketState.TryGetValue(symbol, out var state)) return;
+
+        // RTVolume format:
+        // lastPrice;lastSize;lastTime;totalVolume;vwap;singleTradeFlag
+        var parts = value.Split(';');
+        if (parts.Length < 4) return;
+
+        if (!long.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var totalVolume))
+            return;
+
+        if (totalVolume <= 0) return;
+
+        var normalizedVolume = NormalizeReportedVolume(totalVolume);
+        state.Volume = normalizedVolume;
+        _logger.LogDebug("RTVolume update: {Symbol} raw={RawVolume:N0} normalized={NormalizedVolume:N0}", symbol, totalVolume, normalizedVolume);
+        EmitTickUpdate(symbol, state);
+    }
     public void tickEFP(int tickerId, int tickType, double basisPoints, string formattedBasisPoints, double impliedFuture, int holdDays, string futureLastTradeDate, double dividendImpact, double dividendsToLastTradeDate) { }
     public void tickSize(int tickerId, int field, int size)
     {

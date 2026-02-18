@@ -33,20 +33,22 @@ namespace MarketScanner.Core
             {
                 var r = rows[i];
 
-                // Allow items with pending price/volume data (will update within 1-2 seconds)
-                // But still apply change% filter since ChangePercent is calculated from live data
-                bool hasPendingPriceVolume = r.LastPrice == 0 || r.Volume == 0;
+                // Price may be pending briefly after refresh; volume should still be filterable.
+                bool hasPendingPrice = r.LastPrice == 0;
+                long effectiveVolume = r.Volume > 0 ? r.Volume : r.AvgVolume;
 
                 // Apply metadata filters
                 if (!Matches(r.Exchange, c.Exchange)) return false;
 
-                // Price/volume filters - skip if data is pending
-                if (!hasPendingPriceVolume)
+                // Price filters - skip only while price is pending.
+                if (!hasPendingPrice)
                 {
                     if (c.MinPrice is { } pmin && r.LastPrice < (double)pmin) return false;
                     if (c.MaxPrice is { } pmax && r.LastPrice > (double)pmax) return false;
-                    if (c.MinVolume is { } vmin && r.Volume < vmin) return false;
                 }
+
+                // Volume filter is always enforced.
+                if (c.MinVolume is { } vmin && effectiveVolume < vmin) return false;
 
                 // User-defined filters - ALWAYS apply (uses live tick data)
                 // MinChgPct comparison: both values are percentages (e.g., 9.0 means 9%)

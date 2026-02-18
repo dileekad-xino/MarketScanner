@@ -535,23 +535,10 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 .OrderBy(vm => vm.Symbol)
                 .ToList();
 
-            // Clear and rebuild QuoteItems: active first, then dropped (must be on UI thread)
+            // Reconcile in-place to avoid CollectionView bounce/flicker.
             await _dispatcher.OnUIAsync(() =>
             {
-                // Clear all items first to prevent duplicates
-                QuoteItems.Clear();
-
-                // Add active items first (in scanner order)
-                foreach (var item in activeItems)
-                {
-                    QuoteItems.Add(item);
-                }
-
-                // Add dropped items below active ones
-                foreach (var item in droppedItems)
-                {
-                    QuoteItems.Add(item);
-                }
+                ReconcileQuoteItems(activeItems, droppedItems);
             });
         }
         catch (Exception ex)
@@ -1021,5 +1008,65 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
         QuoteItems.Clear();
         _rowCache.Clear();
+    }
+
+    private void ReconcileQuoteItems(
+        IReadOnlyList<ScannerRowViewModel> activeItems,
+        IReadOnlyList<ScannerRowViewModel> droppedItems)
+    {
+        var target = new List<ScannerRowViewModel>(activeItems.Count + droppedItems.Count);
+        target.AddRange(activeItems);
+        target.AddRange(droppedItems);
+
+        var targetSymbols = new HashSet<string>(
+            target.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)),
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var i = QuoteItems.Count - 1; i >= 0; i--)
+        {
+            var symbol = QuoteItems[i].Symbol;
+            if (string.IsNullOrWhiteSpace(symbol) || !targetSymbols.Contains(symbol))
+            {
+                if (ReferenceEquals(SelectedQuoteItem, QuoteItems[i]))
+                    SelectedQuoteItem = null;
+                QuoteItems.RemoveAt(i);
+            }
+        }
+
+        for (var targetIndex = 0; targetIndex < target.Count; targetIndex++)
+        {
+            var desired = target[targetIndex];
+            if (targetIndex < QuoteItems.Count &&
+                string.Equals(QuoteItems[targetIndex].Symbol, desired.Symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var existingIndex = -1;
+            for (var i = targetIndex + 1; i < QuoteItems.Count; i++)
+            {
+                if (string.Equals(QuoteItems[i].Symbol, desired.Symbol, StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = i;
+                    break;
+                }
+            }
+
+            if (existingIndex >= 0)
+            {
+                QuoteItems.Move(existingIndex, targetIndex);
+            }
+            else
+            {
+                QuoteItems.Insert(targetIndex, desired);
+            }
+        }
+
+        while (QuoteItems.Count > target.Count)
+        {
+            if (ReferenceEquals(SelectedQuoteItem, QuoteItems[^1]))
+                SelectedQuoteItem = null;
+            QuoteItems.RemoveAt(QuoteItems.Count - 1);
+        }
     }
 }

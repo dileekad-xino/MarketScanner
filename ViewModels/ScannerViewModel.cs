@@ -45,7 +45,8 @@ public partial class ScannerViewModel : ObservableObject
     [ObservableProperty] private string _pageTitle = "Market Scanner"; // fallback default
 
     // Track previous scan-level filters for hybrid filtering
-    private (decimal minPrice, decimal maxPrice, string region, string product, string exchange, int topN)? _previousScanFilters;
+    // TopN is client-side only and intentionally excluded.
+    private (decimal minPrice, decimal maxPrice, string region, string product, string exchange)? _previousScanFilters;
 
     // Track symbols waiting for initial tick data (for MinChgPct filter)
     private HashSet<string>? _pendingInitialTicks;
@@ -122,6 +123,7 @@ public partial class ScannerViewModel : ObservableObject
 
     public List<string> ExchangeOptions { get; } = new() { "us stocks", "nasdaq", "nyse", "amex", "otc" };
     public List<int> TopNOptions { get; } = new() { 5, 10, 15, 20, 50 };
+    private int ScannerUniverseSize => TopNOptions.Count > 0 ? TopNOptions.Max() : 50;
 
     private readonly Debounce _debounce = new(TimeSpan.FromMilliseconds(50)); // very responsive for production use
     private readonly Debounce _priceDebouncer = new(TimeSpan.FromMilliseconds(800)); // longer delay for price to prevent rescans on each keystroke
@@ -246,7 +248,7 @@ public partial class ScannerViewModel : ObservableObject
             if (e.PropertyName == nameof(MinPriceText) || e.PropertyName == nameof(MaxPriceText))
             {
                 _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (price debouncer)", e.PropertyName);
-                _ = _priceDebouncer.ExecuteAsync(ApplyFiltersAsync);
+                _ = _priceDebouncer.ExecuteAsync(() => ApplyFiltersAsync());
             }
             else if (e.PropertyName?.StartsWith("Min") == true ||
                         e.PropertyName?.StartsWith("Max") == true ||
@@ -377,7 +379,7 @@ public partial class ScannerViewModel : ObservableObject
     private void DebouncedApply()
     {
         if (_disposed) return;
-        _ = _debounce.ExecuteAsync(ApplyFiltersAsync);
+        _ = _debounce.ExecuteAsync(() => ApplyFiltersAsync());
     }
 
     [RelayCommand]
@@ -425,7 +427,7 @@ public partial class ScannerViewModel : ObservableObject
                 var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
                 if (fallback != null && fallback.ActivateIfNeeded())
                 {
-                    var symbols = fallback.SelectSymbols(TopN, minPrice, maxPrice);
+                    var symbols = fallback.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
                     fallback.UpdateSymbols(symbols);
                     // Wait a moment for ticks to arrive if needed
                     var latest = await WaitForSnapshotsAsync(fallback, symbols, TimeSpan.FromMilliseconds(500));
@@ -444,9 +446,8 @@ public partial class ScannerViewModel : ObservableObject
             try
             {
                 rows = (_scanner is IbkrGatewayService ibkrGateway)
-                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, TopN, _cts.Token)
+                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, ScannerUniverseSize, _cts.Token)
                     : await _scanner.ScanAsync(_cts.Token);
-                await ApplyFiltersAsync();
 
             }
             catch (Exception ex) when (IsConnectivityOrTimeout(ex))
@@ -457,7 +458,7 @@ public partial class ScannerViewModel : ObservableObject
                 var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
                 if (fallback != null && fallback.ActivateIfNeeded())
                 {
-                    var symbols = fallback.SelectSymbols(TopN, minPrice, maxPrice);
+                    var symbols = fallback.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
                     fallback.UpdateSymbols(symbols);
                     // Wait a moment for ticks to arrive if needed
                     var latest = await WaitForSnapshotsAsync(fallback, symbols, TimeSpan.FromMilliseconds(500));
@@ -516,18 +517,14 @@ public partial class ScannerViewModel : ObservableObject
                 _logger.LogWarning(ex, "Error updating UI with scanner results");
             }
 
-            // Re-apply client-side filters (TopN, MinChangePercent, Volume)
-            // If MinChgPct filter is active, wait for all symbols to receive initial tick data
+            // Always apply current UI filters after refreshed snapshot is ready.
+            await ApplyFiltersAsync();
+
+            // If MinChgPct is active, schedule one additional apply when all initial ticks arrive.
             if (!string.IsNullOrWhiteSpace(MinChangePercentText))
             {
                 _pendingInitialTicks = new HashSet<string>(rows.Select(r => r.Symbol));
                 _logger.LogInformation("MinChgPct filter active - waiting for {Count} symbols to receive initial tick data", _pendingInitialTicks.Count);
-            }
-            else
-            {
-                // No MinChgPct filter - apply other filters immediately
-                await ApplyFiltersAsync();
-                // Note: SyncQuotesToVisibleAsync is called at the end of ApplyFiltersAsync if _linkedQuotes is true
             }
         }
         catch (OperationCanceledException)
@@ -690,7 +687,7 @@ public partial class ScannerViewModel : ObservableObject
                 // follows Change% without adding a second sort path.
                 if (_pendingInitialTicks == null)
                 {
-                    _ = _liveTickFilterDebouncer.ExecuteAsync(ApplyFiltersAsync);
+                    _ = _liveTickFilterDebouncer.ExecuteAsync(() => ApplyFiltersAsync(preserveCurrentOrder: true));
                 }
 
                 DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
@@ -744,7 +741,7 @@ public partial class ScannerViewModel : ObservableObject
 
     /// <summary>
     /// Determines if current filter changes require IBKR rescan (ScanFilters).
-    /// ScanFilters: price range, exchange, TopN → Replace Snapshot
+    /// ScanFilters: price range, exchange → Replace Snapshot
     /// ViewFilters: MinChgPct, volume → Derive ShownData from Snapshot
     /// </summary>
     private bool RequiresRescan()
@@ -754,10 +751,9 @@ public partial class ScannerViewModel : ObservableObject
         const string currentRegion = "us";  // Always US
         const string currentProduct = "stocks";  // Always stocks
         var currentExchange = IsAnyValue(Exchange) ? "us stocks" : Exchange.ToLowerInvariant();
-        var currentTopN = TopN;
-        // MinChgPct removed - it's client-side only, no re-scan needed
+        // MinChgPct, TopN, MinVolume are client-side only, no re-scan needed
 
-        var currentScanFilters = (currentMinPrice, currentMaxPrice, currentRegion, currentProduct, currentExchange, currentTopN);
+        var currentScanFilters = (currentMinPrice, currentMaxPrice, currentRegion, currentProduct, currentExchange);
 
         // If no previous scan, we need to scan
         if (_previousScanFilters == null)
@@ -784,7 +780,7 @@ public partial class ScannerViewModel : ObservableObject
     /// Always filters from Snapshot (not from filtered results) to support
     /// both tightening (10%→15%) and loosening (15%→10%) of filters.
     /// </summary>
-    private async Task ApplyFiltersAsync()
+    private async Task ApplyFiltersAsync(bool preserveCurrentOrder = false)
     {
         if (_disposed) return;
 
@@ -799,7 +795,7 @@ public partial class ScannerViewModel : ObservableObject
                 {
                     var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
                     var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
-                    var symbols = fb.SelectSymbols(TopN, minPrice, maxPrice);
+                    var symbols = fb.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
                     fb.UpdateSymbols(symbols);
                     var latest = fb.GetLatestSnapshots(symbols);
                     await SeedFromFallbackAsync(symbols, latest);
@@ -813,7 +809,7 @@ public partial class ScannerViewModel : ObservableObject
             }
             else
             {
-                _logger.LogInformation("Scan-level filter change (e.g. TopN, price, exchange) detected, triggering RefreshAsync for re-scan");
+                _logger.LogInformation("Scan-level filter change (price/exchange) detected, triggering RefreshAsync for re-scan");
                 await RefreshAsync();
                 return;
             }
@@ -832,7 +828,7 @@ public partial class ScannerViewModel : ObservableObject
         var epoch = Interlocked.Increment(ref _applyEpoch);
 
         // Build criteria (treat default labels as no-op)
-        // Note: TopN is now handled at IBKR level, not client-side
+        // TopN is client-side only.
         var criteria = new FilterEngine.Criteria(
 
             Exchange: IsAnyValue(Exchange) ? null : Exchange,
@@ -854,8 +850,8 @@ public partial class ScannerViewModel : ObservableObject
         _logger.LogInformation("=== SNAPSHOT DATA ({Count} stocks) ===", rows.Length);
         foreach (var row in rows.OrderByDescending(r => r.ChangePercent))
         {
-            _logger.LogInformation("  {Symbol}: Price=${Price:F2}, Change={Change:F2}%, Volume={Volume:N0}",
-                row.Symbol, row.LastPrice, row.ChangePercent, row.Volume);
+            _logger.LogInformation("  {Symbol}: Price=${Price:F2}, Change={Change:F2}%, Volume={Volume:N0}, AvgVol(30D)={AvgVolume:N0}",
+                row.Symbol, row.LastPrice, row.ChangePercent, row.Volume, row.AvgVolume);
         }
 
         if (_disposed) return;
@@ -884,23 +880,42 @@ public partial class ScannerViewModel : ObservableObject
             return; // stale compute – ignore
         }
 
-        _logger.LogInformation("FilterEngine.Apply returned {FilteredCount} of {TotalCount} items", result.TopIndices.Length, rows.Length);
-
-        // Log filtered results
-        _logger.LogInformation("=== FILTERED RESULTS ({Count} stocks passed) ===", result.TopIndices.Length);
-        foreach (var i in result.TopIndices.OrderByDescending(idx => rows[idx].ChangePercent))
+        // Build target order:
+        // - default: Change% sorted order from FilterEngine (refresh/filter changes)
+        // - live tick path: preserve existing visual order to avoid row jumpiness
+        var targetIndices = result.TopIndices;
+        if (preserveCurrentOrder && ScannerItems.Count > 0)
         {
-            var row = rows[i];
-            _logger.LogInformation("  {Symbol}: Price=${Price:F2}, Change={Change:F2}%, Volume={Volume:N0}",
-                row.Symbol, row.LastPrice, row.ChangePercent, row.Volume);
+            var currentOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < ScannerItems.Count; i++)
+            {
+                var symbol = ScannerItems[i].Symbol;
+                if (!string.IsNullOrWhiteSpace(symbol) && !currentOrder.ContainsKey(symbol))
+                    currentOrder[symbol] = i;
+            }
+
+            targetIndices = result.TopIndices
+                .OrderBy(i => currentOrder.TryGetValue(rows[i].Symbol, out var idx) ? idx : int.MaxValue)
+                .ThenBy(i => i)
+                .ToArray();
         }
 
-        // Marshal to UI thread once with the FILTERED set
+        _logger.LogInformation("FilterEngine.Apply returned {FilteredCount} of {TotalCount} items", result.TopIndices.Length, rows.Length);
+
+        // Log filtered results in the exact order rendered to UI.
+        _logger.LogInformation("=== FILTERED RESULTS ({Count} stocks passed) ===", targetIndices.Length);
+        foreach (var i in targetIndices)
+        {
+            var row = rows[i];
+            _logger.LogInformation("  {Symbol}: Price=${Price:F2}, Change={Change:F2}%, Volume={Volume:N0}, AvgVol(30D)={AvgVolume:N0}",
+                row.Symbol, row.LastPrice, row.ChangePercent, row.Volume, row.AvgVolume);
+        }
+
+        // Marshal to UI thread once with the filtered set
         await _dispatcher.OnUIAsync(() =>
         {
-            ScannerItems.Clear();
-            foreach (var i in result.TopIndices)
-                ScannerItems.Add(rows[i]);
+            var targets = targetIndices.Select(i => rows[i]).ToArray();
+            ReconcileScannerItems(targets);
 
             _logger.LogInformation("ScannerItems updated on UI thread with {Count} items", ScannerItems.Count);
 
@@ -912,6 +927,54 @@ public partial class ScannerViewModel : ObservableObject
 
         if (_linkedQuotes)
             await SyncQuotesToVisibleAsync();
+    }
+
+    private void ReconcileScannerItems(IReadOnlyList<ScannerRowViewModel> targetRows)
+    {
+        var targetSymbols = new HashSet<string>(
+            targetRows.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)),
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var i = ScannerItems.Count - 1; i >= 0; i--)
+        {
+            var symbol = ScannerItems[i].Symbol;
+            if (string.IsNullOrWhiteSpace(symbol) || !targetSymbols.Contains(symbol))
+                ScannerItems.RemoveAt(i);
+        }
+
+        for (var targetIndex = 0; targetIndex < targetRows.Count; targetIndex++)
+        {
+            var target = targetRows[targetIndex];
+            if (targetIndex < ScannerItems.Count &&
+                string.Equals(ScannerItems[targetIndex].Symbol, target.Symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var existingIndex = -1;
+            for (var i = targetIndex + 1; i < ScannerItems.Count; i++)
+            {
+                if (string.Equals(ScannerItems[i].Symbol, target.Symbol, StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = i;
+                    break;
+                }
+            }
+
+            if (existingIndex >= 0)
+            {
+                ScannerItems.Move(existingIndex, targetIndex);
+            }
+            else
+            {
+                ScannerItems.Insert(targetIndex, target);
+            }
+        }
+
+        while (ScannerItems.Count > targetRows.Count)
+        {
+            ScannerItems.RemoveAt(ScannerItems.Count - 1);
+        }
     }
 
     private async Task SyncQuotesToVisibleAsync()
@@ -1057,9 +1120,9 @@ public partial class ScannerViewModel : ObservableObject
                         // Always read current filter values fresh - don't use cached/defaults
                         var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
                         var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
-                        var topN = TopN; // Use current TopN value from ViewModel
-                        _logger.LogInformation("Auto-refresh using filters: MinPrice={MinPrice}, MaxPrice={MaxPrice}, TopN={TopN}", minPrice, maxPrice, topN);
-                        var symbols = fb.SelectSymbols(topN, minPrice, maxPrice);
+                        var topN = TopN; // client-side TopN
+                        _logger.LogInformation("Auto-refresh using filters: MinPrice={MinPrice}, MaxPrice={MaxPrice}, TopN(client)={TopN}, UniverseSize={UniverseSize}", minPrice, maxPrice, topN, ScannerUniverseSize);
+                        var symbols = fb.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
                         fb.UpdateSymbols(symbols);
                         var latest = await WaitForSnapshotsAsync(fb, symbols, TimeSpan.FromMilliseconds(500));
                         await SeedFromFallbackAsync(symbols, latest).ConfigureAwait(false);

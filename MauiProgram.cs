@@ -194,7 +194,9 @@ namespace MarketScanner
                     sp.GetRequiredService<ITradeService>(),
                     sp.GetRequiredService<IRsiSettingsService>(),
                     sp.GetRequiredService<IAlgoStrategy>(),
-                    sp.GetRequiredService<Services.AlgoRunnerManagerService>());
+                    sp.GetRequiredService<Services.AlgoRunnerManagerService>(),
+                    sp.GetRequiredService<IConfirmationDialogService>(),
+                    sp.GetRequiredService<IPositionClosureService>());
             });
             // WatchlistViewModel is created on-demand by ScannerViewModel
 

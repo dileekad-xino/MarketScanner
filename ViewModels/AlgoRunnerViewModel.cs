@@ -32,6 +32,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private readonly ICciSettingsService? _cciSettingsService;
     private readonly Services.Impl.EmaEngine? _emaEngine;
     private readonly IDispatcherService? _dispatcher;
+    private readonly IConfirmationDialogService? _confirmationDialogService;
     private CancellationTokenSource? _cancellationTokenSource;
     private IDisposable? _tickSubscription;
     private IDisposable? _streamingBarSubscription;
@@ -97,7 +98,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
         Services.Impl.CciEngine? cciEngine = null,
         ICciSettingsService? cciSettingsService = null,
         Services.Impl.EmaEngine? emaEngine = null,
-        IDispatcherService? dispatcher = null)
+        IDispatcherService? dispatcher = null,
+        IConfirmationDialogService? confirmationDialogService = null)
     {
         _algorithm = algorithm;
         _logger = logger;
@@ -114,6 +116,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
         _cciSettingsService = cciSettingsService;
         _emaEngine = emaEngine;
         _dispatcher = dispatcher;
+        _confirmationDialogService = confirmationDialogService;
     }
 
     public async Task InitializeAsync(ScannerRowViewModel symbol)
@@ -234,10 +237,30 @@ public partial class AlgoRunnerViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void StopAlgo()
+    private async Task StopAlgo()
     {
         try
         {
+            if (HasPosition && !PositionClosed)
+            {
+                var symbol = SelectedSymbol?.Symbol;
+                var shouldStop = _confirmationDialogService != null
+                    ? await _confirmationDialogService.ShowWarningAsync(
+                        WarningDialogType.StopAlgoWithOpenPosition, symbol)
+                    : await (Application.Current?.MainPage?.DisplayAlert(
+                        "Stop Algorithm",
+                        $"Stopping the algorithm will close the open position for {symbol ?? "this symbol"}. Continue?",
+                        "Stop",
+                        "Cancel") ?? Task.FromResult(false));
+
+                if (!shouldStop)
+                {
+                    return;
+                }
+
+                await ClosePositionAsync();
+            }
+
             _logger.LogInformation("Stopping algorithm for {Symbol}", SelectedSymbol?.Symbol);
 
             // Cancel streaming historical bars
@@ -1088,6 +1111,106 @@ public partial class AlgoRunnerViewModel : ObservableObject
         ProfitLoss = 0;
         ProfitLossPercent = 0;
         _logger.LogInformation("Position reset");
+    }
+
+    [RelayCommand]
+    private async Task ManualBuyAsync()
+    {
+        if (SelectedSymbol == null)
+        {
+            ErrorMessage = "No symbol selected.";
+            return;
+        }
+
+        if (HasPosition && !PositionClosed)
+        {
+            ErrorMessage = "Position already open.";
+            return;
+        }
+
+        try
+        {
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            EntryPrice = currentPrice;
+            ExitPrice = null;
+            _entryTime = DateTime.UtcNow;
+            HasPosition = true;
+            PositionClosed = false;
+            ErrorMessage = string.Empty;
+
+            Result = (Result ?? new AlgoResult(
+                Symbol: SelectedSymbol.Symbol,
+                Action: AlgoAction.Buy,
+                Price: SelectedSymbol.LastPrice,
+                Reason: string.Empty,
+                Timestamp: DateTime.UtcNow))
+                with
+                {
+                    Action = AlgoAction.Buy,
+                    Price = SelectedSymbol.LastPrice,
+                    Reason = $"Manual BUY at {currentPrice:C2}",
+                    Timestamp = DateTime.UtcNow
+                };
+
+            UpdateProfitLoss();
+            await SaveTradeAsync();
+
+            _logger.LogInformation("Manual BUY executed for {Symbol} at {Price:C2}", SelectedSymbol.Symbol, currentPrice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Manual BUY failed for {Symbol}", SelectedSymbol.Symbol);
+            ErrorMessage = $"Manual BUY failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ManualSellAsync()
+    {
+        if (SelectedSymbol == null)
+        {
+            ErrorMessage = "No symbol selected.";
+            return;
+        }
+
+        if (!HasPosition || PositionClosed)
+        {
+            ErrorMessage = "No open position to sell.";
+            return;
+        }
+
+        try
+        {
+            var currentPrice = (decimal)SelectedSymbol.LastPrice;
+            ExitPrice = currentPrice;
+            PositionClosed = true;
+            HasPosition = false;
+            ErrorMessage = string.Empty;
+
+            Result = (Result ?? new AlgoResult(
+                Symbol: SelectedSymbol.Symbol,
+                Action: AlgoAction.Sell,
+                Price: SelectedSymbol.LastPrice,
+                Reason: string.Empty,
+                Timestamp: DateTime.UtcNow))
+                with
+                {
+                    Action = AlgoAction.Sell,
+                    Price = SelectedSymbol.LastPrice,
+                    Reason = $"Manual SELL at {currentPrice:C2}",
+                    Timestamp = DateTime.UtcNow
+                };
+
+            UpdateProfitLoss();
+            await UpdateTradeAsync();
+
+            _logger.LogInformation("Manual SELL executed for {Symbol} at {Price:C2}", SelectedSymbol.Symbol, currentPrice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Manual SELL failed for {Symbol}", SelectedSymbol.Symbol);
+            ErrorMessage = $"Manual SELL failed: {ex.Message}";
+        }
     }
 
     private async Task SaveTradeAsync()

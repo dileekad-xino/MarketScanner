@@ -11,6 +11,7 @@
             <converters:InvertedBoolConverter x:Key="InvertedBoolConverter"/>
             <converters:BoolToOpacityConverter x:Key="BoolToOpacityConverter" TrueValue="0.5" FalseValue="1.0"/>
             <converters:BoolToColorConverter x:Key="BoolToColorConverter" TrueColor="#0f0f0f" FalseColor="#1a1a1a"/>
+            <converters:QuoteRowBackgroundConverter x:Key="QuoteRowBackgroundConverter"/>
         </ResourceDictionary>
     </ContentView.Resources>
 
@@ -163,15 +164,22 @@
             <CollectionView Grid.Row="1"
                             ItemsSource="{Binding QuoteItems}"
                             BackgroundColor="#1a1a1a"
-                            SelectionMode="None">
+                            SelectionMode="Single"
+                            SelectedItem="{Binding SelectedQuoteItem, Mode=TwoWay}">
 
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Grid ColumnDefinitions="100,100,80"
                               HeightRequest="32"
                               Padding="5,0"
-                              Opacity="{Binding IsDropped, Converter={StaticResource BoolToOpacityConverter}}"
-                              BackgroundColor="{Binding IsDropped, Converter={StaticResource BoolToColorConverter}}">
+                              Opacity="{Binding IsDropped, Converter={StaticResource BoolToOpacityConverter}}">
+                            <Grid.BackgroundColor>
+                                <MultiBinding Converter="{StaticResource QuoteRowBackgroundConverter}">
+                                    <Binding Path="." />
+                                    <Binding Path="BindingContext.SelectedQuoteItem" Source="{x:Reference QuoteRoot}" />
+                                    <Binding Path="IsDropped" />
+                                </MultiBinding>
+                            </Grid.BackgroundColor>
 
                             <!-- Right-click context menu -->
                             <FlyoutBase.ContextFlyout>

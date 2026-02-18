@@ -70,7 +70,7 @@
             <ScrollView Grid.Row="1"
                         Orientation="Vertical"
                         VerticalScrollBarVisibility="Default">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       Padding="5"
                       BackgroundColor="{StaticResource BackgroundDark}">
 
@@ -173,6 +173,26 @@
                                        VerticalOptions="Center"/>
                             </Grid>
 
+                            <Grid ColumnDefinitions="*,*"
+                                  ColumnSpacing="8">
+                                <Button Grid.Column="0"
+                                        Text="Buy"
+                                        Command="{Binding ManualBuyCommand}"
+                                        BackgroundColor="{StaticResource PrimaryDark}"
+                                        TextColor="{StaticResource TextOnAccent}"
+                                        HeightRequest="30"
+                                        FontSize="11"
+                                        IsEnabled="{Binding HasPosition, Converter={StaticResource InvertedBoolConverter}}"/>
+                                <Button Grid.Column="1"
+                                        Text="Sell"
+                                        Command="{Binding ManualSellCommand}"
+                                        BackgroundColor="#EF5350"
+                                        TextColor="White"
+                                        HeightRequest="30"
+                                        FontSize="11"
+                                        IsEnabled="{Binding HasPosition}"/>
+                            </Grid>
+
                             <Label Text="{Binding Result.Reason}"
                                    TextColor="{StaticResource OnSurfaceDark}"
                                    FontSize="11"
@@ -266,9 +286,9 @@
 
                     <!-- P/L Section -->
                     <Grid Grid.Row="4"
-                          ColumnDefinitions="*,*,*"
+                          ColumnDefinitions="*,*"
                           ColumnSpacing="8"
-                          Margin="0,0,0,10"
+                          Margin="0,0,0,6"
                           IsVisible="{Binding HasPosition}">
                         <VerticalStackLayout Grid.Column="0">
                             <Label Text="P/L"
@@ -288,22 +308,30 @@
                                    FontSize="12"
                                    FontFamily="Cascadia Mono, Consolas, Menlo"/>
                         </VerticalStackLayout>
-                        <VerticalStackLayout Grid.Column="2">
-                            <Label Text="Qty"
-                                   TextColor="{StaticResource OnSurfaceVariantDark}"
-                                   FontSize="10"/>
-                            <Entry Text="{Binding Quantity}"
-                                   TextColor="{StaticResource OnSurfaceDark}"
-                                   FontSize="12"
-                                   FontFamily="Cascadia Mono, Consolas, Menlo"
-                                   Keyboard="Numeric"
-                                   BackgroundColor="Transparent"
-                                   HeightRequest="28"/>
-                        </VerticalStackLayout>
+                    </Grid>
+
+                    <!-- Quantity (always editable) -->
+                    <Grid Grid.Row="5"
+                          ColumnDefinitions="Auto,*"
+                          ColumnSpacing="8"
+                          Margin="0,0,0,10">
+                        <Label Grid.Column="0"
+                               Text="Qty"
+                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                               FontSize="10"
+                               VerticalOptions="Center"/>
+                        <Entry Grid.Column="1"
+                               Text="{Binding Quantity}"
+                               TextColor="{StaticResource OnSurfaceDark}"
+                               FontSize="12"
+                               FontFamily="Cascadia Mono, Consolas, Menlo"
+                               Keyboard="Numeric"
+                               BackgroundColor="Transparent"
+                               HeightRequest="28"/>
                     </Grid>
 
                     <!-- Buttons -->
-                    <Grid Grid.Row="5"
+                    <Grid Grid.Row="6"
                           ColumnDefinitions="*,*"
                           ColumnSpacing="8">
                         <Button Grid.Column="0"
@@ -333,7 +361,7 @@
                     </Grid>
 
                     <!-- Error Message -->
-                    <Label Grid.Row="5"
+                    <Label Grid.Row="6"
                            Text="{Binding ErrorMessage}"
                            IsVisible="{Binding ErrorMessage, Converter={StaticResource StringToBoolConverter}}"
                            TextColor="{StaticResource ErrorColor}"
@@ -342,7 +370,7 @@
                            Margin="0,8,0,0"/>
 
                     <!-- Loading Indicator -->
-                    <ActivityIndicator Grid.Row="5"
+                    <ActivityIndicator Grid.Row="6"
                                        IsRunning="{Binding IsRunning}"
                                        IsVisible="{Binding IsRunning}"
                                        Color="{StaticResource PrimaryDark}"

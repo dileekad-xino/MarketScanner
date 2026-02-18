@@ -48,8 +48,8 @@ public class AppShutdownHandler : IAppShutdownHandler
                 runningAlgosWithPositions.Count);
 
             // Show confirmation dialog
-            var message = "Are you sure you want to exit? The current running algos position will be closed.";
-            var shouldExit = await _confirmationDialogService.ShowExitConfirmationAsync(message);
+            var shouldExit = await _confirmationDialogService.ShowWarningAsync(
+                WarningDialogType.ExitAppWithOpenPositions);
 
             if (!shouldExit)
             {

@@ -28,6 +28,8 @@ public partial class ScannerViewModel : ObservableObject
     private readonly IRsiSettingsService _rsiSettingsService;
     private readonly IAlgoStrategy _algoStrategy;
     private readonly Services.AlgoRunnerManagerService? _algoRunnerManager;
+    private readonly IConfirmationDialogService? _confirmationDialogService;
+    private readonly IPositionClosureService? _positionClosureService;
     private WatchlistViewModel? _watchlistViewModel;
     private QuoteViewModel? _quoteViewModel;
     private DailyPlViewModel? _dailyPlViewModel;
@@ -193,7 +195,9 @@ public partial class ScannerViewModel : ObservableObject
         ITradeService tradeService,
         IRsiSettingsService rsiSettingsService,
         IAlgoStrategy algoStrategy,
-        Services.AlgoRunnerManagerService? algoRunnerManager = null)
+        Services.AlgoRunnerManagerService? algoRunnerManager = null,
+        IConfirmationDialogService? confirmationDialogService = null,
+        IPositionClosureService? positionClosureService = null)
     {
         _scanner = scanner;
         _dispatcher = dispatcher;
@@ -203,6 +207,8 @@ public partial class ScannerViewModel : ObservableObject
         _rsiSettingsService = rsiSettingsService;
         _algoStrategy = algoStrategy;
         _algoRunnerManager = algoRunnerManager;
+        _confirmationDialogService = confirmationDialogService;
+        _positionClosureService = positionClosureService;
 
         // Setup batch timer for ultra-smooth updates (60 FPS) FIRST
         _batchTimer = Application.Current.Dispatcher.CreateTimer();
@@ -306,10 +312,37 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-    private void OnAlgoRunnerCloseRequested(object? sender, EventArgs e)
+    private async void OnAlgoRunnerCloseRequested(object? sender, EventArgs e)
     {
         if (sender is AlgoRunnerViewModel algoRunner && _algoRunnerManager != null)
         {
+            if (algoRunner.HasPosition && !algoRunner.PositionClosed)
+            {
+                var symbol = algoRunner.SelectedSymbol?.Symbol;
+                var shouldClose = _confirmationDialogService != null
+                    ? await _confirmationDialogService.ShowWarningAsync(
+                        WarningDialogType.CloseTileWithOpenPosition, symbol)
+                    : await (Application.Current?.MainPage?.DisplayAlert(
+                        "Close Algo Tile",
+                        $"Closing this tile will close the open position for {symbol ?? "this symbol"}. Continue?",
+                        "Close",
+                        "Cancel") ?? Task.FromResult(false));
+
+                if (!shouldClose)
+                {
+                    return;
+                }
+
+                if (_positionClosureService != null)
+                {
+                    await _positionClosureService.ClosePositionAsync(algoRunner);
+                }
+                else
+                {
+                    await algoRunner.ClosePositionAsync();
+                }
+            }
+
             _algoRunnerManager.RemoveAlgoRunner(algoRunner);
         }
     }

@@ -11,6 +11,7 @@ public partial class DailyPlViewModel : ObservableObject
 {
     private readonly ITradeService _tradeService;
     private readonly ILogger<DailyPlViewModel> _logger;
+    private IDispatcherTimer? _autoRefreshTimer;
 
     [ObservableProperty] private ObservableCollection<TradeRowViewModel> _trades = new();
     [ObservableProperty] private ObservableCollection<TradeRowViewModel> _filteredTrades = new();
@@ -20,6 +21,9 @@ public partial class DailyPlViewModel : ObservableObject
     [ObservableProperty] private DateTime _selectedDate = DateTime.Today;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _errorMessage = string.Empty;
+    [ObservableProperty] private bool _isAutoRefreshEnabled;
+    [ObservableProperty] private ObservableCollection<Models.RefreshIntervalOption> _refreshIntervals = new();
+    [ObservableProperty] private Models.RefreshIntervalOption? _selectedRefreshInterval;
 
     public DailyPlViewModel(
         ITradeService tradeService,
@@ -27,6 +31,22 @@ public partial class DailyPlViewModel : ObservableObject
     {
         _tradeService = tradeService;
         _logger = logger;
+
+        RefreshIntervals = new ObservableCollection<Models.RefreshIntervalOption>
+        {
+            new Models.RefreshIntervalOption(5),
+            new Models.RefreshIntervalOption(10),
+            new Models.RefreshIntervalOption(15),
+            new Models.RefreshIntervalOption(20),
+            new Models.RefreshIntervalOption(25),
+            new Models.RefreshIntervalOption(30)
+        };
+        SelectedRefreshInterval = RefreshIntervals.FirstOrDefault(i => i.Seconds == 10) ?? RefreshIntervals.FirstOrDefault();
+
+        _autoRefreshTimer = Application.Current.Dispatcher.CreateTimer();
+        _autoRefreshTimer.IsRepeating = true;
+        _autoRefreshTimer.Tick += OnAutoRefreshTick;
+        UpdateAutoRefreshTimer();
     }
 
     public async Task InitializeAsync()
@@ -48,6 +68,16 @@ public partial class DailyPlViewModel : ObservableObject
     partial void OnSelectedDateChanged(DateTime value)
     {
         _ = LoadTradesAsync();
+    }
+
+    partial void OnIsAutoRefreshEnabledChanged(bool value)
+    {
+        UpdateAutoRefreshTimer();
+    }
+
+    partial void OnSelectedRefreshIntervalChanged(Models.RefreshIntervalOption? value)
+    {
+        UpdateAutoRefreshTimer();
     }
 
     public async Task LoadTradesAsync()
@@ -134,6 +164,33 @@ public partial class DailyPlViewModel : ObservableObject
         TotalDailyPLPercent = totalEntryValue > 0 
             ? (TotalDailyPL / totalEntryValue) * 100 
             : 0;
+    }
+
+    private void OnAutoRefreshTick(object? sender, EventArgs e)
+    {
+        if (!IsAutoRefreshEnabled || IsLoading)
+        {
+            return;
+        }
+
+        _ = LoadTradesAsync();
+    }
+
+    private void UpdateAutoRefreshTimer()
+    {
+        if (_autoRefreshTimer == null)
+        {
+            return;
+        }
+
+        if (!IsAutoRefreshEnabled || SelectedRefreshInterval == null)
+        {
+            _autoRefreshTimer.Stop();
+            return;
+        }
+
+        _autoRefreshTimer.Interval = TimeSpan.FromSeconds(SelectedRefreshInterval.Seconds);
+        _autoRefreshTimer.Start();
     }
 }
 

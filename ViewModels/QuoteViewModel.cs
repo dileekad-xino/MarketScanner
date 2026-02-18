@@ -29,6 +29,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _showSearchResults = false;
     [ObservableProperty] private bool _isSearching = false;
     [ObservableProperty] private int _selectedSearchResultIndex = -1;
+    [ObservableProperty] private ScannerRowViewModel? _selectedQuoteItem;
     private Watchlist? _previousWatchlist; // Track previous selection to detect Scanner -> Watchlist transitions
     private bool _isSyncing = false; // Flag to prevent restore when syncing from scanner refresh
 
@@ -700,13 +701,23 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void RemoveQuote(ScannerRowViewModel row)
+    private void RemoveQuote(ScannerRowViewModel? row)
     {
         try
         {
+            row ??= SelectedQuoteItem;
+            if (row == null)
+            {
+                return;
+            }
+
             var symbol = row.Symbol;
             QuoteItems.Remove(row);
             _rowCache.Remove(symbol);
+            if (ReferenceEquals(SelectedQuoteItem, row))
+            {
+                SelectedQuoteItem = null;
+            }
             _logger.LogInformation("Removed symbol {Symbol} from quotes", symbol);
         }
         catch (Exception ex)
@@ -723,6 +734,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             QuoteItems.Clear();
             _rowCache.Clear();
+            SelectedQuoteItem = null;
             ErrorMessage = "";
             _logger.LogInformation("Cleared all quotes");
         }
@@ -734,10 +746,17 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task RunAlgoAsync(ScannerRowViewModel row)
+    private async Task RunAlgoAsync(ScannerRowViewModel? row)
     {
         try
         {
+            row ??= SelectedQuoteItem;
+            if (row == null)
+            {
+                ErrorMessage = "Select a symbol first.";
+                return;
+            }
+
             // Try to get service provider if not already set
             var serviceProvider = _serviceProvider ??
                 Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services;
@@ -796,6 +815,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
             var emaEngine = serviceProvider.GetService<Services.Impl.EmaEngine>();
             var dispatcher = serviceProvider.GetService<IDispatcherService>();
+            var confirmationDialogService = serviceProvider.GetService<IConfirmationDialogService>();
             var algoRunnerViewModel = new AlgoRunnerViewModel(
                 algorithm,
                 loggerFactory.CreateLogger<AlgoRunnerViewModel>(),
@@ -811,7 +831,8 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 cciEngine,
                 cciSettingsService,
                 emaEngine,
-                dispatcher);
+                dispatcher,
+                confirmationDialogService);
 
             // Initialize with selected symbol
             await algoRunnerViewModel.InitializeAsync(row);

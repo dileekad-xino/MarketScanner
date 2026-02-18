@@ -89,7 +89,7 @@ public sealed class ColumnLayoutService
         if (headerLabel != null)
         {
             var headerSize = headerLabel.Measure(double.PositiveInfinity, double.PositiveInfinity);
-            maxWidth = Math.Max(maxWidth, headerSize.Request.Width);
+            maxWidth = Math.Max(maxWidth, headerSize.Width);
         }
         
         // Measure sample row cells
@@ -100,7 +100,7 @@ public sealed class ColumnLayoutService
             if (rowLabel != null)
             {
                 var rowSize = rowLabel.Measure(double.PositiveInfinity, double.PositiveInfinity);
-                maxWidth = Math.Max(maxWidth, rowSize.Request.Width);
+                maxWidth = Math.Max(maxWidth, rowSize.Width);
                 rowCount++;
             }
         }

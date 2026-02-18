@@ -4,6 +4,8 @@ namespace MarketScanner.Services;
 
 public interface IWatchlistService
 {
+    event EventHandler? WatchlistsChanged;
+
     Task InitializeAsync();
     Task<List<Watchlist>> GetAllWatchlistsAsync();
     Task<Watchlist> CreateWatchlistAsync(string name);

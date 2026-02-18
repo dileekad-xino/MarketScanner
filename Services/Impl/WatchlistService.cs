@@ -10,6 +10,7 @@ public class WatchlistService : IWatchlistService
     private readonly ILogger<WatchlistService> _logger;
     private readonly IDatabaseContext _databaseContext;
     private const string DatabaseFileName = "watchlists.db3";
+    public event EventHandler? WatchlistsChanged;
 
     public WatchlistService(ILogger<WatchlistService> logger, IDatabaseContext databaseContext)
     {
@@ -49,6 +50,7 @@ public class WatchlistService : IWatchlistService
 
         await database.InsertAsync(watchlist);
         _logger.LogInformation("Created watchlist '{Name}' with ID {Id}", name, watchlist.Id);
+        WatchlistsChanged?.Invoke(this, EventArgs.Empty);
 
         return watchlist;
     }
@@ -69,6 +71,7 @@ public class WatchlistService : IWatchlistService
 
         await database.UpdateAsync(watchlist);
         _logger.LogInformation("Renamed watchlist {Id} to '{NewName}'", watchlistId, newName);
+        WatchlistsChanged?.Invoke(this, EventArgs.Empty);
 
         return true;
     }
@@ -86,6 +89,7 @@ public class WatchlistService : IWatchlistService
         if (deleted > 0)
         {
             _logger.LogInformation("Deleted watchlist {Id} and its items", watchlistId);
+            WatchlistsChanged?.Invoke(this, EventArgs.Empty);
             return true;
         }
 

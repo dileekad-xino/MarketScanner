@@ -71,6 +71,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         _logger = logger;
         _serviceProvider = serviceProvider;
         _symbolSearchService = symbolSearchService;
+        _watchlistService.WatchlistsChanged += OnWatchlistsChanged;
 
         // Setup batch timer for smooth updates (60 FPS)
         _batchTimer = Application.Current.Dispatcher.CreateTimer();
@@ -149,6 +150,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         {
             await _watchlistService.InitializeAsync();
             var watchlists = await _watchlistService.GetAllWatchlistsAsync();
+            var previouslySelectedWatchlistId = SelectedWatchlist?.Id;
 
             Watchlists.Clear();
 
@@ -167,6 +169,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 Watchlists.Add(w);
             }
 
+            if (previouslySelectedWatchlistId.HasValue)
+            {
+                SelectedWatchlist = Watchlists.FirstOrDefault(w => w.Id == previouslySelectedWatchlistId.Value);
+            }
+
             // Notify that HasWatchlists changed
             OnPropertyChanged(nameof(HasWatchlists));
 
@@ -177,6 +184,11 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             _logger.LogError(ex, "Failed to load watchlists");
             ErrorMessage = $"Failed to load watchlists: {ex.Message}";
         }
+    }
+
+    private async void OnWatchlistsChanged(object? sender, EventArgs e)
+    {
+        await _dispatcher.OnUIAsync(async () => await LoadWatchlistsAsync());
     }
 
     partial void OnSelectedWatchlistChanged(Watchlist? value)
@@ -1016,6 +1028,12 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         try
         {
             _playbackSource?.Dispose();
+        }
+        catch { }
+
+        try
+        {
+            _watchlistService.WatchlistsChanged -= OnWatchlistsChanged;
         }
         catch { }
 

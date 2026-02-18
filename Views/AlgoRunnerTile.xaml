@@ -35,7 +35,7 @@
               VerticalOptions="FillAndExpand">
             <!-- Header with Symbol and Close Button -->
             <Grid Grid.Row="0"
-                  ColumnDefinitions="*,Auto"
+                  ColumnDefinitions="*,Auto,Auto"
                   Margin="0,0,0,10"
                   Padding="5,0">
                 <Label Grid.Column="0"
@@ -45,6 +45,16 @@
                        FontAttributes="Bold"
                        VerticalOptions="Center"/>
                 <Button Grid.Column="1"
+                        Text="⚙"
+                        Command="{Binding ShowSettingsCommand}"
+                        BackgroundColor="Transparent"
+                        TextColor="{StaticResource OnSurfaceDark}"
+                        FontSize="14"
+                        WidthRequest="30"
+                        HeightRequest="30"
+                        Padding="0"
+                        Margin="0,0,4,0"/>
+                <Button Grid.Column="2"
                         Text="×"
                         Command="{Binding CloseTileCommand}"
                         BackgroundColor="Transparent"

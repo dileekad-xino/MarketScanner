@@ -13,12 +13,18 @@ public sealed class CciSettingsService : ICciSettingsService
 
     public event EventHandler<CciSettings>? SettingsChanged;
 
-    public async Task<CciSettings> GetAsync(CancellationToken ct = default)
+    public async Task<CciSettings> GetAsync(string? symbol = null, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var json = Preferences.Get(PreferencesKey, null);
+            var symbolKey = BuildPreferencesKey(symbol);
+            var json = Preferences.Get(symbolKey, null);
+            if (string.IsNullOrWhiteSpace(json) && !string.Equals(symbolKey, PreferencesKey, StringComparison.Ordinal))
+            {
+                json = Preferences.Get(PreferencesKey, null);
+            }
+
             if (string.IsNullOrWhiteSpace(json))
             {
                 _current = CciSettings.CreateDefaults();
@@ -28,6 +34,9 @@ public sealed class CciSettingsService : ICciSettingsService
                 _current = System.Text.Json.JsonSerializer.Deserialize<CciSettings>(json)
                            ?? CciSettings.CreateDefaults();
             }
+            _current.SellZoneMin = CciSettings.NormalizeSellZoneMin(_current.SellZoneMin, _current.SellZoneMax);
+            _current.SellZoneMax = CciSettings.NormalizeSellZoneMax(_current.SellZoneMax, _current.SellZoneMin);
+            _current.ZoneGapInterval = CciSettings.NormalizeZoneGapInterval(_current.ZoneGapInterval, _current.SellZoneMin, _current.SellZoneMax);
             return _current.Clone();
         }
         finally
@@ -36,7 +45,7 @@ public sealed class CciSettingsService : ICciSettingsService
         }
     }
 
-    public async Task SaveAsync(CciSettings settings, CancellationToken ct = default)
+    public async Task SaveAsync(CciSettings settings, string? symbol = null, CancellationToken ct = default)
     {
         if (settings == null) throw new ArgumentNullException(nameof(settings));
 
@@ -44,8 +53,11 @@ public sealed class CciSettingsService : ICciSettingsService
         try
         {
             _current = settings.Clone();
+            _current.SellZoneMin = CciSettings.NormalizeSellZoneMin(_current.SellZoneMin, _current.SellZoneMax);
+            _current.SellZoneMax = CciSettings.NormalizeSellZoneMax(_current.SellZoneMax, _current.SellZoneMin);
+            _current.ZoneGapInterval = CciSettings.NormalizeZoneGapInterval(_current.ZoneGapInterval, _current.SellZoneMin, _current.SellZoneMax);
             var json = System.Text.Json.JsonSerializer.Serialize(_current);
-            Preferences.Set(PreferencesKey, json);
+            Preferences.Set(BuildPreferencesKey(symbol), json);
         }
         finally
         {
@@ -53,6 +65,15 @@ public sealed class CciSettingsService : ICciSettingsService
         }
 
         SettingsChanged?.Invoke(this, _current.Clone());
+    }
+
+    private static string BuildPreferencesKey(string? symbol)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+            return PreferencesKey;
+
+        var normalized = symbol.Trim().ToUpperInvariant();
+        return $"{PreferencesKey}:{normalized}";
     }
 }
 

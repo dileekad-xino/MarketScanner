@@ -1,6 +1,7 @@
 using MarketScanner.Models;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace MarketScanner.Services.Impl;
 
@@ -16,19 +17,24 @@ namespace MarketScanner.Services.Impl;
 public sealed class AlgoStrategy : IAlgoStrategy
 {
     private readonly IReadOnlyList<IAlgoStrategy> _strategies;
+    private readonly ICciSettingsService _cciSettingsService;
     private readonly ILogger<AlgoStrategy> _logger;
+    private readonly ConcurrentDictionary<string, double> _symbolSellCciThresholds = new(StringComparer.OrdinalIgnoreCase);
 
     public string Name => "Composite Algorithm";
     public string Description =>
         "BUY: CCI>100 + MACD dark green + price above EMA20 (no position). " +
-        "SELL: CCI<100 (in position).";
+        "SELL: Dynamic CCI trailing threshold by zone (in position).";
 
     public AlgoStrategy(
         IEnumerable<IAlgoStrategy> strategies,
+        ICciSettingsService cciSettingsService,
         ILogger<AlgoStrategy> logger)
     {
         _strategies = strategies.ToList();
+        _cciSettingsService = cciSettingsService;
         _logger = logger;
+        _cciSettingsService.SettingsChanged += OnCciSettingsChanged;
     }
 
     public async Task<AlgoResult> ExecuteAsync(
@@ -38,6 +44,8 @@ public sealed class AlgoStrategy : IAlgoStrategy
     {
         try
         {
+            var cciSettings = await _cciSettingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
+
             // =========================
             // Run all indicators
             // =========================
@@ -45,7 +53,7 @@ public sealed class AlgoStrategy : IAlgoStrategy
             var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, hasOpenPosition, ct));
             var results = await Task.WhenAll(tasks);
 
-            return CombineResults(results, symbol, hasOpenPosition);
+            return CombineResults(results, symbol, hasOpenPosition, cciSettings);
         }
         catch (Exception ex)
         {
@@ -61,7 +69,8 @@ public sealed class AlgoStrategy : IAlgoStrategy
     private AlgoResult CombineResults(
         IReadOnlyList<AlgoResult> results,
         ScannerRowViewModel symbol,
-        bool hasOpenPosition)
+        bool hasOpenPosition,
+        CciSettings cciSettings)
     {
         if (results.Count == 0)
             return Hold(symbol, "No indicator results");
@@ -73,12 +82,10 @@ public sealed class AlgoStrategy : IAlgoStrategy
         var cci = results.FirstOrDefault(r => r.CciSignal != null);
         var macd = results.FirstOrDefault(r => r.MacdSignal != null);
         var ema = results.FirstOrDefault(r => r.Ema20Signal != null);
+        var cciValue = cci?.CciValue;
 
         bool cciAbove =
             cci?.CciSignal == "ABOVE_THRESHOLD";
-
-        bool cciBelow =
-            cci?.CciSignal == "BELOW_THRESHOLD";
 
         bool macdDarkGreen =
             macd?.MacdSignal == "DARK_GREEN";
@@ -94,6 +101,9 @@ public sealed class AlgoStrategy : IAlgoStrategy
 
         AlgoAction action;
         string summary;
+
+        if (!hasOpenPosition)
+            _symbolSellCciThresholds.TryRemove(symbol.Symbol, out _);
 
         if (!hasOpenPosition)
         {
@@ -116,15 +126,34 @@ public sealed class AlgoStrategy : IAlgoStrategy
         else
         {
             // ---------- EXIT ----------
-            if (cciBelow)
+            if (!cciValue.HasValue)
             {
-                action = AlgoAction.Sell;
-                summary = "SELL: CCI dropped below 100";
+                action = AlgoAction.Hold;
+                summary = "HOLD (in position): waiting for CCI value";
             }
             else
             {
-                action = AlgoAction.Hold;
-                summary = "HOLD (in position): CCI still above 100";
+                var sellZoneMin = CciSettings.NormalizeSellZoneMin(cciSettings.SellZoneMin, cciSettings.SellZoneMax);
+                var sellZoneMax = CciSettings.NormalizeSellZoneMax(cciSettings.SellZoneMax, sellZoneMin);
+                var zoneGap = CciSettings.NormalizeZoneGapInterval(cciSettings.ZoneGapInterval, sellZoneMin, sellZoneMax);
+                var candidateThreshold = CciSettings.CalculateTrailingSellThreshold(cciValue.Value, sellZoneMin, sellZoneMax, zoneGap);
+
+                var trailingSellThreshold = _symbolSellCciThresholds.AddOrUpdate(
+                    symbol.Symbol,
+                    candidateThreshold,
+                    (_, existingThreshold) => Math.Max(existingThreshold, candidateThreshold));
+
+                if (cciValue.Value < trailingSellThreshold)
+                {
+                    action = AlgoAction.Sell;
+                    summary = $"SELL: CCI {cciValue.Value:F2} dropped below trailing zone {trailingSellThreshold:F0} (min={sellZoneMin}, max={sellZoneMax}, gap={zoneGap})";
+                    _symbolSellCciThresholds.TryRemove(symbol.Symbol, out _);
+                }
+                else
+                {
+                    action = AlgoAction.Hold;
+                    summary = $"HOLD (in position): CCI {cciValue.Value:F2} >= trailing zone {trailingSellThreshold:F0} (min={sellZoneMin}, max={sellZoneMax}, gap={zoneGap})";
+                }
             }
         }
 
@@ -164,4 +193,10 @@ public sealed class AlgoStrategy : IAlgoStrategy
             Reason: reason,
             Timestamp: DateTime.UtcNow
         );
+
+    private void OnCciSettingsChanged(object? sender, CciSettings settings)
+    {
+        _symbolSellCciThresholds.Clear();
+        _logger.LogInformation("CCI settings changed. Cleared trailing sell thresholds for immediate realtime application.");
+    }
 }

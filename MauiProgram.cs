@@ -179,6 +179,7 @@ namespace MarketScanner
 
                 return new MarketScanner.Services.Impl.AlgoStrategy(
                     new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy, ema20Strategy },
+                    sp.GetRequiredService<ICciSettingsService>(),
                     logger);
             });
 

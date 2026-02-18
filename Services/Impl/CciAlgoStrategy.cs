@@ -52,7 +52,7 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
     {
         try
         {
-            var settings = await _settingsService.GetAsync(ct).ConfigureAwait(false);
+            var settings = await _settingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
             var interval = GetIntervalString(_config.IntervalSeconds);
             var cciPeriod = settings.Period > 1 ? settings.Period : 20;
             var threshold = settings.Overbought;

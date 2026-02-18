@@ -9,6 +9,8 @@ using MarketScanner.Utilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using MarketScanner.Services.Impl;
+using CommunityToolkit.Maui.Views;
+using MarketScanner.Views.Dialogs;
 
 namespace MarketScanner.ViewModels;
 
@@ -299,6 +301,66 @@ public partial class AlgoRunnerViewModel : ObservableObject
     private void CloseTile()
     {
         CloseTileRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
+    private async Task ShowSettingsAsync()
+    {
+        try
+        {
+            if (SelectedSymbol == null)
+            {
+                ErrorMessage = "No symbol selected for settings.";
+                return;
+            }
+
+            var page = Application.Current?.MainPage;
+            if (page == null)
+            {
+                ErrorMessage = "Unable to open settings window.";
+                return;
+            }
+
+            var serviceProvider = Application.Current?.Handler?.MauiContext?.Services;
+            if (serviceProvider == null)
+            {
+                ErrorMessage = "Settings services are unavailable.";
+                return;
+            }
+
+            var rsiSettingsService = serviceProvider.GetService<IRsiSettingsService>();
+            var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
+            if (rsiSettingsService == null || cciSettingsService == null)
+            {
+                ErrorMessage = "Required settings services are unavailable.";
+                return;
+            }
+
+            var rsiSettings = await rsiSettingsService.GetAsync();
+            var cciSettings = await cciSettingsService.GetAsync(SelectedSymbol.Symbol);
+
+            var popup = new AlgoRunnerSettingsPopup(SelectedSymbol.Symbol, rsiSettings, cciSettings);
+            var result = await page.ShowPopupAsync(popup);
+            if (result is AlgoRunnerSettingsResult updated)
+            {
+                await rsiSettingsService.SaveAsync(updated.RsiSettings);
+                await cciSettingsService.SaveAsync(updated.CciSettings, SelectedSymbol.Symbol);
+
+                // Refresh indicator state immediately so running algos apply updated settings in realtime.
+                await InitializeRsiStateAsync();
+                await InitializeCciStateAsync();
+
+                if (IsRunning)
+                {
+                    await ExecuteAlgoOnceAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to show AlgoRunner settings for {Symbol}", SelectedSymbol?.Symbol);
+            ErrorMessage = $"Failed to show settings: {ex.Message}";
+        }
     }
 
     private async Task ExecuteAlgoOnceAsync()
@@ -930,7 +992,7 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
         try
         {
-            var settings = await _cciSettingsService.GetAsync();
+            var settings = await _cciSettingsService.GetAsync(SelectedSymbol.Symbol);
             var interval = GetIntervalString(_config.IntervalSeconds);
 
             // Get historical candlesticks from storage

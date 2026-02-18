@@ -5,8 +5,8 @@ namespace MarketScanner.Services;
 public interface ICciSettingsService
 {
     CciSettings Current { get; }
-    Task<CciSettings> GetAsync(CancellationToken ct = default);
-    Task SaveAsync(CciSettings settings, CancellationToken ct = default);
+    Task<CciSettings> GetAsync(string? symbol = null, CancellationToken ct = default);
+    Task SaveAsync(CciSettings settings, string? symbol = null, CancellationToken ct = default);
     event EventHandler<CciSettings>? SettingsChanged;
 }
 

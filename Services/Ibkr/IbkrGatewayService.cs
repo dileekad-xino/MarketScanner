@@ -145,9 +145,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         var connected = await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
         _connected = connected && _nextValidId > 0;
 
-        // CRITICAL: Set to DELAYED immediately after connection
-        _client.reqMarketDataType(3); // 3 = DELAYED
-        _logger.LogInformation("Connected to IBKR (nextValidId={Id}, mode=DELAYED)", _nextValidId);
+        // Market data type from config: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
+        var marketDataType = _config.GetValue<int?>("Ibkr:MarketDataType") ?? 3;
+        _client.reqMarketDataType(marketDataType);
+        var modeLabel = marketDataType switch { 1 => "LIVE", 2 => "FROZEN", 3 => "DELAYED", 4 => "DELAYED_FROZEN", _ => $"TYPE_{marketDataType}" };
+        _logger.LogInformation("Connected to IBKR (nextValidId={Id}, mode={Mode})", _nextValidId, modeLabel);
 
         // Scanner parameters not needed - we use hardcoded region/product mappings
     }

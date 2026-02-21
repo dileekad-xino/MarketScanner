@@ -8,10 +8,12 @@ using System.Linq;
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
-/// CCI strategy with dual-state engine:
+/// CCI momentum crossover strategy with dual-state engine:
 /// - CCI preview updates on each bar (for live UI display)
 /// - CCI committed state updates on candle close (matches TradingView)
-/// - Strategy evaluates using current CCI (preview during intrabar, committed after close)
+/// - Strategy generates BUY signal when CCI crosses above +100
+/// - Strategy holds position while CCI remains above +100
+/// - Strategy generates SELL signal when CCI crosses below +100
 /// - Historical candles are used only for initial warm-up (engine init)
 /// </summary>
 public class CciAlgoStrategy : IAlgoStrategy
@@ -23,7 +25,7 @@ public class CciAlgoStrategy : IAlgoStrategy
     private readonly ILogger<CciAlgoStrategy> _logger;
 
     public string Name => "CCI Strategy";
-    public string Description => "Professional intraday CCI scalping: momentum (+50 to +200), pullback (0 to +50), exhaustion (>=+200), oversold bounce (<=-200), bearish (<-50). Auto-adjusts period by timeframe.";
+    public string Description => "Momentum crossover: BUY on cross above +100, hold while above +100, SELL on cross below +100. Uses 1-minute bars.";
 
     public CciAlgoStrategy(
         ICandlestickStorage candlestickStorage,
@@ -61,8 +63,9 @@ public class CciAlgoStrategy : IAlgoStrategy
                 _cciEngine.Initialize(symbol.Symbol, interval, candles, cciPeriod);
             }
 
-            var cci = _cciEngine.GetCci(symbol.Symbol, interval);
-            if (!cci.HasValue)
+            // Get current and previous CCI values for crossover detection
+            var (currentCci, previousCci) = _cciEngine.GetCciWithPrevious(symbol.Symbol, interval);
+            if (!currentCci.HasValue)
             {
                 return new AlgoResult(
                     Symbol: symbol.Symbol,
@@ -75,58 +78,54 @@ public class CciAlgoStrategy : IAlgoStrategy
                 );
             }
 
+            // Get threshold from settings (default +100)
+            var threshold = settings.Overbought;
+
+            // Crossover detection
+            bool crossedAbove = previousCci.HasValue && previousCci.Value < threshold && currentCci.Value >= threshold;
+            bool crossedBelow = previousCci.HasValue && previousCci.Value >= threshold && currentCci.Value < threshold;
+            bool isAbove = currentCci.Value >= threshold;
+
             AlgoAction action;
             string signal;
             string reason;
 
-            // Updated CCI decision tree
-            if (cci.Value >= 180)
-            {
-                action = AlgoAction.Sell;
-                signal = "TAKE PROFIT";
-                reason = $"CCI take profit >= +180: {cci.Value:F2}";
-            }
-            else if (cci.Value >= 150 && cci.Value < 180)
-            {
-                action = AlgoAction.Hold;
-                signal = "BULLISH MOMENTUM";
-                reason = $"CCI bullish momentum (+150 to +180): {cci.Value:F2}";
-            }
-            else if (cci.Value >= 100 && cci.Value < 150)
+            // Momentum crossover strategy logic
+            if (crossedAbove && currentCci.Value > 100)
             {
                 action = AlgoAction.Buy;
-                signal = "BULLISH ENTRY";
-                reason = $"CCI bullish entry (+100 to +150): {cci.Value:F2}";
+                signal = "BUY_CROSS_ABOVE";
+                reason = $"CCI crossed above +{threshold:F0}: {previousCci.Value:F2} → {currentCci.Value:F2}";
+
+                // Update EntryCciValue in state
+                if (_cciEngine.TryGetState(symbol.Symbol, interval, out var state))
+                {
+                    state.EntryCciValue = currentCci.Value;
+                }
             }
-            else if (cci.Value > 0 && cci.Value < 100)
+            else if (crossedBelow)
             {
                 action = AlgoAction.Sell;
-                signal = "EXIT WEAKNESS";
-                reason = $"CCI exit weakness (0 to +100): {cci.Value:F2}";
+                signal = "SELL_CROSS_BELOW";
+                reason = $"CCI crossed below +{threshold:F0}: {previousCci.Value:F2} → {currentCci.Value:F2}";
+
+                // Update ExitCciValue in state
+                if (_cciEngine.TryGetState(symbol.Symbol, interval, out var state))
+                {
+                    state.ExitCciValue = currentCci.Value;
+                }
             }
-            else if (cci.Value == 0)
+            else if (isAbove)
             {
                 action = AlgoAction.Hold;
-                signal = "NEUTRAL";
-                reason = $"CCI neutral at zero: {cci.Value:F2}";
+                signal = "HOLD_ABOVE_100";
+                reason = $"CCI above +{threshold:F0}, holding position: {currentCci.Value:F2}";
             }
-            else if (cci.Value < 0 && cci.Value > -50)
-            {
-                action = AlgoAction.Sell;
-                signal = "NEUTRAL";
-                reason = $"CCI neutral weakness (-50 to 0): {cci.Value:F2}";
-            }
-            else if (cci.Value <= -50 && cci.Value > -210)
+            else
             {
                 action = AlgoAction.Hold;
-                signal = "BEARISH MOMENTUM";
-                reason = $"CCI bearish momentum (-210 to -50): {cci.Value:F2}";
-            }
-            else // cci.Value <= -210
-            {
-                action = AlgoAction.Buy;
-                signal = "OVERSOLD SCALP";
-                reason = $"CCI oversold scalp <= -210: {cci.Value:F2}";
+                signal = "HOLD_BELOW_100";
+                reason = $"CCI below +{threshold:F0}, no position: {currentCci.Value:F2}";
             }
 
             return new AlgoResult(
@@ -135,7 +134,7 @@ public class CciAlgoStrategy : IAlgoStrategy
                 Price: symbol.LastPrice,
                 Reason: reason,
                 Timestamp: DateTime.UtcNow,
-                CciValue: cci.Value,
+                CciValue: currentCci.Value,
                 CciSignal: signal
             );
         }

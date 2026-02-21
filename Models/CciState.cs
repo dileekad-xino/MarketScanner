@@ -12,7 +12,7 @@ public class CciState
 
     // Committed state (candle-close, matches TradingView long-run)
     public double CommittedSma { get; set; }  // Simple Moving Average of Typical Price
-    public double CommittedMeanDeviation { get; set; }  // Mean Deviation
+    public double CommittedMeanDeviation { get; set; }  // The Mean Deviation
     public double CommittedLastTypicalPrice { get; set; }  // Last Typical Price (H+L+C)/3
     public DateTime CommittedLastTimestamp { get; set; }
     
@@ -27,6 +27,13 @@ public class CciState
 
     // Previous preview value (for crossover detection if needed)
     public double? PreviousCci { get; set; }
+
+    // Previous committed CCI value (for crossover detection on candle close)
+    public double? PreviousCommittedCci { get; set; }
+
+    // Entry/exit CCI values for momentum crossover strategy
+    public double? EntryCciValue { get; set; }  // CCI value when BUY signal was generated (cross above +100)
+    public double? ExitCciValue { get; set; }   // CCI value when SELL signal was generated (cross below +100)
 
     public int Period { get; set; }
 

@@ -84,6 +84,21 @@ public class CciEngine
             // Calculate Mean Deviation
             var meanDeviation = CalculateMeanDeviation(typicalPrices, period, sma);
 
+            // Calculate PreviousCommittedCci from second-to-last candle (if available)
+            double? previousCommittedCci = null;
+            if (typicalPrices.Count >= period + 1)
+            {
+                // Calculate CCI for second-to-last candle
+                var previousTypicalPrices = typicalPrices.Take(typicalPrices.Count - 1).ToList();
+                var previousSma = CalculateSma(previousTypicalPrices, period);
+                var previousMeanDeviation = CalculateMeanDeviation(previousTypicalPrices, period, previousSma);
+                if (previousMeanDeviation != 0)
+                {
+                    var previousLastTypicalPrice = previousTypicalPrices.Last();
+                    previousCommittedCci = (previousLastTypicalPrice - previousSma) / (0.015 * previousMeanDeviation);
+                }
+            }
+
             // Initialize committed state
             _states[key] = new CciState
             {
@@ -99,7 +114,10 @@ public class CciEngine
                 PreviewMeanDeviation = null,
                 PreviewLastTypicalPrice = null,
                 PreviewTypicalPrices = null,
-                PreviousCci = null
+                PreviousCci = null,
+                PreviousCommittedCci = previousCommittedCci,
+                EntryCciValue = null,
+                ExitCciValue = null
             };
 
             _periods[key] = period;
@@ -176,6 +194,9 @@ public class CciEngine
 
         lock (lockObj)
         {
+            // Save current committed CCI to PreviousCommittedCci before updating (CRITICAL for crossover detection)
+            state.PreviousCommittedCci = state.CommittedCci;
+
             // Calculate Typical Price for this candle
             double typicalPrice = CalculateTypicalPrice(high, low, close);
 
@@ -235,6 +256,26 @@ public class CciEngine
             return null;
 
         return (s.CommittedCci, s.PreviewCci);
+    }
+
+    /// <summary>
+    /// Gets the current CCI value along with the previous committed CCI value.
+    /// Returns (current, previous) tuple where:
+    /// - current: preview CCI if available (intrabar), otherwise committed CCI (after close)
+    /// - previous: previous bar's committed CCI value (for crossover detection)
+    /// </summary>
+    public (double? current, double? previous) GetCciWithPrevious(string symbol, string interval)
+    {
+        if (!_states.TryGetValue(Key(symbol, interval), out var s))
+            return (null, null);
+
+        // Current: prefer preview if available (for live updates), otherwise committed
+        double? current = s.PreviewCci ?? s.CommittedCci;
+
+        // Previous: use PreviousCommittedCci (previous bar's committed value)
+        double? previous = s.PreviousCommittedCci;
+
+        return (current, previous);
     }
 
     /// <summary>

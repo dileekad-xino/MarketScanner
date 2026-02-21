@@ -54,16 +54,33 @@ public class MacdStrategy : IAlgoStrategy
             if (result == null)
                 return Hold(symbol, "MACD unavailable (engine not initialized yet)");
 
-            var (macd, signal, hist) = result.Value;
+            var (macd, signal, histRaw) = result.Value;
+
+            decimal hist = (decimal)histRaw;
+
+            // Previous MACD (for momentum)
+            var prev = _macdEngine.GetPreviousMacd(symbol.Symbol, interval);
+            decimal? prevHist = null;
+
+            if (prev != null)
+                prevHist = (decimal)prev.Value.Macd - (decimal)prev.Value.Signal;
+
+            bool isHistogramGrowing =
+                hist > 0m &&
+                prevHist.HasValue &&
+                hist > prevHist.Value;
 
             var macdData = new MacdData(
                 symbol.Symbol,
                 (decimal)macd,
                 (decimal)signal,
-                (decimal)hist,
+                hist,
                 DateTime.UtcNow,
                 interval
-            );
+            )
+            {
+                IsHistogramGrowing = isHistogramGrowing
+            };
 
             var (action, reason, cross) = DetectSignals(macdData);
 

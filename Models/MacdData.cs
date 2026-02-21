@@ -36,5 +36,11 @@ public sealed record MacdData(
     /// Gets the difference between MACD line and Signal line.
     /// </summary>
     public decimal Difference => MacdLine - SignalLine;
+
+    /// <summary>
+    /// Indicates if histogram growing
+    /// </summary>
+    public bool IsHistogramGrowing { get; init; }
+
 }
 

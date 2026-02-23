@@ -757,6 +757,35 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogWarning("Scanner timeout for reqId={ReqId}, returning empty result set", requestId);
             return Array.Empty<ScannerRow>();
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Scanner request failed for reqId={ReqId}; falling back to partial/stale/empty results", requestId);
+
+            var partialRows = GetScannerBufferSnapshot(requestId);
+            if (partialRows.Count > 0)
+            {
+                var hydratedPartial = HydrateScannerRowsFromMarketState(partialRows);
+                _logger.LogWarning(
+                    "Scanner failure fallback for reqId={ReqId}, returning partial result set with {Count} rows",
+                    requestId,
+                    hydratedPartial.Count);
+                UpdateScanCache(cacheKey, hydratedPartial);
+                return hydratedPartial;
+            }
+
+            if (TryGetScanCacheRegardlessOfAge(cacheKey, out var staleRows) && staleRows.Count > 0)
+            {
+                var hydratedStale = HydrateScannerRowsFromMarketState(staleRows);
+                _logger.LogWarning(
+                    "Scanner failure fallback for reqId={ReqId}, reusing stale scanner cache with {Count} rows",
+                    requestId,
+                    hydratedStale.Count);
+                return hydratedStale;
+            }
+
+            _logger.LogWarning("Scanner failure fallback for reqId={ReqId}, returning empty result set", requestId);
+            return Array.Empty<ScannerRow>();
+        }
         finally
         {
             try

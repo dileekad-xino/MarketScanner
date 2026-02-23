@@ -84,6 +84,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, byte> _scannerDataEndSeen = new();
     private readonly ConcurrentDictionary<int, int> _scannerLastErrorCodes = new();
     private int _currentScannerId = 0; // Track current active scanner for cancellation
+    private readonly SemaphoreSlim _scannerExecutionGate = new(1, 1);
     private readonly object _scanCacheLock = new();
     private string? _lastScanCacheKey;
     private DateTimeOffset _lastScanAtUtc = DateTimeOffset.MinValue;
@@ -558,43 +559,53 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         bool forceRefresh,
         CancellationToken ct)
     {
-        await EnsureConnectedAsync(ct);
-        await EnsurePumpHealthyAsync(ct);
+        await _scannerExecutionGate.WaitAsync(ct);
+        try
+        {
+            await EnsureConnectedAsync(ct);
+            await EnsurePumpHealthyAsync(ct);
 
-        var cacheKey = BuildScanCacheKey(minPrice, maxPrice, minVol, product, exchange, topN);
-        if (!forceRefresh && TryGetFreshScanCache(cacheKey, out var cachedRows))
-        {
-            _logger.LogInformation("Using cached scanner universe ({Count} rows, age={AgeSeconds:F0}s)", cachedRows.Count, (DateTimeOffset.UtcNow - _lastScanAtUtc).TotalSeconds);
-            var cachedSymbols = cachedRows.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            SubscribeToMarketData(cachedSymbols, isFromScanner: true);
-            await WaitForInitialMarketDataAsync(cachedSymbols, TimeSpan.FromMilliseconds(400), ct);
-            return HydrateScannerRowsFromMarketState(cachedRows);
-        }
-        else if (forceRefresh)
-        {
-            _logger.LogInformation("Force-refresh requested; bypassing scanner cache for this call");
-        }
-
-        // Cancel any existing scanner before starting new one
-        if (_currentScannerId > 0)
-        {
-            _logger.LogDebug("Cancelling previous scanner reqId={PreviousId}", _currentScannerId);
-            _client.cancelScannerSubscription(_currentScannerId);
-            if (_scannerWaiters.TryRemove(_currentScannerId, out var previousWaiter))
+            var cacheKey = BuildScanCacheKey(minPrice, maxPrice, minVol, product, exchange, topN);
+            if (!forceRefresh && TryGetFreshScanCache(cacheKey, out var cachedRows))
             {
-                previousWaiter.TrySetCanceled();
+                _logger.LogInformation("Using cached scanner universe ({Count} rows, age={AgeSeconds:F0}s)", cachedRows.Count, (DateTimeOffset.UtcNow - _lastScanAtUtc).TotalSeconds);
+                var cachedSymbols = cachedRows.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                SubscribeToMarketData(cachedSymbols, isFromScanner: true);
+                await WaitForInitialMarketDataAsync(cachedSymbols, TimeSpan.FromMilliseconds(400), ct);
+                return HydrateScannerRowsFromMarketState(cachedRows);
             }
-            _scannerBuffers.TryRemove(_currentScannerId, out _);
-            _scannerRequestedRows.TryRemove(_currentScannerId, out _);
-            CancelScannerQuietTimer(_currentScannerId);
-            _scannerDataCounts.TryRemove(_currentScannerId, out _);
-            _scannerDataEndSeen.TryRemove(_currentScannerId, out _);
-            _scannerLastErrorCodes.TryRemove(_currentScannerId, out _);
-        }
+            else if (forceRefresh)
+            {
+                _logger.LogInformation("Force-refresh requested; bypassing scanner cache for this call");
+            }
 
-        var requestId = GetNextReqId();
-        _currentScannerId = requestId; // Track current scanner for future cancellation
-        var tcs = new TaskCompletionSource<List<ScannerRow>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Cancel any existing scanner before starting new one
+            if (_currentScannerId > 0)
+            {
+                _logger.LogDebug("Cancelling previous scanner reqId={PreviousId}", _currentScannerId);
+                try
+                {
+                    _client.cancelScannerSubscription(_currentScannerId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cancel previous scanner reqId={PreviousId}", _currentScannerId);
+                }
+                if (_scannerWaiters.TryRemove(_currentScannerId, out var previousWaiter))
+                {
+                    previousWaiter.TrySetCanceled();
+                }
+                _scannerBuffers.TryRemove(_currentScannerId, out _);
+                _scannerRequestedRows.TryRemove(_currentScannerId, out _);
+                CancelScannerQuietTimer(_currentScannerId);
+                _scannerDataCounts.TryRemove(_currentScannerId, out _);
+                _scannerDataEndSeen.TryRemove(_currentScannerId, out _);
+                _scannerLastErrorCodes.TryRemove(_currentScannerId, out _);
+            }
+
+            var requestId = GetNextReqId();
+            _currentScannerId = requestId; // Track current scanner for future cancellation
+            var tcs = new TaskCompletionSource<List<ScannerRow>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _scannerWaiters[requestId] = tcs;
         _scannerBuffers[requestId] = new List<ScannerRow>();
@@ -748,9 +759,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
         finally
         {
-            if (_currentScannerId == requestId)
+            try
             {
                 _client.cancelScannerSubscription(requestId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to cancel scanner subscription reqId={ReqId} during cleanup", requestId);
             }
             _scannerWaiters.TryRemove(requestId, out _);
             _scannerBuffers.TryRemove(requestId, out _);
@@ -765,6 +780,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 _currentScannerId = 0; // Reset current scanner ID
             }
             _logger.LogDebug("Removed scanner waiter/buffer reqId={ReqId}", requestId);
+        }
+        }
+        finally
+        {
+            _scannerExecutionGate.Release();
         }
     }
 
@@ -885,7 +905,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
 
         var partialRows = GetScannerBufferSnapshot(reqId);
-        if (errorCode is 165 or 162 or 492 or 365)
+        if (errorCode is 165 or 162 or 322 or 492 or 365)
         {
             _logger.LogWarning("Completing scanner reqId={ReqId} from scanner error {Code} with {Count} buffered rows", reqId, errorCode, partialRows.Count);
             tcs.TrySetResult(partialRows);
@@ -2212,6 +2232,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         if (errorCode == 492 || errorCode == 162)
         {
             _logger.LogWarning("IBKR Scanner Error {Code}: {Message}. This usually indicates region/exchange mismatch or missing subscriptions.", errorCode, errorMsg);
+        }
+        else if (errorCode == 322)
+        {
+            _logger.LogWarning("IBKR Scanner Error {Code} for reqId {Id}: {Message}. This indicates scanner slot exhaustion; request completed without throwing.", errorCode, id, errorMsg);
         }
         else if (errorCode == 365)
         {

@@ -38,6 +38,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private const int US_STOCK_VOLUME_MULTIPLIER = 100;
     private const int AvgVolumeLookbackTradingDays = 30;
     private const string AvgVolumeRequestDuration = "60 D";
+    // Minimum practical window to reliably capture >=30 trading sessions (weekends/holidays included).
+    private const string ScannerAvgVolumeRequestDuration = "30 D";
+    private static readonly TimeSpan ScannerResultCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HistoricalCacheTtl = TimeSpan.FromMinutes(10);
 
     private readonly ILogger<IbkrGatewayService> _logger;
     private readonly IConfiguration _config;
@@ -48,12 +52,19 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private int _nextValidId;
     private int _nextReqId = 1;
     private bool _disposed;
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
+    private Task? _readerLoopTask;
+    private readonly object _connectionStatusLock = new();
+    private bool? _lastPublishedConnectionStatus;
+    private CancellationTokenSource? _reconnectLoopCts;
+    private Task? _reconnectLoopTask;
 
     /// <summary>
     /// Gets whether the service is connected to IBKR gateway.
     /// Returns true only if connection was successfully established (nextValidId > 0).
     /// </summary>
     public bool IsConnected => _connected && _nextValidId > 0 && _client != null && _client.IsConnected();
+    public event Action<bool, string>? ConnectionStateChanged;
 
     // Scanner state
     private readonly ConcurrentDictionary<int, List<ScannerRow>> _scannerBuffers = new();
@@ -61,9 +72,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, ScannerRow> _scannerResults = new();
     private readonly ConcurrentDictionary<int, bool> _scannerRequestIds = new(); // Track all scanner request IDs for Error 162 suppression
     private int _currentScannerId = 0; // Track current active scanner for cancellation
+    private readonly object _scanCacheLock = new();
+    private string? _lastScanCacheKey;
+    private DateTimeOffset _lastScanAtUtc = DateTimeOffset.MinValue;
+    private IReadOnlyList<ScannerRow> _lastScanRows = Array.Empty<ScannerRow>();
 
     // Market data state
-    private readonly Dictionary<int, string> _idToSymbol = new();
+    private readonly ConcurrentDictionary<int, string> _idToSymbol = new();
     private readonly ConcurrentDictionary<string, MarketState> _marketState = new();
     private readonly ConcurrentDictionary<string, SnapshotRow> _snapshots = new();
     private readonly ConcurrentDictionary<string, long> _averageVolumes = new();
@@ -73,6 +88,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, string> _histReqToSymbol = new();
     private readonly ConcurrentDictionary<int, List<long>> _histVolumes = new();
     private readonly ConcurrentDictionary<int, double?> _histClosePrices = new(); // Track most recent close from historical data
+    private readonly ConcurrentDictionary<string, HistoricalCacheEntry> _historicalCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _historicalInFlight = new(StringComparer.OrdinalIgnoreCase);
 
     // Historical bars tracking for RSI and other technical indicators
     private readonly ConcurrentDictionary<int, List<Bar>> _histBars = new();
@@ -111,6 +128,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         public long? AverageVolume { get; set; }
     }
 
+    private sealed class HistoricalCacheEntry
+    {
+        public decimal? PrevClose { get; init; }
+        public long? AverageVolume { get; init; }
+        public DateTimeOffset UpdatedUtc { get; init; }
+    }
+
     /// <summary>
     /// IBKR often reports US stock market-data volume in lots.
     /// Normalize to shares so scanner/filter thresholds match user expectations.
@@ -131,54 +155,258 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public async Task EnsureConnectedAsync(CancellationToken ct)
     {
-        if (_connected) return;
+        if (IsConnected) return;
 
-        var host = _config.GetValue<string>("Ibkr:Host") ?? "127.0.0.1";
-        var port = _config.GetValue<int?>("Ibkr:Port") ?? 4002;
-        var clientId = _config.GetValue<int?>("Ibkr:ClientId") ?? 7777;
-
-        _logger.LogInformation("Connecting to IBKR at {Host}:{Port} with ClientId {ClientId}",
-            host, port, clientId);
-
-        _signal = new EReaderMonitorSignal();
-        _client = new EClientSocket(this, _signal);  // Pass 'this' as EWrapper
-        _client.eConnect(host, port, clientId);
-
-        var reader = new EReader(_client, _signal);
-        reader.Start();
-
-        _ = Task.Run(() =>
+        await _connectionGate.WaitAsync(ct);
+        try
         {
-            while (_client.IsConnected())
+            if (IsConnected) return;
+
+            if (_client != null && _client.IsConnected())
             {
-                _signal.waitForSignal();
+                _logger.LogWarning("IBKR socket is open but session is not ready. Reconnecting.");
+                SafeDisconnectClient();
+            }
+
+            _nextValidId = 0;
+            _connected = false;
+
+            var host = _config.GetValue<string>("Ibkr:Host") ?? "127.0.0.1";
+            var port = _config.GetValue<int?>("Ibkr:Port") ?? 4002;
+            var clientId = _config.GetValue<int?>("Ibkr:ClientId") ?? 7777;
+
+            _logger.LogInformation("Connecting to IBKR at {Host}:{Port} with ClientId {ClientId}",
+                host, port, clientId);
+
+            var signal = new EReaderMonitorSignal();
+            _signal = signal;
+
+            var client = new EClientSocket(this, signal);
+            _client = client;
+            client.eConnect(host, port, clientId);
+
+            if (!client.IsConnected())
+            {
+                throw new InvalidOperationException("IBKR socket connection failed");
+            }
+
+            var reader = new EReader(client, signal);
+            reader.Start();
+
+            _readerLoopTask = Task.Run(() => RunReaderLoop(client, reader, signal, ct), ct);
+
+            // Wait for nextValidId callback (confirms full API session)
+            var connected = await WaitUntilAsync(
+                () => client.IsConnected() && _nextValidId > 0,
+                TimeSpan.FromSeconds(8),
+                ct);
+
+            if (!connected)
+            {
+                SafeDisconnectClient();
+                throw new TimeoutException("Timed out waiting for IBKR nextValidId");
+            }
+
+            _connected = true;
+
+            // CRITICAL: Set to DELAYED immediately after connection
+            client.reqMarketDataType(3); // 3 = DELAYED
+            _logger.LogInformation("Connected to IBKR (nextValidId={Id}, mode=DELAYED)", _nextValidId);
+            PublishConnectionState(isConnected: true, "Connected");
+            StopReconnectLoop();
+
+            RestoreMarketDataSubscriptions(includeHistorical: false);
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    public async Task<bool> TryReconnectAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            await EnsureConnectedAsync(ct);
+            return IsConnected;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "IBKR reconnect attempt failed");
+            return false;
+        }
+    }
+
+    private void RunReaderLoop(EClientSocket client, EReader reader, EReaderSignal signal, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && client.IsConnected())
+        {
+            signal.waitForSignal();
+            try
+            {
+                reader.processMsgs();
+            }
+            catch (FormatException ex)
+            {
+                _logger.LogError(ex, "IBKR reader parse error. Disconnecting to recover cleanly.");
+                try { client.eDisconnect(); } catch { }
+                MarkDisconnected("Reader parse failure");
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "IBKR reader loop error. Continuing.");
+            }
+        }
+
+        if (!client.IsConnected())
+        {
+            MarkDisconnected("Socket disconnected");
+        }
+    }
+
+    private void SafeDisconnectClient()
+    {
+        try
+        {
+            if (_client?.IsConnected() == true)
+            {
+                _client.eDisconnect();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error while disconnecting IBKR client");
+        }
+    }
+
+    private void MarkDisconnected(string reason)
+    {
+        _connected = false;
+        _nextValidId = 0;
+        _logger.LogWarning("IBKR connection marked disconnected: {Reason}", reason);
+        PublishConnectionState(isConnected: false, reason);
+        StartReconnectLoop();
+    }
+
+    private void PublishConnectionState(bool isConnected, string reason)
+    {
+        lock (_connectionStatusLock)
+        {
+            if (_lastPublishedConnectionStatus.HasValue && _lastPublishedConnectionStatus.Value == isConnected)
+            {
+                return;
+            }
+
+            _lastPublishedConnectionStatus = isConnected;
+        }
+
+        try
+        {
+            ConnectionStateChanged?.Invoke(isConnected, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to publish connection state change");
+        }
+    }
+
+    private void StartReconnectLoop()
+    {
+        if (_disposed || IsConnected)
+        {
+            return;
+        }
+
+        if (_reconnectLoopTask != null && !_reconnectLoopTask.IsCompleted)
+        {
+            return;
+        }
+
+        _reconnectLoopCts?.Cancel();
+        _reconnectLoopCts?.Dispose();
+        _reconnectLoopCts = new CancellationTokenSource();
+        var ct = _reconnectLoopCts.Token;
+
+        _reconnectLoopTask = Task.Run(async () =>
+        {
+            var delaySeconds = 2;
+            while (!ct.IsCancellationRequested && !_disposed && !IsConnected)
+            {
                 try
                 {
-                    reader.processMsgs();
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                    if (ct.IsCancellationRequested || _disposed || IsConnected)
+                    {
+                        break;
+                    }
+
+                    var reconnected = await TryReconnectAsync(ct);
+                    if (reconnected)
+                    {
+                        break;
+                    }
                 }
-                catch (FormatException ex)
+                catch (OperationCanceledException)
                 {
-                    _logger.LogError(ex, "IBKR reader parse error. Disconnecting to recover cleanly.");
-                    try { _client.eDisconnect(); } catch { }
-                    _connected = false;
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "IBKR reader loop error. Continuing.");
+                    _logger.LogDebug(ex, "Background reconnect attempt failed");
                 }
+
+                delaySeconds = Math.Min(delaySeconds * 2, 15);
             }
         }, ct);
+    }
 
-        // Wait for nextValidId callback (confirms connection)
-        var connected = await WaitUntilAsync(() => _nextValidId > 0, TimeSpan.FromSeconds(5), ct);
-        _connected = connected && _nextValidId > 0;
+    private void StopReconnectLoop()
+    {
+        try
+        {
+            _reconnectLoopCts?.Cancel();
+        }
+        catch { }
+    }
 
-        // CRITICAL: Set to DELAYED immediately after connection
-        _client.reqMarketDataType(3); // 3 = DELAYED
-        _logger.LogInformation("Connected to IBKR (nextValidId={Id}, mode=DELAYED)", _nextValidId);
+    private void RestoreMarketDataSubscriptions(bool includeHistorical = false)
+    {
+        if (!IsConnected || _client == null)
+        {
+            return;
+        }
 
-        // Scanner parameters not needed - we use hardcoded region/product mappings
+        var existingSubscriptions = _idToSymbol.ToArray();
+        if (existingSubscriptions.Length == 0)
+        {
+            return;
+        }
+
+        _logger.LogInformation("Restoring {Count} market data subscriptions after reconnect", existingSubscriptions.Length);
+        foreach (var (tickerId, symbol) in existingSubscriptions)
+        {
+            var contract = new Contract
+            {
+                Symbol = symbol,
+                SecType = "STK",
+                Exchange = "SMART",
+                Currency = "USD"
+            };
+
+            try
+            {
+                _client.reqMktData(tickerId, contract, "233", false, false, null);
+                if (includeHistorical)
+                {
+                    RequestHistoricalDataIfNeeded(symbol, contract, AvgVolumeRequestDuration);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to restore market data subscription for {Symbol} (tickerId={TickerId})", symbol, tickerId);
+            }
+        }
     }
 
     private async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout, CancellationToken ct)
@@ -199,7 +427,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(CancellationToken ct)
     {
-        return await ScanAsync(2, 20, 100000, "stocks", "us stocks", 50, ct);
+        return await ScanCoreAsync(2, 20, 100000, "stocks", "us stocks", 50, ct);
     }
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(
@@ -211,7 +439,29 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         int topN = 50,
         CancellationToken ct = default)
     {
+        return await ScanCoreAsync(minPrice, maxPrice, minVol, product, exchange, topN, ct);
+    }
+
+    private async Task<IReadOnlyList<ScannerRow>> ScanCoreAsync(
+        decimal minPrice,
+        decimal maxPrice,
+        decimal minVol,
+        string product,
+        string exchange,
+        int topN,
+        CancellationToken ct)
+    {
         await EnsureConnectedAsync(ct);
+
+        var cacheKey = BuildScanCacheKey(minPrice, maxPrice, minVol, product, exchange, topN);
+        if (TryGetFreshScanCache(cacheKey, out var cachedRows))
+        {
+            _logger.LogInformation("Using cached scanner universe ({Count} rows, age={AgeSeconds:F0}s)", cachedRows.Count, (DateTimeOffset.UtcNow - _lastScanAtUtc).TotalSeconds);
+            var cachedSymbols = cachedRows.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            SubscribeToMarketData(cachedSymbols, isFromScanner: true);
+            await WaitForInitialMarketDataAsync(cachedSymbols, TimeSpan.FromMilliseconds(400), ct);
+            return HydrateScannerRowsFromMarketState(cachedRows);
+        }
 
         // Cancel any existing scanner before starting new one
         if (_currentScannerId > 0)
@@ -293,6 +543,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             linkedCts.Token.Register(() => tcs.TrySetCanceled());
             var rows = await tcs.Task;
             _logger.LogInformation("Scanner returned {Count} rows", rows.Count);
+            UpdateScanCache(cacheKey, rows);
 
             // Cancel previous market data subscriptions to avoid "Duplicate ticker id" errors
             foreach (var kvp in _idToSymbol.ToList())
@@ -306,6 +557,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             foreach (var kvp in _histReqToSymbol.ToList())
             {
                 _client.cancelHistoricalData(kvp.Key);
+                _historicalInFlight.TryRemove(kvp.Value, out _);
             }
             _histReqToSymbol.Clear();
             _histVolumes.Clear();
@@ -324,12 +576,29 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
             // Initial hydration pass from reqMktData (last/close/volume) so first render
             // is less likely to show all-zero pending values.
-            await WaitForInitialMarketDataAsync(symbols, TimeSpan.FromSeconds(2), ct);
+            await WaitForInitialMarketDataAsync(symbols, TimeSpan.FromMilliseconds(800), ct);
             return HydrateScannerRowsFromMarketState(rows);
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogDebug("Scanner request cancelled by caller");
+            throw;
         }
         catch (TaskCanceledException)
         {
             _logger.LogWarning("Scanner request timed out");
+
+            if (_scannerBuffers.TryGetValue(requestId, out var partialRows) && partialRows.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Scanner timeout for reqId={ReqId}, returning partial result set with {Count} rows",
+                    requestId,
+                    partialRows.Count);
+                var partialCopy = partialRows.ToList();
+                UpdateScanCache(cacheKey, partialCopy);
+                return partialCopy;
+            }
+
             throw new TimeoutException("Scanner request timed out");
         }
         finally
@@ -377,6 +646,79 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
             await Task.Delay(50, ct);
         }
+    }
+
+    private static string BuildScanCacheKey(
+        decimal minPrice,
+        decimal maxPrice,
+        decimal minVol,
+        string product,
+        string exchange,
+        int topN)
+    {
+        return string.Create(CultureInfo.InvariantCulture, $"{product.ToUpperInvariant()}|{exchange.ToUpperInvariant()}|{minPrice:F2}|{maxPrice:F2}|{minVol:F0}|{topN}");
+    }
+
+    private bool TryGetFreshScanCache(string cacheKey, out IReadOnlyList<ScannerRow> rows)
+    {
+        lock (_scanCacheLock)
+        {
+            var isFresh = _lastScanRows.Count > 0 &&
+                          string.Equals(_lastScanCacheKey, cacheKey, StringComparison.Ordinal) &&
+                          (DateTimeOffset.UtcNow - _lastScanAtUtc) <= ScannerResultCacheTtl;
+            if (isFresh)
+            {
+                rows = _lastScanRows;
+                return true;
+            }
+        }
+
+        rows = Array.Empty<ScannerRow>();
+        return false;
+    }
+
+    private void UpdateScanCache(string cacheKey, IReadOnlyList<ScannerRow> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        lock (_scanCacheLock)
+        {
+            _lastScanCacheKey = cacheKey;
+            _lastScanAtUtc = DateTimeOffset.UtcNow;
+            _lastScanRows = rows.Select(CloneScannerRow).ToArray();
+        }
+    }
+
+    private static ScannerRow CloneScannerRow(ScannerRow row)
+    {
+        return new ScannerRow
+        {
+            ReqId = row.ReqId,
+            Symbol = row.Symbol,
+            Company = row.Company,
+            LastPrice = row.LastPrice,
+            Change = row.Change,
+            ChangePct = row.ChangePct,
+            Volume = row.Volume,
+            AvgVolume = row.AvgVolume,
+            RelativeVolume = row.RelativeVolume,
+            Float = row.Float,
+            High52W = row.High52W,
+            Meta = row.Meta is null
+                ? null
+                : new InstrumentMetadata
+                {
+                    Symbol = row.Meta.Symbol,
+                    Company = row.Meta.Company,
+                    Sector = row.Meta.Sector,
+                    Exchange = row.Meta.Exchange,
+                    Region = row.Meta.Region,
+                    Product = row.Meta.Product
+                }
+        };
     }
 
     private IReadOnlyList<ScannerRow> HydrateScannerRowsFromMarketState(IReadOnlyList<ScannerRow> rows)
@@ -561,7 +903,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private void SubscribeToMarketData(IEnumerable<string> symbols, bool isFromScanner = false)
     {
         // Only subscribe if connected
-        if (!_connected || _client == null || !_client.IsConnected())
+        if (!IsConnected || _client == null)
         {
             _logger.LogDebug("Skipping market data subscription - IBKR not connected");
             return;
@@ -575,7 +917,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
         foreach (var symbol in symbolList)
         {
-            if (_idToSymbol.ContainsValue(symbol))
+            if (_idToSymbol.Values.Contains(symbol, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogDebug("SubscribeToMarketData: {Symbol} already subscribed, skipping", symbol);
                 continue; // Already subscribed
@@ -592,7 +934,9 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             }
 
             _idToSymbol[tickerId] = symbol;
-            _marketState[symbol] = new MarketState();
+            var state = new MarketState();
+            _marketState[symbol] = state;
+            TryApplyHistoricalCache(symbol, state);
 
             var contract = new Contract
             {
@@ -615,8 +959,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 _logger.LogError(ex, "SubscribeToMarketData: Failed to request market data for {Symbol} (tickerId={TickerId})", symbol, tickerId);
             }
 
-            // Request historical data for average volume and previous close
-            RequestHistoricalData(symbol, contract);
+            // Scanner can use a shorter historical duration to populate PrevClose/AverageVolume
+            // while avoiding heavy 60D requests.
+            var historyDuration = isFromScanner ? ScannerAvgVolumeRequestDuration : AvgVolumeRequestDuration;
+            RequestHistoricalDataIfNeeded(symbol, contract, historyDuration);
 
             tickerId++;
             if (!isFromScanner && tickerId > _nextManualTickerId)
@@ -626,7 +972,55 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
     }
 
-    private void RequestHistoricalData(string symbol, Contract contract)
+    private void RequestHistoricalDataIfNeeded(string symbol, Contract contract, string duration, bool force = false)
+    {
+        if (!force &&
+            _historicalCache.TryGetValue(symbol, out var cached) &&
+            DateTimeOffset.UtcNow - cached.UpdatedUtc <= HistoricalCacheTtl &&
+            ((cached.AverageVolume.HasValue && cached.AverageVolume.Value > 0) ||
+             (cached.PrevClose.HasValue && cached.PrevClose.Value > 0)))
+        {
+            _logger.LogDebug(
+                "RequestHistoricalDataIfNeeded: Using cached historical data for {Symbol} (age={AgeSeconds:F0}s)",
+                symbol,
+                (DateTimeOffset.UtcNow - cached.UpdatedUtc).TotalSeconds);
+            return;
+        }
+
+        if (!_historicalInFlight.TryAdd(symbol, 0))
+        {
+            _logger.LogDebug("RequestHistoricalDataIfNeeded: Historical request already in-flight for {Symbol}", symbol);
+            return;
+        }
+
+        RequestHistoricalData(symbol, contract, duration);
+    }
+
+    private void TryApplyHistoricalCache(string symbol, MarketState state)
+    {
+        if (!_historicalCache.TryGetValue(symbol, out var cached))
+        {
+            return;
+        }
+
+        if (DateTimeOffset.UtcNow - cached.UpdatedUtc > HistoricalCacheTtl)
+        {
+            return;
+        }
+
+        if (cached.AverageVolume.HasValue && cached.AverageVolume.Value > 0)
+        {
+            state.AverageVolume = cached.AverageVolume.Value;
+            _averageVolumes[symbol] = cached.AverageVolume.Value;
+        }
+
+        if (cached.PrevClose.HasValue && cached.PrevClose.Value > 0)
+        {
+            state.PrevClose = cached.PrevClose.Value;
+        }
+    }
+
+    private void RequestHistoricalData(string symbol, Contract contract, string duration)
     {
         var reqId = GetNextReqId();
         _histReqToSymbol[reqId] = symbol;
@@ -636,10 +1030,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         try
         {
             _client.reqHistoricalData(
-                reqId, contract, "", AvgVolumeRequestDuration, "1 day", "TRADES", 1, 1, false, null);
+                reqId, contract, "", duration, "1 day", "TRADES", 1, 1, false, null);
             _logger.LogInformation(
                 "RequestHistoricalData: Requested {Duration} historical data for {Symbol} (reqId={ReqId}) to compute {LookbackDays}-day avg volume and previous close",
-                AvgVolumeRequestDuration, symbol, reqId, AvgVolumeLookbackTradingDays);
+                duration, symbol, reqId, AvgVolumeLookbackTradingDays);
         }
         catch (Exception ex)
         {
@@ -648,6 +1042,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histReqToSymbol.TryRemove(reqId, out _);
             _histVolumes.TryRemove(reqId, out _);
             _histClosePrices.TryRemove(reqId, out _);
+            _historicalInFlight.TryRemove(symbol, out _);
         }
     }
 
@@ -939,7 +1334,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     /// </summary>
     public void RequestStreamingHistoricalBars(string symbol, int barSizeSeconds, int days = 1)
     {
-        if (!_connected || _client == null || !_client.IsConnected())
+        if (!IsConnected || _client == null)
         {
             _logger.LogDebug("Skipping streaming historical bars request - IBKR not connected");
             return;
@@ -1006,6 +1401,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void nextValidId(int orderId)
     {
         _nextValidId = orderId;
+        _connected = _client != null && _client.IsConnected() && orderId > 0;
         _logger.LogInformation("nextValidId={OrderId}", orderId);
     }
 
@@ -1356,6 +1752,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         _histReqToSymbol.TryRemove(reqId, out _);
         _histVolumes.TryRemove(reqId, out _);
         _histClosePrices.TryRemove(reqId, out _);
+        _historicalInFlight.TryRemove(symbol, out _);
+
+        if (_marketState.TryGetValue(symbol, out var latestState))
+        {
+            _historicalCache[symbol] = new HistoricalCacheEntry
+            {
+                PrevClose = latestState.PrevClose,
+                AverageVolume = latestState.AverageVolume,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+        }
     }
 
     private void EmitTickUpdate(string symbol, MarketState state)
@@ -1411,6 +1818,20 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void error(int id, int errorCode, string errorMsg)
     {
+        if (errorCode is 504 or 1100 or 1300 or 2110)
+        {
+            MarkDisconnected($"IBKR transport error {errorCode}: {errorMsg}");
+        }
+        else if (errorCode is 1101 or 1102)
+        {
+            _connected = _client != null && _client.IsConnected() && _nextValidId > 0;
+            if (_connected && errorCode == 1101)
+            {
+                _logger.LogInformation("IBKR data lost/recovered notification ({Code}), restoring subscriptions", errorCode);
+                RestoreMarketDataSubscriptions(includeHistorical: false);
+            }
+        }
+
         // Log all errors appropriately
         if (errorCode == 492 || errorCode == 162)
         {
@@ -1433,6 +1854,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // Don't treat this as a fatal error - let the request continue
             return;
         }
+        else if (errorCode is 2104 or 2106 or 2158)
+        {
+            _logger.LogInformation("IBKR Status {Code}: {Message}", errorCode, errorMsg);
+            return;
+        }
         else
         {
             _logger.LogError("IBKR Error {Code} for reqId {Id}: {Message}", errorCode, id, errorMsg);
@@ -1451,6 +1877,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _histReqToSymbol.TryRemove(id, out _);
             _histVolumes.TryRemove(id, out _);
             _histClosePrices.TryRemove(id, out _);
+            if (!string.Equals(symbol, "unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                _historicalInFlight.TryRemove(symbol, out _);
+            }
 
             // Complete with exception so the caller knows the request failed
             histBarTcs.TrySetException(new Exception($"IBKR Error {errorCode}: {errorMsg}"));
@@ -1465,10 +1895,18 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 tcs.TrySetResult(new List<ScannerRow>());
             }
         }
+
+        if (_histReqToSymbol.TryGetValue(id, out var histSymbol))
+        {
+            _historicalInFlight.TryRemove(histSymbol, out _);
+        }
     }
 
     public void connectAck() => _logger.LogInformation("IBKR connection acknowledged");
-    public void connectionClosed() => _logger.LogWarning("IBKR connection closed");
+    public void connectionClosed()
+    {
+        MarkDisconnected("connectionClosed callback");
+    }
     public void currentTime(long time) { }
     public void tickOptionComputation(int tickerId, int field, double impliedVolatility, double delta, double optPrice, double pvDividend, double gamma, double vega, double theta, double undPrice) { }
     public void tickGeneric(int tickerId, int field, double value) { }
@@ -1672,9 +2110,20 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             _logger.LogError(ex, "Error disconnecting from IBKR");
         }
+        finally
+        {
+            MarkDisconnected("Dispose");
+        }
 
         _tickSubject.OnCompleted();
         _tickSubject.Dispose();
+
+        try
+        {
+            _reconnectLoopCts?.Cancel();
+            _reconnectLoopCts?.Dispose();
+        }
+        catch { }
     }
 }
 

@@ -2,7 +2,7 @@ namespace MarketScanner.Services;
 
 /// <summary>
 /// Service for searching symbols with autocomplete functionality.
-/// Supports both dummy data (offline) and real IBKR gateway search (when connected).
+/// Uses live IBKR gateway search when connected.
 /// </summary>
 public interface ISymbolSearchService
 {

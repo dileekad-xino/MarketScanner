@@ -40,6 +40,8 @@ public partial class ScannerViewModel : ObservableObject
     private bool _isOffline = false;
     private bool _linkedQuotes = false;
     private SemaphoreSlim _syncQuotesSemaphore = new SemaphoreSlim(1, 1);
+    private DateTimeOffset _nextScannerRetryUtc = DateTimeOffset.MinValue;
+    private static readonly TimeSpan ScannerTimeoutCooldown = TimeSpan.FromSeconds(20);
 
     // Store page title for dynamic watchlist naming and view title (set from code-behind and when switching views)
     [ObservableProperty] private string _pageTitle = "Market Scanner"; // fallback default
@@ -421,22 +423,23 @@ public partial class ScannerViewModel : ObservableObject
             const string product = "stocks";  // Always stocks
             var exchange = IsAnyValue(Exchange) ? "us stocks" : Exchange.ToLowerInvariant();
 
-            // Early check: if already offline, go directly to fallback
+            // If we previously switched offline, always probe for IBKR recovery first.
             if (_isOffline)
             {
-                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                if (fallback != null && fallback.ActivateIfNeeded())
+                var recovered = await TryRecoverConnectionAsync(_cts.Token);
+                if (recovered)
                 {
-                    var symbols = fallback.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
-                    fallback.UpdateSymbols(symbols);
-                    // Wait a moment for ticks to arrive if needed
-                    var latest = await WaitForSnapshotsAsync(fallback, symbols, TimeSpan.FromMilliseconds(500));
-                    await SeedFromFallbackAsync(symbols, latest);
-                    await ApplyFiltersAsync();
-                    if (_linkedQuotes) await SyncQuotesToVisibleAsync();
-                    return;
+                    _logger.LogInformation("IBKR connection recovered; resuming live scanner data");
+                    _isOffline = false;
                 }
-                ErrorMessage = "Fallback data source unavailable";
+            }
+
+            if (DateTimeOffset.UtcNow < _nextScannerRetryUtc)
+            {
+                var remaining = (_nextScannerRetryUtc - DateTimeOffset.UtcNow).TotalSeconds;
+                _logger.LogInformation("Scanner cooldown active; skipping rescan for {Seconds:F0}s and keeping current live data", Math.Max(1, remaining));
+                DebugStatus = $"Scanner cooldown: retry in {Math.Max(1, (int)Math.Ceiling(remaining))}s";
+                await ApplyFiltersAsync();
                 return;
             }
 
@@ -449,24 +452,22 @@ public partial class ScannerViewModel : ObservableObject
                     ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, ScannerUniverseSize, _cts.Token)
                     : await _scanner.ScanAsync(_cts.Token);
 
+                _isOffline = false;
+                _nextScannerRetryUtc = DateTimeOffset.MinValue;
             }
-            catch (Exception ex) when (IsConnectivityOrTimeout(ex))
+            catch (TimeoutException ex) when (IsScannerTimeout(ex))
             {
-                // Offline fallback path
-                _logger.LogWarning(ex, "Scan failed or timed out; activating playback fallback");
+                _nextScannerRetryUtc = DateTimeOffset.UtcNow.Add(ScannerTimeoutCooldown);
+                _logger.LogWarning(ex, "Scanner timed out; keeping existing data and backing off scanner calls for {Seconds}s", ScannerTimeoutCooldown.TotalSeconds);
+                ErrorMessage = "Scanner timed out. Keeping last live data and retrying shortly.";
+                DebugStatus = $"Scanner timeout; retry in {(int)ScannerTimeoutCooldown.TotalSeconds}s";
+                await ApplyFiltersAsync();
+                return;
+            }
+            catch (Exception ex) when (IsConnectivityIssue(ex))
+            {
+                _logger.LogWarning(ex, "Scan failed due to connectivity issue");
                 _isOffline = true;
-                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                if (fallback != null && fallback.ActivateIfNeeded())
-                {
-                    var symbols = fallback.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
-                    fallback.UpdateSymbols(symbols);
-                    // Wait a moment for ticks to arrive if needed
-                    var latest = await WaitForSnapshotsAsync(fallback, symbols, TimeSpan.FromMilliseconds(500));
-                    await SeedFromFallbackAsync(symbols, latest);
-                    await ApplyFiltersAsync();
-                    if (_linkedQuotes) await SyncQuotesToVisibleAsync();
-                    return;
-                }
                 throw;
             }
 
@@ -545,101 +546,43 @@ public partial class ScannerViewModel : ObservableObject
         }
     }
 
-    private static bool IsConnectivityOrTimeout(Exception ex)
+    private static bool IsConnectivityIssue(Exception ex)
     {
-        if (ex is TimeoutException) return true;
         var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
-        return msg.Contains("not connected") || msg.Contains("actively refused") || msg.Contains("timeout");
+        return msg.Contains("not connected") ||
+               msg.Contains("actively refused") ||
+               msg.Contains("connection closed") ||
+               msg.Contains("socket") ||
+               msg.Contains("network");
     }
 
-    /// <summary>
-    /// Waits for tick data to arrive for the given symbols, up to maxWait time.
-    /// Returns snapshots immediately if available, otherwise waits and retries.
-    /// </summary>
-    private async Task<IReadOnlyDictionary<string, TickData>> WaitForSnapshotsAsync(
-        Services.Impl.PlaybackFallback fallback,
-        IEnumerable<string> symbols,
-        TimeSpan maxWait)
+    private static bool IsScannerTimeout(TimeoutException ex)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.Elapsed < maxWait)
-        {
-            var snapshots = fallback.GetLatestSnapshots(symbols);
-            if (snapshots.Count > 0) return snapshots;
-            await Task.Delay(50); // Check every 50ms
-        }
-        return fallback.GetLatestSnapshots(symbols); // Return whatever we have
+        var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
+        return msg.Contains("scanner request timed out");
     }
 
-    private IEnumerable<string> DeriveFallbackSymbols(Services.Impl.PlaybackFallback fallback, int topN, decimal minPrice, decimal maxPrice)
+    private async Task<bool> TryRecoverConnectionAsync(CancellationToken ct)
     {
-        // If we already saw some symbols in playback, prefer those; otherwise default set
-        var current = fallback.CurrentSymbols;
-        if (current != null && current.Count > 0)
-            return current.Take(topN);
-        return new[] { "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "SPY", "QQQ" }.Take(topN);
-    }
-
-    private async Task SeedFromFallbackAsync(IEnumerable<string> symbols, IReadOnlyDictionary<string, TickData> latest)
-    {
-        var rows = new List<ScannerRowViewModel>();
-        int scannerItemsCount = 0;
-        int snapshotCount = 0;
-        await _dispatcher.OnUIAsync(() =>
+        if (_scanner is not IbkrGatewayService ibkrGateway)
         {
-            // Clear ScannerItems BEFORE building snapshot to ensure clean state
-            ScannerItems.Clear();
-            _rowLookup.Clear();
-
-            foreach (var s in symbols)
-            {
-                var rowVm = new ScannerRowViewModel
-                {
-                    Symbol = s,
-                    Company = s,
-                    Region = "United States",
-                    Product = "Stocks",
-                    Exchange = Exchange
-                };
-                if (latest.TryGetValue(s, out var t))
-                {
-                    t.ApplyTo(rowVm);
-                    if (t.PreviousClose.HasValue && t.PreviousClose.Value > 0)
-                        rowVm.UpdateClosePrice((double)t.PreviousClose.Value);
-                }
-                else
-                {
-                    // No tick data yet - create row with zero values, will be updated by incoming ticks
-                    rowVm.LastPrice = 0;
-                    rowVm.Volume = 0;
-                    rowVm.PrevClose = 0;
-                }
-                _rowLookup[s] = rowVm; // Populate lookup for tick updates
-                rows.Add(rowVm); // Add to temp list, not ScannerItems
-            }
-            _snapshot = rows.ToArray(); // Set snapshot - ApplyFiltersAsync will populate ScannerItems from this
-            snapshotCount = _snapshot.Length;
-            scannerItemsCount = ScannerItems.Count;
-
-            // Verify ScannerItems is still empty (defensive check)
-            if (scannerItemsCount != 0)
-            {
-                _logger.LogWarning("ScannerItems not empty after seeding! Count={Count}, expected 0. Clearing again.", scannerItemsCount);
-                ScannerItems.Clear();
-                scannerItemsCount = 0;
-            }
-        });
-
-        // Ensure we are consuming fallback stream live
-        var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-        if (fb != null)
-        {
-            fb.TickStream.Subscribe(t => _batchedTicks.Enqueue(t));
+            return false;
         }
 
-        // Note: ApplyFiltersAsync will be called by RefreshAsync after this returns
-        // if (_linkedQuotes) await SyncQuotesToVisibleAsync(); // Moved to RefreshAsync after ApplyFiltersAsync
-        _logger.LogInformation("Fallback seeding complete: ScannerItems={Count}, Snapshot={SnapshotCount}", scannerItemsCount, snapshotCount);
+        if (ibkrGateway.IsConnected)
+        {
+            return true;
+        }
+
+        try
+        {
+            return await ibkrGateway.TryReconnectAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "IBKR reconnect probe failed");
+            return false;
+        }
     }
 
     private void FlushBatchedTicks()
@@ -684,10 +627,10 @@ public partial class ScannerViewModel : ObservableObject
             if (!_disposed && processedCount > 0)
             {
                 // Re-apply existing filter/sort pipeline after live ticks so initial and live ordering
-                // follows Change% without adding a second sort path.
+                // always follows Change% descending.
                 if (_pendingInitialTicks == null)
                 {
-                    _ = _liveTickFilterDebouncer.ExecuteAsync(() => ApplyFiltersAsync(preserveCurrentOrder: true));
+                    _ = _liveTickFilterDebouncer.ExecuteAsync(() => ApplyFiltersAsync());
                 }
 
                 DebugStatus = $"Updated {updatedSymbols.Count} symbols ({processedCount} ticks)";
@@ -787,32 +730,9 @@ public partial class ScannerViewModel : ObservableObject
         // Check if we need to re-scan at IBKR level
         if (RequiresRescan())
         {
-            if (_isOffline)
-            {
-                // Reseed from fallback instead of IBKR
-                var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                if (fb != null && fb.ActivateIfNeeded())
-                {
-                    var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
-                    var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
-                    var symbols = fb.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
-                    fb.UpdateSymbols(symbols);
-                    var latest = fb.GetLatestSnapshots(symbols);
-                    await SeedFromFallbackAsync(symbols, latest);
-                    // Continue to FilterEngine logic below to apply TopN and other filters
-                    // (Don't return early - let FilterEngine apply TopN from the seeded pool)
-                }
-                else
-                {
-                    return; // No fallback available
-                }
-            }
-            else
-            {
-                _logger.LogInformation("Scan-level filter change (price/exchange) detected, triggering RefreshAsync for re-scan");
-                await RefreshAsync();
-                return;
-            }
+            _logger.LogInformation("Scan-level filter change (price/exchange) detected, triggering RefreshAsync for re-scan");
+            await RefreshAsync();
+            return;
         }
 
         // If no items in snapshot or ScannerItems, skip client-side filtering
@@ -880,25 +800,8 @@ public partial class ScannerViewModel : ObservableObject
             return; // stale compute – ignore
         }
 
-        // Build target order:
-        // - default: Change% sorted order from FilterEngine (refresh/filter changes)
-        // - live tick path: preserve existing visual order to avoid row jumpiness
+        // Build target order: always use Change% sorted order from FilterEngine.
         var targetIndices = result.TopIndices;
-        if (preserveCurrentOrder && ScannerItems.Count > 0)
-        {
-            var currentOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < ScannerItems.Count; i++)
-            {
-                var symbol = ScannerItems[i].Symbol;
-                if (!string.IsNullOrWhiteSpace(symbol) && !currentOrder.ContainsKey(symbol))
-                    currentOrder[symbol] = i;
-            }
-
-            targetIndices = result.TopIndices
-                .OrderBy(i => currentOrder.TryGetValue(rows[i].Symbol, out var idx) ? idx : int.MaxValue)
-                .ThenBy(i => i)
-                .ToArray();
-        }
 
         _logger.LogInformation("FilterEngine.Apply returned {FilteredCount} of {TotalCount} items", result.TopIndices.Length, rows.Length);
 
@@ -1113,27 +1016,18 @@ public partial class ScannerViewModel : ObservableObject
                 await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
                 if (!ct.IsCancellationRequested)
                 {
-                    // If fallback is active, re-sync symbols based on current filters
-                    var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                    if (fb != null && (fb.IsActive || _isOffline))
+                    if (_isOffline)
                     {
-                        // Always read current filter values fresh - don't use cached/defaults
-                        var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
-                        var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
-                        var topN = TopN; // client-side TopN
-                        _logger.LogInformation("Auto-refresh using filters: MinPrice={MinPrice}, MaxPrice={MaxPrice}, TopN(client)={TopN}, UniverseSize={UniverseSize}", minPrice, maxPrice, topN, ScannerUniverseSize);
-                        var symbols = fb.SelectSymbols(ScannerUniverseSize, minPrice, maxPrice);
-                        fb.UpdateSymbols(symbols);
-                        var latest = await WaitForSnapshotsAsync(fb, symbols, TimeSpan.FromMilliseconds(500));
-                        await SeedFromFallbackAsync(symbols, latest).ConfigureAwait(false);
-                        await ApplyFiltersAsync().ConfigureAwait(false);
-                        if (_linkedQuotes) await SyncQuotesToVisibleAsync().ConfigureAwait(false);
+                        var recovered = await TryRecoverConnectionAsync(ct).ConfigureAwait(false);
+                        if (recovered)
+                        {
+                            _isOffline = false;
+                            await RefreshAsync().ConfigureAwait(false);
+                            continue;
+                        }
                     }
-                    else
-                    {
-                        // Only call RefreshAsync when not offline - it will handle IBKR connection
-                        await RefreshAsync().ConfigureAwait(false);
-                    }
+
+                    await RefreshAsync().ConfigureAwait(false);
                 }
             }
             catch (TaskCanceledException) { }

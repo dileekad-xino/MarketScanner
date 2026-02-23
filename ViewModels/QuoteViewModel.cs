@@ -41,8 +41,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
     private IDispatcherTimer? _batchTimer;
 
     private IDisposable? _tickSubscription;
-    private IDisposable? _playbackSubscription;
-    private MarketScanner.Services.Impl.DelayedNdjsonTickSource? _playbackSource;
     private bool _disposed = false;
 
     // Snapshot for restoring quotes when switching back from watchlist
@@ -85,22 +83,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             _batchedTicks.Enqueue(tick);
         });
 
-        // Fallback playback stream (NDJSON or synthetic via controller)
-        var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-        if (fb != null && fb.IsActive)
-        {
-            _playbackSubscription = fb.TickStream.Subscribe(t => _batchedTicks.Enqueue(t));
-        }
-        else
-        {
-            // Legacy NDJSON env-based attach (best-effort)
-            _playbackSource = MarketScanner.Services.Impl.DelayedNdjsonTickSource.CreateFromEnv();
-            if (_playbackSource != null)
-            {
-                _playbackSource.Start();
-                _playbackSubscription = _playbackSource.Stream.Subscribe(tick => _batchedTicks.Enqueue(tick));
-            }
-        }
     }
 
     private void OnBatchTimerTick(object? sender, EventArgs e)
@@ -262,22 +244,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Could not re-subscribe to IBKR market data for restored quotes, will use fallback if available");
-                }
-
-                // Update fallback playback with symbols if active
-                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                if (fallback != null && fallback.IsActive)
-                {
-                    var currentSymbols = fallback.CurrentSymbols.ToList();
-                    foreach (var symbol in symbolsToSubscribe)
-                    {
-                        if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
-                        {
-                            currentSymbols.Add(symbol);
-                        }
-                    }
-                    fallback.UpdateSymbols(currentSymbols);
+                    _logger.LogDebug(ex, "Could not re-subscribe to IBKR market data for restored quotes");
                 }
             }
         }
@@ -351,22 +318,7 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Could not subscribe to IBKR market data, will use fallback if available");
-                }
-
-                // Update fallback playback with symbols if active
-                var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-                if (fallback != null && fallback.IsActive)
-                {
-                    var currentSymbols = fallback.CurrentSymbols.ToList();
-                    foreach (var symbol in symbolsToSubscribe)
-                    {
-                        if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
-                        {
-                            currentSymbols.Add(symbol);
-                        }
-                    }
-                    fallback.UpdateSymbols(currentSymbols);
+                    _logger.LogDebug(ex, "Could not subscribe to IBKR market data");
                 }
             }
 
@@ -467,10 +419,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
 
             var target = new HashSet<string>(orderedSymbols, StringComparer.OrdinalIgnoreCase);
 
-            // Try to get latest snapshots from fallback if available
-            var fb = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-            var latest = fb != null ? fb.GetLatestSnapshots(target) : new Dictionary<string, TickData>();
-
             // Mark symbols not in target as dropped (instead of removing them)
             var toMarkAsDropped = _rowCache.Keys.Where(k => !target.Contains(k)).ToList();
             foreach (var k in toMarkAsDropped)
@@ -488,14 +436,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                 {
                     // Mark as not dropped (in case it was previously dropped)
                     existingVm.IsDropped = false;
-
-                    // Update existing item with latest tick data if available
-                    if (latest.TryGetValue(s, out var tick))
-                    {
-                        tick.ApplyTo(existingVm);
-                        if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
-                            existingVm.UpdateClosePrice((double)tick.PreviousClose.Value);
-                    }
                 }
                 else
                 {
@@ -509,13 +449,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
                         Exchange = "us stocks",
                         IsDropped = false
                     };
-                    // Seed with latest tick data if available
-                    if (latest.TryGetValue(s, out var tick))
-                    {
-                        tick.ApplyTo(vm);
-                        if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
-                            vm.UpdateClosePrice((double)tick.PreviousClose.Value);
-                    }
                     _rowCache[s] = vm;
                 }
             }
@@ -627,52 +560,13 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
             QuoteItems.Add(rowVm);
 
             // Subscribe to market data for this symbol (ensures live updates work)
-            // Only subscribe via IBKR if connected, otherwise rely on fallback playback
             try
             {
                 _ibkrService.SubscribeToSymbols(new[] { symbol });
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Could not subscribe to IBKR market data for {Symbol}, will use fallback if available", symbol);
-            }
-
-            // Update fallback playback with new symbol if active
-            var fallback = Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services?.GetService<MarketScanner.Services.Impl.PlaybackFallback>();
-            if (fallback != null && fallback.IsActive)
-            {
-                // Get current symbols and add the new one
-                var currentSymbols = fallback.CurrentSymbols.ToList();
-                if (!currentSymbols.Contains(symbol, StringComparer.OrdinalIgnoreCase))
-                {
-                    currentSymbols.Add(symbol);
-                    fallback.UpdateSymbols(currentSymbols);
-                }
-
-                // Try to get latest snapshot from fallback to seed initial data (including PrevClose for Change/Change%)
-                _logger.LogInformation("QuoteViewModel: Attempting to get snapshot for {Symbol} from fallback", symbol);
-                var latest = fallback.GetLatestSnapshots(new[] { symbol });
-                if (latest.TryGetValue(symbol, out var tick))
-                {
-                    _logger.LogInformation("QuoteViewModel: Found snapshot for {Symbol}: LastPrice={LastPrice}, ClosePrice={ClosePrice}, PreviousClose={PreviousClose}, Volume={Volume}",
-                        symbol, tick.LastPrice, tick.ClosePrice, tick.PreviousClose, tick.Volume);
-                    tick.ApplyTo(rowVm);
-                    if (tick.PreviousClose.HasValue && tick.PreviousClose.Value > 0)
-                    {
-                        _logger.LogInformation("QuoteViewModel: Setting PrevClose={PrevClose} for {Symbol} from snapshot", tick.PreviousClose.Value, symbol);
-                        rowVm.UpdateClosePrice((double)tick.PreviousClose.Value);
-                    }
-                    _logger.LogInformation("QuoteViewModel: After snapshot apply, rowVm.PrevClose={PrevClose}, rowVm.LastPrice={LastPrice} for {Symbol}",
-                        rowVm.PrevClose, rowVm.LastPrice, symbol);
-                }
-                else
-                {
-                    _logger.LogWarning("QuoteViewModel: No snapshot data found in fallback for {Symbol}", symbol);
-                }
-            }
-            else
-            {
-                _logger.LogInformation("QuoteViewModel: Fallback not active or not available for {Symbol}", symbol);
+                _logger.LogDebug(ex, "Could not subscribe to IBKR market data for {Symbol}", symbol);
             }
 
             NewSymbolText = "";
@@ -985,18 +879,6 @@ public partial class QuoteViewModel : ObservableObject, IDisposable
         try
         {
             _tickSubscription?.Dispose();
-        }
-        catch { }
-
-        try
-        {
-            _playbackSubscription?.Dispose();
-        }
-        catch { }
-
-        try
-        {
-            _playbackSource?.Dispose();
         }
         catch { }
 

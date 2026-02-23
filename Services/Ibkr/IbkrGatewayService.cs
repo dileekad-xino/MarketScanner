@@ -9,6 +9,7 @@ using System.Collections.Concurrent;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Globalization;
+using System.IO;
 
 
 namespace MarketScanner.Services.Ibkr;
@@ -44,6 +45,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private static readonly TimeSpan HistoricalCacheTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ScannerRequestTimeout = TimeSpan.FromSeconds(40);
     private static readonly TimeSpan ScannerQuietPeriod = TimeSpan.FromMilliseconds(1000);
+    private static readonly TimeSpan CallbackStaleThreshold = TimeSpan.FromSeconds(15);
 
     private readonly ILogger<IbkrGatewayService> _logger;
     private readonly IConfiguration _config;
@@ -56,10 +58,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private bool _disposed;
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private Task? _readerLoopTask;
+    private CancellationTokenSource? _readerLoopCts;
+    private readonly object _readerLoopLock = new();
     private readonly object _connectionStatusLock = new();
     private bool? _lastPublishedConnectionStatus;
     private CancellationTokenSource? _reconnectLoopCts;
     private Task? _reconnectLoopTask;
+    private long _lastCallbackUtcTicks = DateTime.UtcNow.Ticks;
 
     /// <summary>
     /// Gets whether the service is connected to IBKR gateway.
@@ -152,6 +157,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         return checked(rawVolume * US_STOCK_VOLUME_MULTIPLIER);
     }
 
+    private void TouchCallback()
+    {
+        Interlocked.Exchange(ref _lastCallbackUtcTicks, DateTime.UtcNow.Ticks);
+    }
+
+    private DateTime GetLastCallbackUtc()
+    {
+        var ticks = Interlocked.Read(ref _lastCallbackUtcTicks);
+        return new DateTime(ticks, DateTimeKind.Utc);
+    }
+
     public IbkrGatewayService(ILogger<IbkrGatewayService> logger, IConfiguration config)
     {
         _logger = logger;
@@ -168,6 +184,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         try
         {
             if (IsConnected) return;
+            StopReaderLoop();
 
             if (_client != null && _client.IsConnected())
             {
@@ -199,8 +216,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
             var reader = new EReader(client, signal);
             reader.Start();
-
-            _readerLoopTask = Task.Run(() => RunReaderLoop(client, reader, signal, ct), ct);
+            var readerLoopCts = new CancellationTokenSource();
+            var readerLoopTask = Task.Run(() => RunReaderLoop(client, reader, signal, readerLoopCts.Token), readerLoopCts.Token);
+            lock (_readerLoopLock)
+            {
+                _readerLoopCts = readerLoopCts;
+                _readerLoopTask = readerLoopTask;
+            }
 
             // Wait for nextValidId callback (confirms full API session)
             var connected = await WaitUntilAsync(
@@ -246,34 +268,46 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     private void RunReaderLoop(EClientSocket client, EReader reader, EReaderSignal signal, CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && client.IsConnected())
+        try
         {
-            signal.waitForSignal();
-            try
+            while (!ct.IsCancellationRequested && client.IsConnected())
             {
-                reader.processMsgs();
-            }
-            catch (FormatException ex)
-            {
-                _logger.LogError(ex, "IBKR reader parse error. Disconnecting to recover cleanly.");
-                try { client.eDisconnect(); } catch { }
-                MarkDisconnected("Reader parse failure");
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "IBKR reader loop error. Continuing.");
+                signal.waitForSignal();
+                if (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                try
+                {
+                    reader.processMsgs();
+                    TouchCallback();
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogError(ex, "IBKR reader parse error. Disconnecting to recover cleanly.");
+                    try { client.eDisconnect(); } catch { }
+                    MarkDisconnected("Reader parse failure");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "IBKR reader loop error. Continuing.");
+                }
             }
         }
-
-        if (!client.IsConnected())
+        finally
         {
-            MarkDisconnected("Socket disconnected");
+            if (!ct.IsCancellationRequested && !client.IsConnected())
+            {
+                MarkDisconnected("Socket disconnected");
+            }
         }
     }
 
     private void SafeDisconnectClient()
     {
+        StopReaderLoop();
         try
         {
             if (_client?.IsConnected() == true)
@@ -287,10 +321,50 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
     }
 
+    private void StopReaderLoop()
+    {
+        CancellationTokenSource? readerCts = null;
+        EReaderSignal? signal = null;
+        lock (_readerLoopLock)
+        {
+            readerCts = _readerLoopCts;
+            signal = _signal;
+            _readerLoopCts = null;
+            _readerLoopTask = null;
+        }
+
+        if (readerCts == null)
+        {
+            return;
+        }
+
+        try
+        {
+            readerCts?.Cancel();
+        }
+        catch { }
+
+        try
+        {
+            signal?.issueSignal();
+        }
+        catch { }
+
+        readerCts?.Dispose();
+    }
+
     private void MarkDisconnected(string reason)
     {
+        StopReaderLoop();
         _connected = false;
         _nextValidId = 0;
+
+        foreach (var (reqId, waiter) in _scannerWaiters.ToArray())
+        {
+            waiter.TrySetException(new IOException($"IBKR disconnected: {reason}"));
+            CancelScannerQuietTimer(reqId);
+        }
+
         _logger.LogWarning("IBKR connection marked disconnected: {Reason}", reason);
         PublishConnectionState(isConnected: false, reason);
         StartReconnectLoop();
@@ -370,11 +444,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     private void StopReconnectLoop()
     {
+        var reconnectCts = _reconnectLoopCts;
+        _reconnectLoopCts = null;
         try
         {
-            _reconnectLoopCts?.Cancel();
+            reconnectCts?.Cancel();
         }
         catch { }
+        finally
+        {
+            reconnectCts?.Dispose();
+        }
     }
 
     private void RestoreMarketDataSubscriptions(bool includeHistorical = false)
@@ -426,6 +506,24 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         return condition();
     }
 
+    private async Task EnsurePumpHealthyAsync(CancellationToken ct)
+    {
+        if (!IsConnected)
+        {
+            return;
+        }
+
+        var age = DateTime.UtcNow - GetLastCallbackUtc();
+        if (age <= CallbackStaleThreshold)
+        {
+            return;
+        }
+
+        _logger.LogWarning("IBKR callback pump appears stale (last callback {AgeSeconds:F1}s ago). Reconnecting once.", age.TotalSeconds);
+        SafeDisconnectClient();
+        await EnsureConnectedAsync(ct);
+    }
+
     private int GetNextReqId() => Interlocked.Increment(ref _nextReqId);
 
     #endregion
@@ -461,6 +559,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         CancellationToken ct)
     {
         await EnsureConnectedAsync(ct);
+        await EnsurePumpHealthyAsync(ct);
 
         var cacheKey = BuildScanCacheKey(minPrice, maxPrice, minVol, product, exchange, topN);
         if (!forceRefresh && TryGetFreshScanCache(cacheKey, out var cachedRows))
@@ -776,6 +875,34 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogDebug("Completed scanner reqId={ReqId} via {Reason} with {Count} rows", reqId, reason, snapshot.Count);
         }
         return completed;
+    }
+
+    private void TryCompleteScannerFromError(int reqId, int errorCode, string errorMsg)
+    {
+        if (!_scannerWaiters.TryGetValue(reqId, out var tcs))
+        {
+            return;
+        }
+
+        var partialRows = GetScannerBufferSnapshot(reqId);
+        if (errorCode is 165 or 162 or 492 or 365)
+        {
+            _logger.LogWarning("Completing scanner reqId={ReqId} from scanner error {Code} with {Count} buffered rows", reqId, errorCode, partialRows.Count);
+            tcs.TrySetResult(partialRows);
+            CancelScannerQuietTimer(reqId);
+            return;
+        }
+
+        if (partialRows.Count > 0)
+        {
+            _logger.LogWarning("Scanner reqId={ReqId} got error {Code}; returning partial buffer ({Count} rows)", reqId, errorCode, partialRows.Count);
+            tcs.TrySetResult(partialRows);
+        }
+        else
+        {
+            tcs.TrySetException(new Exception($"IBKR scanner error {errorCode}: {errorMsg}"));
+        }
+        CancelScannerQuietTimer(reqId);
     }
 
     private void CancelScannerQuietTimer(int reqId)
@@ -1605,6 +1732,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void nextValidId(int orderId)
     {
+        TouchCallback();
         _nextValidId = orderId;
         _connected = _client != null && _client.IsConnected() && orderId > 0;
         _logger.LogInformation("nextValidId={OrderId}", orderId);
@@ -1612,6 +1740,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void scannerData(int reqId, int rank, ContractDetails contractDetails, string distance, string benchmark, string projection, string legsStr)
     {
+        TouchCallback();
         try
         {
             if (!_scannerBuffers.TryGetValue(reqId, out var buffer))
@@ -1660,42 +1789,52 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             if (_scannerRequestedRows.TryGetValue(reqId, out var topN) && topN > 0 && bufferCount >= topN)
             {
                 TryCompleteScannerFromBuffer(reqId, "topN-reached", requireNonEmpty: true);
+                CancelScannerQuietTimer(reqId);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in scannerData callback");
+            if (_scannerWaiters.TryGetValue(reqId, out var tcs))
+            {
+                tcs.TrySetException(ex);
+                CancelScannerQuietTimer(reqId);
+            }
         }
     }
 
     public void scannerDataEnd(int reqId)
     {
+        TouchCallback();
         try
         {
             _logger.LogDebug("scannerDataEnd received for reqId={ReqId}", reqId);
             _scannerDataEndSeen[reqId] = 1;
-            if (_scannerWaiters.ContainsKey(reqId) && _scannerBuffers.ContainsKey(reqId))
+            var completed = TryCompleteScannerFromBuffer(reqId, "scannerDataEnd", requireNonEmpty: false);
+            CancelScannerQuietTimer(reqId);
+            if (!completed)
             {
-                TryCompleteScannerFromBuffer(reqId, "scannerDataEnd", requireNonEmpty: false);
-                CancelScannerQuietTimer(reqId);
-                if (_currentScannerId == reqId)
-                {
-                    _currentScannerId = 0;
-                }
+                _logger.LogWarning("scannerDataEnd: waiter not found or already completed for reqId={ReqId}", reqId);
             }
-            else
+            if (_currentScannerId == reqId)
             {
-                _logger.LogWarning("scannerDataEnd: No waiter or buffer found for reqId={ReqId}", reqId);
+                _currentScannerId = 0;
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in scannerDataEnd callback");
+            if (_scannerWaiters.TryGetValue(reqId, out var tcs))
+            {
+                tcs.TrySetException(ex);
+                CancelScannerQuietTimer(reqId);
+            }
         }
     }
 
     public void tickPrice(int tickerId, int field, double price, TickAttrib attribs)
     {
+        TouchCallback();
         if (!_idToSymbol.TryGetValue(tickerId, out var symbol)) return;
         if (!_marketState.TryGetValue(symbol, out var state)) return;
 
@@ -1730,6 +1869,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void tickSize(int tickerId, int field, decimal size)
     {
+        TouchCallback();
         if (field != TICK_VOLUME && field != TICK_DELAYED_VOLUME) return;
 
         if (!_idToSymbol.TryGetValue(tickerId, out var symbol)) return;
@@ -1743,6 +1883,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void historicalData(int reqId, Bar bar)
     {
+        TouchCallback();
         // Check if this is for candlestick preloading
         if (_histBarsBuffers.TryGetValue(reqId, out var candleBuffer) &&
             _histBarsMetadata.TryGetValue(reqId, out var metadata))
@@ -1875,6 +2016,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void historicalDataEnd(int reqId, string startDate, string endDate)
     {
+        TouchCallback();
         // Check if this is for candlestick preloading
         if (_histBarsWaiters.TryGetValue(reqId, out var candleTcs) &&
             _histBarsBuffers.TryGetValue(reqId, out var candleBuffer))
@@ -2032,11 +2174,20 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     #region Minimal EWrapper Implementation
 
-    public void error(Exception e) => _logger.LogError(e, "IBKR Error");
-    public void error(string str) => _logger.LogError("IBKR Error: {Message}", str);
+    public void error(Exception e)
+    {
+        TouchCallback();
+        _logger.LogError(e, "IBKR Error");
+    }
+    public void error(string str)
+    {
+        TouchCallback();
+        _logger.LogError("IBKR Error: {Message}", str);
+    }
 
     public void error(int id, int errorCode, string errorMsg)
     {
+        TouchCallback();
         _logger.LogDebug("IBKR error callback: reqId={ReqId}, code={Code}, msg={Message}", id, errorCode, errorMsg);
         if (_scannerWaiters.ContainsKey(id))
         {
@@ -2112,30 +2263,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
 
         // Handle scanner-specific errors
-        if (_scannerWaiters.TryGetValue(id, out var tcs))
+        if (_scannerWaiters.ContainsKey(id))
         {
-            if (errorCode == 165 || errorCode == 162 || errorCode == 492 || errorCode == 365)
+            if (errorCode is not 2104 and not 2106 and not 2158 and not 2176)
             {
-                // These commonly indicate scanner-universe issues. Return partial buffer if any.
-                var partialRows = GetScannerBufferSnapshot(id);
-                _logger.LogWarning("Completing scanner reqId={ReqId} from error code {Code} with {Count} rows", id, errorCode, partialRows.Count);
-                tcs.TrySetResult(partialRows);
-                CancelScannerQuietTimer(id);
-            }
-            else if (errorCode is not 2104 and not 2106 and not 2158 and not 2176)
-            {
-                // Complete fatal scanner request errors so callers never hang waiting for scannerDataEnd.
-                var partialRows = GetScannerBufferSnapshot(id);
-                if (partialRows.Count > 0)
-                {
-                    _logger.LogWarning("Scanner reqId={ReqId} got error {Code}; returning partial buffer ({Count} rows)", id, errorCode, partialRows.Count);
-                    tcs.TrySetResult(partialRows);
-                }
-                else
-                {
-                    tcs.TrySetException(new Exception($"IBKR scanner error {errorCode}: {errorMsg}"));
-                }
-                CancelScannerQuietTimer(id);
+                // Always complete scanner requests on non-status errors so callers never hang.
+                TryCompleteScannerFromError(id, errorCode, errorMsg);
             }
         }
 
@@ -2145,9 +2278,14 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
     }
 
-    public void connectAck() => _logger.LogInformation("IBKR connection acknowledged");
+    public void connectAck()
+    {
+        TouchCallback();
+        _logger.LogInformation("IBKR connection acknowledged");
+    }
     public void connectionClosed()
     {
+        TouchCallback();
         MarkDisconnected("connectionClosed callback");
     }
     public void currentTime(long time) { }
@@ -2155,6 +2293,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void tickGeneric(int tickerId, int field, double value) { }
     public void tickString(int tickerId, int field, string value)
     {
+        TouchCallback();
         if (field != TICK_RT_VOLUME && field != TICK_DELAYED_RT_VOLUME) return;
         if (string.IsNullOrWhiteSpace(value)) return;
         if (!_idToSymbol.TryGetValue(tickerId, out var symbol)) return;
@@ -2200,6 +2339,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void receiveFA(int faDataType, string faXmlData) { }
     public void historicalDataUpdate(int reqId, Bar bar)
     {
+        TouchCallback();
         // Check if this is a streaming historical data request
         if (!_streamingHistReqMetadata.TryGetValue(reqId, out var metadata))
         {
@@ -2275,6 +2415,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     public void familyCodes(FamilyCode[] familyCodes) { }
     public void symbolSamples(int reqId, ContractDescription[] contractDescriptions)
     {
+        TouchCallback();
         try
         {
             if (_symbolSearchWaiters.TryGetValue(reqId, out var tcs))
@@ -2342,6 +2483,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         if (_disposed) return;
         _disposed = true;
 
+        StopReaderLoop();
         try
         {
             if (_client?.IsConnected() == true)

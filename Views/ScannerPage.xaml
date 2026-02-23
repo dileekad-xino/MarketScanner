@@ -86,6 +86,21 @@
                                                 WidthRequest="100"/>
                                     </HorizontalStackLayout>
 
+                                    <!-- Product Filter -->
+                                    <HorizontalStackLayout Spacing="4"
+                                                           VerticalOptions="Center"
+                                                           Margin="8,0,0,0">
+                                        <Label Text="Product"
+                                               FontSize="11"
+                                               TextColor="{StaticResource OnSurfaceVariantDark}"
+                                               VerticalOptions="Center"/>
+                                        <Picker ItemsSource="{Binding ProductOptions}"
+                                                SelectedItem="{Binding Product, Mode=TwoWay}"
+                                                HeightRequest="28"
+                                                FontSize="11"
+                                                WidthRequest="90"/>
+                                    </HorizontalStackLayout>
+
                                     <!-- Separator -->
                                     <Label Text="|"
                                            FontSize="11"

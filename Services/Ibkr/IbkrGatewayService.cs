@@ -42,6 +42,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private const string ScannerAvgVolumeRequestDuration = "30 D";
     private static readonly TimeSpan ScannerResultCacheTtl = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HistoricalCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ScannerRequestTimeout = TimeSpan.FromSeconds(40);
+    private static readonly TimeSpan ScannerQuietPeriod = TimeSpan.FromMilliseconds(1000);
 
     private readonly ILogger<IbkrGatewayService> _logger;
     private readonly IConfiguration _config;
@@ -71,6 +73,11 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     private readonly ConcurrentDictionary<int, TaskCompletionSource<List<ScannerRow>>> _scannerWaiters = new();
     private readonly ConcurrentDictionary<int, ScannerRow> _scannerResults = new();
     private readonly ConcurrentDictionary<int, bool> _scannerRequestIds = new(); // Track all scanner request IDs for Error 162 suppression
+    private readonly ConcurrentDictionary<int, int> _scannerRequestedRows = new();
+    private readonly ConcurrentDictionary<int, CancellationTokenSource> _scannerQuietTimers = new();
+    private readonly ConcurrentDictionary<int, int> _scannerDataCounts = new();
+    private readonly ConcurrentDictionary<int, byte> _scannerDataEndSeen = new();
+    private readonly ConcurrentDictionary<int, int> _scannerLastErrorCodes = new();
     private int _currentScannerId = 0; // Track current active scanner for cancellation
     private readonly object _scanCacheLock = new();
     private string? _lastScanCacheKey;
@@ -427,7 +434,7 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(CancellationToken ct)
     {
-        return await ScanCoreAsync(2, 20, 100000, "stocks", "us stocks", 50, ct);
+        return await ScanCoreAsync(2, 20, 100000, "stocks", "us stocks", 50, forceRefresh: false, ct);
     }
 
     public async Task<IReadOnlyList<ScannerRow>> ScanAsync(
@@ -437,9 +444,10 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         string product = "stocks",
         string exchange = "us stocks",
         int topN = 50,
+        bool forceRefresh = false,
         CancellationToken ct = default)
     {
-        return await ScanCoreAsync(minPrice, maxPrice, minVol, product, exchange, topN, ct);
+        return await ScanCoreAsync(minPrice, maxPrice, minVol, product, exchange, topN, forceRefresh, ct);
     }
 
     private async Task<IReadOnlyList<ScannerRow>> ScanCoreAsync(
@@ -449,12 +457,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         string product,
         string exchange,
         int topN,
+        bool forceRefresh,
         CancellationToken ct)
     {
         await EnsureConnectedAsync(ct);
 
         var cacheKey = BuildScanCacheKey(minPrice, maxPrice, minVol, product, exchange, topN);
-        if (TryGetFreshScanCache(cacheKey, out var cachedRows))
+        if (!forceRefresh && TryGetFreshScanCache(cacheKey, out var cachedRows))
         {
             _logger.LogInformation("Using cached scanner universe ({Count} rows, age={AgeSeconds:F0}s)", cachedRows.Count, (DateTimeOffset.UtcNow - _lastScanAtUtc).TotalSeconds);
             var cachedSymbols = cachedRows.Select(r => r.Symbol).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -462,38 +471,51 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             await WaitForInitialMarketDataAsync(cachedSymbols, TimeSpan.FromMilliseconds(400), ct);
             return HydrateScannerRowsFromMarketState(cachedRows);
         }
+        else if (forceRefresh)
+        {
+            _logger.LogInformation("Force-refresh requested; bypassing scanner cache for this call");
+        }
 
         // Cancel any existing scanner before starting new one
         if (_currentScannerId > 0)
         {
             _logger.LogDebug("Cancelling previous scanner reqId={PreviousId}", _currentScannerId);
             _client.cancelScannerSubscription(_currentScannerId);
-            _scannerWaiters.TryRemove(_currentScannerId, out _);
+            if (_scannerWaiters.TryRemove(_currentScannerId, out var previousWaiter))
+            {
+                previousWaiter.TrySetCanceled();
+            }
             _scannerBuffers.TryRemove(_currentScannerId, out _);
+            _scannerRequestedRows.TryRemove(_currentScannerId, out _);
+            CancelScannerQuietTimer(_currentScannerId);
+            _scannerDataCounts.TryRemove(_currentScannerId, out _);
+            _scannerDataEndSeen.TryRemove(_currentScannerId, out _);
+            _scannerLastErrorCodes.TryRemove(_currentScannerId, out _);
         }
 
         var requestId = GetNextReqId();
         _currentScannerId = requestId; // Track current scanner for future cancellation
-        var tcs = new TaskCompletionSource<List<ScannerRow>>();
+        var tcs = new TaskCompletionSource<List<ScannerRow>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _scannerWaiters[requestId] = tcs;
         _scannerBuffers[requestId] = new List<ScannerRow>();
+        _scannerRequestedRows[requestId] = topN;
         _scannerRequestIds[requestId] = true; // Track for Error 162 suppression
+        _scannerDataCounts[requestId] = 0;
+        _scannerDataEndSeen.TryRemove(requestId, out _);
+        _scannerLastErrorCodes.TryRemove(requestId, out _);
+        _logger.LogDebug("Registered scanner waiter/buffer reqId={ReqId}, topN={TopN}", requestId, topN);
 
-        // Map region to IBKR location code using constants
-        const string locationCode = IbkrConstants.US_STOCKS_MAJOR;
-
-        // Map (region, product) → IBKR instrument type (region-aware mapping)
-        var instrument = product.ToLowerInvariant() switch
+        var normalizedProduct = string.IsNullOrWhiteSpace(product) ? "stocks" : product.Trim().ToLowerInvariant();
+        var (instrument, locationCode) = normalizedProduct switch
         {
-            "stocks" => "STK",
-            "futures" => "FUT.us",
-            "etfs" => "ETF.EQ.US",
-            _ => "STK"
-
+            "futures" => ("FUT", "FUT.US"),
+            "stocks" => ("STK", IbkrConstants.US_STOCKS_MAJOR),
+            "etfs" => ("STK", IbkrConstants.US_STOCKS_MAJOR),
+            _ => ("STK", IbkrConstants.US_STOCKS_MAJOR)
         };
 
-        _logger.LogInformation("Scanner instrument type: {Instrument} (product: {Product})", instrument, product);
+        _logger.LogInformation("Scanner request shape: product={Product}, instrument={Instrument}, locationCode={LocationCode}", normalizedProduct, instrument, locationCode);
         var scannerSubscription = new ScannerSubscription
         {
             Instrument = instrument,
@@ -517,7 +539,8 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         // Add exchange filter if specified (not "any" or "us stocks")
         if (!string.IsNullOrWhiteSpace(exchange) &&
             !exchange.Equals("any", StringComparison.OrdinalIgnoreCase) &&
-            !exchange.Equals("us stocks", StringComparison.OrdinalIgnoreCase))
+            !exchange.Equals("us stocks", StringComparison.OrdinalIgnoreCase) &&
+            instrument == "STK")
         {
             // Map UI values to IBKR exchange codes
             var exchangeCode = exchange.ToUpperInvariant() switch
@@ -530,20 +553,23 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             filterOptions.Add(new TagValue("exchange", exchangeCode));
             _logger.LogInformation("Adding exchange filter: {Exchange}", exchangeCode);
         }
+        else if (instrument != "STK")
+        {
+            _logger.LogDebug("Skipping stock exchange tag filter for non-stock instrument={Instrument}", instrument);
+        }
 
         _logger.LogInformation("Starting scanner subscription reqId={RequestId} with filters: price ${MinPrice}-${MaxPrice}, product={Product}, locationCode={LocationCode}, exchange={Exchange}, volume >100k, topN={TopN}",
     requestId, minPrice, maxPrice, product, locationCode, exchange, topN);
         _client.reqScannerSubscription(requestId, scannerSubscription, scanOptions, filterOptions);
+        ScheduleScannerSilenceProbe(requestId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
 
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeoutCts = new CancellationTokenSource(ScannerRequestTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         try
         {
-            linkedCts.Token.Register(() => tcs.TrySetCanceled());
-            var rows = await tcs.Task;
+            var rows = await tcs.Task.WaitAsync(linkedCts.Token);
             _logger.LogInformation("Scanner returned {Count} rows", rows.Count);
-            UpdateScanCache(cacheKey, rows);
 
             // Cancel previous market data subscriptions to avoid "Duplicate ticker id" errors
             foreach (var kvp in _idToSymbol.ToList())
@@ -577,7 +603,9 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // Initial hydration pass from reqMktData (last/close/volume) so first render
             // is less likely to show all-zero pending values.
             await WaitForInitialMarketDataAsync(symbols, TimeSpan.FromMilliseconds(800), ct);
-            return HydrateScannerRowsFromMarketState(rows);
+            var hydratedRows = HydrateScannerRowsFromMarketState(rows);
+            UpdateScanCache(cacheKey, hydratedRows);
+            return hydratedRows;
         }
         catch (TaskCanceledException) when (ct.IsCancellationRequested)
         {
@@ -587,19 +615,37 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         catch (TaskCanceledException)
         {
             _logger.LogWarning("Scanner request timed out");
+            var dataCount = _scannerDataCounts.TryGetValue(requestId, out var timeoutDataCount) ? timeoutDataCount : 0;
+            var sawDataEnd = _scannerDataEndSeen.ContainsKey(requestId);
+            var lastErrorCode = _scannerLastErrorCodes.TryGetValue(requestId, out var timeoutErrorCode) ? timeoutErrorCode : (int?)null;
+            _logger.LogWarning(
+                "Scanner timeout diagnostics reqId={ReqId}: scannerDataCount={DataCount}, scannerDataEndSeen={SawDataEnd}, lastErrorCode={LastErrorCode}",
+                requestId, dataCount, sawDataEnd, lastErrorCode);
 
-            if (_scannerBuffers.TryGetValue(requestId, out var partialRows) && partialRows.Count > 0)
+            var partialRows = GetScannerBufferSnapshot(requestId);
+            if (partialRows.Count > 0)
             {
+                var hydratedPartial = HydrateScannerRowsFromMarketState(partialRows);
                 _logger.LogWarning(
                     "Scanner timeout for reqId={ReqId}, returning partial result set with {Count} rows",
                     requestId,
-                    partialRows.Count);
-                var partialCopy = partialRows.ToList();
-                UpdateScanCache(cacheKey, partialCopy);
-                return partialCopy;
+                    hydratedPartial.Count);
+                UpdateScanCache(cacheKey, hydratedPartial);
+                return hydratedPartial;
             }
 
-            throw new TimeoutException("Scanner request timed out");
+            if (TryGetScanCacheRegardlessOfAge(cacheKey, out var staleRows) && staleRows.Count > 0)
+            {
+                var hydratedStale = HydrateScannerRowsFromMarketState(staleRows);
+                _logger.LogWarning(
+                    "Scanner timeout for reqId={ReqId}, reusing stale scanner cache with {Count} rows",
+                    requestId,
+                    hydratedStale.Count);
+                return hydratedStale;
+            }
+
+            _logger.LogWarning("Scanner timeout for reqId={ReqId}, returning empty result set", requestId);
+            return Array.Empty<ScannerRow>();
         }
         finally
         {
@@ -609,11 +655,17 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             }
             _scannerWaiters.TryRemove(requestId, out _);
             _scannerBuffers.TryRemove(requestId, out _);
+            _scannerRequestedRows.TryRemove(requestId, out _);
+            CancelScannerQuietTimer(requestId);
+            _scannerDataCounts.TryRemove(requestId, out _);
+            _scannerDataEndSeen.TryRemove(requestId, out _);
+            _scannerLastErrorCodes.TryRemove(requestId, out _);
             _scannerRequestIds.TryRemove(requestId, out _); // Clean up Error 162 suppression tracking
             if (_currentScannerId == requestId)
             {
                 _currentScannerId = 0; // Reset current scanner ID
             }
+            _logger.LogDebug("Removed scanner waiter/buffer reqId={ReqId}", requestId);
         }
     }
 
@@ -648,6 +700,134 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         }
     }
 
+    private List<ScannerRow> GetScannerBufferSnapshot(int reqId)
+    {
+        if (!_scannerBuffers.TryGetValue(reqId, out var buffer))
+        {
+            return new List<ScannerRow>();
+        }
+
+        lock (buffer)
+        {
+            return buffer.Select(CloneScannerRow).ToList();
+        }
+    }
+
+    private void ScheduleScannerQuietCompletion(int reqId)
+    {
+        if (!_scannerWaiters.ContainsKey(reqId))
+        {
+            return;
+        }
+
+        var timerCts = new CancellationTokenSource();
+        if (_scannerQuietTimers.TryGetValue(reqId, out var previousCts))
+        {
+            _scannerQuietTimers[reqId] = timerCts;
+            try
+            {
+                previousCts.Cancel();
+            }
+            catch { }
+            finally
+            {
+                previousCts.Dispose();
+            }
+        }
+        else
+        {
+            _scannerQuietTimers[reqId] = timerCts;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(ScannerQuietPeriod, timerCts.Token);
+                TryCompleteScannerFromBuffer(reqId, "quiet-period", requireNonEmpty: true);
+            }
+            catch (OperationCanceledException)
+            {
+                // Scanner still receiving updates, ignore.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Scanner quiet-period completion failed for reqId={ReqId}", reqId);
+            }
+        });
+    }
+
+    private bool TryCompleteScannerFromBuffer(int reqId, string reason, bool requireNonEmpty)
+    {
+        if (!_scannerWaiters.TryGetValue(reqId, out var tcs))
+        {
+            return false;
+        }
+
+        var snapshot = GetScannerBufferSnapshot(reqId);
+        if (requireNonEmpty && snapshot.Count == 0)
+        {
+            return false;
+        }
+
+        var completed = tcs.TrySetResult(snapshot);
+        if (completed)
+        {
+            _logger.LogDebug("Completed scanner reqId={ReqId} via {Reason} with {Count} rows", reqId, reason, snapshot.Count);
+        }
+        return completed;
+    }
+
+    private void CancelScannerQuietTimer(int reqId)
+    {
+        if (!_scannerQuietTimers.TryRemove(reqId, out var timerCts))
+        {
+            return;
+        }
+
+        try
+        {
+            timerCts.Cancel();
+        }
+        catch { }
+        finally
+        {
+            timerCts.Dispose();
+        }
+    }
+
+    private void ScheduleScannerSilenceProbe(
+        int reqId,
+        string instrument,
+        string locationCode,
+        string exchange,
+        decimal minPrice,
+        decimal maxPrice,
+        decimal minVol,
+        int topN)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5));
+
+            if (!_scannerWaiters.TryGetValue(reqId, out var waiter) || waiter.Task.IsCompleted)
+            {
+                return;
+            }
+
+            var dataCount = _scannerDataCounts.TryGetValue(reqId, out var seenDataCount) ? seenDataCount : 0;
+            var sawDataEnd = _scannerDataEndSeen.ContainsKey(reqId);
+            var sawError = _scannerLastErrorCodes.TryGetValue(reqId, out var errorCode);
+
+            if (dataCount == 0 && !sawDataEnd && !sawError)
+            {
+                _logger.LogWarning(
+                    "Scanner callbacks still silent after 5s for reqId={ReqId}. Likely IB-side silence or request-shape mismatch. Shape: instrument={Instrument}, locationCode={LocationCode}, exchange={Exchange}, price={MinPrice}-{MaxPrice}, minVol={MinVol}, topN={TopN}",
+                    reqId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
+            }
+        });
+    }
+
     private static string BuildScanCacheKey(
         decimal minPrice,
         decimal maxPrice,
@@ -667,6 +847,23 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                           string.Equals(_lastScanCacheKey, cacheKey, StringComparison.Ordinal) &&
                           (DateTimeOffset.UtcNow - _lastScanAtUtc) <= ScannerResultCacheTtl;
             if (isFresh)
+            {
+                rows = _lastScanRows;
+                return true;
+            }
+        }
+
+        rows = Array.Empty<ScannerRow>();
+        return false;
+    }
+
+    private bool TryGetScanCacheRegardlessOfAge(string cacheKey, out IReadOnlyList<ScannerRow> rows)
+    {
+        lock (_scanCacheLock)
+        {
+            var hasMatchingCache = _lastScanRows.Count > 0 &&
+                                   string.Equals(_lastScanCacheKey, cacheKey, StringComparison.Ordinal);
+            if (hasMatchingCache)
             {
                 rows = _lastScanRows;
                 return true;
@@ -787,8 +984,16 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             _logger.LogInformation("Cancelling current scanner subscription reqId={ScannerId}", _currentScannerId);
             _client.cancelScannerSubscription(_currentScannerId);
-            _scannerWaiters.TryRemove(_currentScannerId, out _);
+            if (_scannerWaiters.TryRemove(_currentScannerId, out var waiter))
+            {
+                waiter.TrySetCanceled();
+            }
             _scannerBuffers.TryRemove(_currentScannerId, out _);
+            _scannerRequestedRows.TryRemove(_currentScannerId, out _);
+            CancelScannerQuietTimer(_currentScannerId);
+            _scannerDataCounts.TryRemove(_currentScannerId, out _);
+            _scannerDataEndSeen.TryRemove(_currentScannerId, out _);
+            _scannerLastErrorCodes.TryRemove(_currentScannerId, out _);
             _scannerRequestIds.TryRemove(_currentScannerId, out _); // Clean up Error 162 suppression tracking
             _currentScannerId = 0;
         }
@@ -1439,9 +1644,23 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                 }
             };
 
-            buffer.Add(row);
-            _logger.LogDebug("scannerData: reqId={ReqId}, rank={Rank}, symbol={Symbol}, buffer size={BufferSize}",
-                reqId, rank, row.Symbol, buffer.Count);
+            int bufferCount;
+            lock (buffer)
+            {
+                buffer.Add(row);
+                bufferCount = buffer.Count;
+            }
+
+            _logger.LogDebug("scannerData: reqId={ReqId}, rank={Rank}, symbol={Symbol}, bufferSize={BufferSize}",
+                reqId, rank, row.Symbol, bufferCount);
+            _scannerDataCounts.AddOrUpdate(reqId, 1, (_, current) => current + 1);
+
+            ScheduleScannerQuietCompletion(reqId);
+
+            if (_scannerRequestedRows.TryGetValue(reqId, out var topN) && topN > 0 && bufferCount >= topN)
+            {
+                TryCompleteScannerFromBuffer(reqId, "topN-reached", requireNonEmpty: true);
+            }
         }
         catch (Exception ex)
         {
@@ -1453,12 +1672,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
     {
         try
         {
-            if (_scannerWaiters.TryGetValue(reqId, out var tcs) &&
-                _scannerBuffers.TryGetValue(reqId, out var buffer))
+            _logger.LogDebug("scannerDataEnd received for reqId={ReqId}", reqId);
+            _scannerDataEndSeen[reqId] = 1;
+            if (_scannerWaiters.ContainsKey(reqId) && _scannerBuffers.ContainsKey(reqId))
             {
-                _logger.LogDebug("scannerDataEnd: reqId={ReqId}, rows={Count}", reqId, buffer.Count);
-
-                tcs.TrySetResult(buffer);
+                TryCompleteScannerFromBuffer(reqId, "scannerDataEnd", requireNonEmpty: false);
+                CancelScannerQuietTimer(reqId);
                 if (_currentScannerId == reqId)
                 {
                     _currentScannerId = 0;
@@ -1818,6 +2037,12 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
 
     public void error(int id, int errorCode, string errorMsg)
     {
+        _logger.LogDebug("IBKR error callback: reqId={ReqId}, code={Code}, msg={Message}", id, errorCode, errorMsg);
+        if (_scannerWaiters.ContainsKey(id))
+        {
+            _scannerLastErrorCodes[id] = errorCode;
+        }
+
         if (errorCode is 504 or 1100 or 1300 or 2110)
         {
             MarkDisconnected($"IBKR transport error {errorCode}: {errorMsg}");
@@ -1891,8 +2116,26 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
         {
             if (errorCode == 165 || errorCode == 162 || errorCode == 492 || errorCode == 365)
             {
-                // Complete with empty result for these errors
-                tcs.TrySetResult(new List<ScannerRow>());
+                // These commonly indicate scanner-universe issues. Return partial buffer if any.
+                var partialRows = GetScannerBufferSnapshot(id);
+                _logger.LogWarning("Completing scanner reqId={ReqId} from error code {Code} with {Count} rows", id, errorCode, partialRows.Count);
+                tcs.TrySetResult(partialRows);
+                CancelScannerQuietTimer(id);
+            }
+            else if (errorCode is not 2104 and not 2106 and not 2158 and not 2176)
+            {
+                // Complete fatal scanner request errors so callers never hang waiting for scannerDataEnd.
+                var partialRows = GetScannerBufferSnapshot(id);
+                if (partialRows.Count > 0)
+                {
+                    _logger.LogWarning("Scanner reqId={ReqId} got error {Code}; returning partial buffer ({Count} rows)", id, errorCode, partialRows.Count);
+                    tcs.TrySetResult(partialRows);
+                }
+                else
+                {
+                    tcs.TrySetException(new Exception($"IBKR scanner error {errorCode}: {errorMsg}"));
+                }
+                CancelScannerQuietTimer(id);
             }
         }
 

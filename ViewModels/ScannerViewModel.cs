@@ -78,7 +78,7 @@ public partial class ScannerViewModel : ObservableObject
     // FILTER BUCKETS
     // ============================================================================
     // ScanFilters (trigger IBKR rescan):
-    //   - MinPrice, MaxPrice, Exchange, TopN
+    //   - MinPrice, MaxPrice, Product, Exchange, TopN
     //   - Requires IBKR API call → replaces Snapshot
     //
     // ViewFilters (instant client-side):
@@ -95,6 +95,7 @@ public partial class ScannerViewModel : ObservableObject
     // Filter properties
 
     [ObservableProperty] private string _exchange = "US Stocks";
+    [ObservableProperty] private string _product = "stocks";
     [ObservableProperty] private string _minPriceText = "";
     [ObservableProperty] private string _maxPriceText = "";
     [ObservableProperty] private string _minChangePercentText = "";
@@ -124,6 +125,7 @@ public partial class ScannerViewModel : ObservableObject
     // Options for pickers
 
     public List<string> ExchangeOptions { get; } = new() { "us stocks", "nasdaq", "nyse", "amex", "otc" };
+    public List<string> ProductOptions { get; } = new() { "stocks", "etfs", "futures" };
     public List<int> TopNOptions { get; } = new() { 5, 10, 15, 20, 50 };
     private int ScannerUniverseSize => TopNOptions.Count > 0 ? TopNOptions.Max() : 50;
 
@@ -157,6 +159,11 @@ public partial class ScannerViewModel : ObservableObject
     {
         _logger.LogInformation("Scanner filter changed: Exchange={Value}", value ?? "");
         // DebouncedApply is triggered by PropertyChanged handler for Exchange
+    }
+    partial void OnProductChanged(string value)
+    {
+        _logger.LogInformation("Scanner filter changed: Product={Value}", value ?? "");
+        // DebouncedApply is triggered by PropertyChanged handler for Product
     }
     partial void OnMinPriceTextChanged(string value)
     {
@@ -256,7 +263,8 @@ public partial class ScannerViewModel : ObservableObject
                         e.PropertyName?.StartsWith("Max") == true ||
                         e.PropertyName?.StartsWith("Selected") == true ||
                         e.PropertyName?.StartsWith("TopN") == true ||
-                        e.PropertyName?.StartsWith("Exchange") == true)
+                        e.PropertyName?.StartsWith("Exchange") == true ||
+                        e.PropertyName?.StartsWith("Product") == true)
             {
                 _logger.LogInformation("Scanner filter change detected: {PropertyName}, scheduling ApplyFiltersAsync (debounce)", e.PropertyName);
                 DebouncedApply();
@@ -356,6 +364,7 @@ public partial class ScannerViewModel : ObservableObject
         // Set production defaults for IBKR scanner
 
         Exchange = "us stocks";
+        Product = "stocks";
         MinPriceText = "2";
         MaxPriceText = "20";
         VolumeMinText = "100000";
@@ -370,6 +379,7 @@ public partial class ScannerViewModel : ObservableObject
     {
 
         Exchange = "us stocks";
+        Product = "stocks";
         MinPriceText = "2";
         MaxPriceText = "20";
         VolumeMinText = "100000";
@@ -420,8 +430,10 @@ public partial class ScannerViewModel : ObservableObject
             var minPrice = ParseDecimalSafe(MinPriceText) ?? 2;
             var maxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
             var minVol = ParseDecimalSafe(VolumeMinText) ?? 100000;
-            const string product = "stocks";  // Always stocks
+            var product = NormalizeProduct(Product);
             var exchange = IsAnyValue(Exchange) ? "us stocks" : Exchange.ToLowerInvariant();
+            _logger.LogInformation("Refresh scanner request shape: product={Product}, exchange={Exchange}, minPrice={MinPrice}, maxPrice={MaxPrice}, minVol={MinVol}, topN={TopN}",
+                product, exchange, minPrice, maxPrice, minVol, ScannerUniverseSize);
 
             // If we previously switched offline, always probe for IBKR recovery first.
             if (_isOffline)
@@ -449,7 +461,7 @@ public partial class ScannerViewModel : ObservableObject
             try
             {
                 rows = (_scanner is IbkrGatewayService ibkrGateway)
-                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, ScannerUniverseSize, _cts.Token)
+                    ? await ibkrGateway.ScanAsync(minPrice, maxPrice, minVol, product, exchange, ScannerUniverseSize, forceRefresh: true, ct: _cts.Token)
                     : await _scanner.ScanAsync(_cts.Token);
 
                 _isOffline = false;
@@ -473,6 +485,17 @@ public partial class ScannerViewModel : ObservableObject
 
             _logger.LogInformation("Received {Count} rows from scanner", rows.Count);
 
+            // If timeout fallback returns symbol-only rows (all zeros), preserve prior snapshot
+            // rather than replacing the UI with an empty filtered result.
+            var allZeroRows = rows.Count > 0 && rows.All(r => r.LastPrice <= 0 && r.Volume <= 0 && r.AvgVolume <= 0);
+            if (allZeroRows && _snapshot.Length > 0)
+            {
+                _logger.LogWarning("Scanner returned only zero-valued rows; preserving previous snapshot with {Count} items", _snapshot.Length);
+                ErrorMessage = "Scanner timed out. Showing previous snapshot.";
+                await ApplyFiltersAsync();
+                return;
+            }
+
             // Clear existing rows and rebuild from scanner results
             try
             {
@@ -488,7 +511,7 @@ public partial class ScannerViewModel : ObservableObject
                             Symbol = row.Symbol,
                             Company = row.Company ?? row.Symbol,
                             Region = "United States",  // Always US
-                            Product = row.Meta.Product ?? "Stocks",
+                            Product = row.Meta.Product ?? product,
                             Exchange = row.Meta.Exchange ?? Exchange,
                             LastPrice = (double)row.LastPrice,
                             PrevClose = (double)row.LastPrice, // Will be updated by market data
@@ -660,7 +683,7 @@ public partial class ScannerViewModel : ObservableObject
                 Symbol = symbol,
                 Company = symbol,
                 Region = "United States",  // Always US
-                Product = "Stocks",
+                Product = Product,
                 Exchange = Exchange
             };
             _rowLookup[symbol] = rowVm;
@@ -679,6 +702,23 @@ public partial class ScannerViewModel : ObservableObject
         || s.Equals("us stocks", StringComparison.OrdinalIgnoreCase)
         || s.Equals("-", StringComparison.OrdinalIgnoreCase);
 
+    private static string NormalizeProduct(string? product)
+    {
+        if (string.IsNullOrWhiteSpace(product))
+        {
+            return "stocks";
+        }
+
+        var normalized = product.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "stock" => "stocks",
+            "etf" => "etfs",
+            "future" => "futures",
+            _ => normalized
+        };
+    }
+
     private static decimal? ParseDecimalSafe(string? s) => Parsing.ParseDecimal(s);
     private static decimal? ParsePercentSafe(string? s) => Parsing.ParsePercent(s);
 
@@ -692,7 +732,7 @@ public partial class ScannerViewModel : ObservableObject
         var currentMinPrice = ParseDecimalSafe(MinPriceText) ?? 2;
         var currentMaxPrice = ParseDecimalSafe(MaxPriceText) ?? 20;
         const string currentRegion = "us";  // Always US
-        const string currentProduct = "stocks";  // Always stocks
+        var currentProduct = NormalizeProduct(Product);
         var currentExchange = IsAnyValue(Exchange) ? "us stocks" : Exchange.ToLowerInvariant();
         // MinChgPct, TopN, MinVolume are client-side only, no re-scan needed
 
@@ -730,7 +770,7 @@ public partial class ScannerViewModel : ObservableObject
         // Check if we need to re-scan at IBKR level
         if (RequiresRescan())
         {
-            _logger.LogInformation("Scan-level filter change (price/exchange) detected, triggering RefreshAsync for re-scan");
+            _logger.LogInformation("Scan-level filter change (price/product/exchange) detected, triggering RefreshAsync for re-scan");
             await RefreshAsync();
             return;
         }
@@ -759,8 +799,8 @@ public partial class ScannerViewModel : ObservableObject
             TopN: TopN // Pass the actual TopN value from ViewModel
         );
 
-        _logger.LogInformation("Filter criteria: MinPrice={MinPrice}, MaxPrice={MaxPrice}, MinVolume={MinVolume}, MinChgPct={MinChgPct}, TopN={TopN}",
-            criteria.MinPrice, criteria.MaxPrice, criteria.MinVolume, criteria.MinChgPct, criteria.TopN);
+        _logger.LogInformation("Filter criteria: Product={Product}, Exchange={Exchange}, MinPrice={MinPrice}, MaxPrice={MaxPrice}, MinVolume={MinVolume}, MinChgPct={MinChgPct}, TopN={TopN}",
+            NormalizeProduct(Product), Exchange, criteria.MinPrice, criteria.MaxPrice, criteria.MinVolume, criteria.MinChgPct, criteria.TopN);
 
         // Always derive ShownData from Snapshot (not from filtered results)
         // This allows loosening filters (15% → 10%) to show previously hidden stocks
@@ -1051,6 +1091,7 @@ public partial class ScannerViewModel : ObservableObject
         {
 
             Exchange = "us stocks";
+            Product = "stocks";
             MinPriceText = "2";
             MaxPriceText = "20";
             VolumeMinText = "100000";

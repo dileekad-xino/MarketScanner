@@ -20,6 +20,7 @@ public sealed class AlgoStrategy : IAlgoStrategy
     private readonly ICciSettingsService _cciSettingsService;
     private readonly ILogger<AlgoStrategy> _logger;
     private readonly ConcurrentDictionary<string, double> _symbolSellCciThresholds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _symbolCciEntryArmed = new(StringComparer.OrdinalIgnoreCase);
 
     public string Name => "Composite Algorithm";
     public string Description =>
@@ -84,8 +85,9 @@ public sealed class AlgoStrategy : IAlgoStrategy
         var ema = results.FirstOrDefault(r => r.Ema20Signal != null);
         var cciValue = cci?.CciValue;
 
+        var cciThreshold = cciSettings.Overbought;
         bool cciAbove =
-            cci?.CciSignal == "ABOVE_THRESHOLD";
+            cciValue.HasValue && cciValue.Value > cciThreshold;
 
         bool macdDarkGreen =
             macd?.MacdSignal == "DARK_GREEN";
@@ -107,18 +109,28 @@ public sealed class AlgoStrategy : IAlgoStrategy
 
         if (!hasOpenPosition)
         {
+            if (cciValue.HasValue && cciValue.Value <= cciThreshold)
+            {
+                _symbolCciEntryArmed[symbol.Symbol] = 0;
+            }
+
+            var isEntryArmed = _symbolCciEntryArmed.ContainsKey(symbol.Symbol);
+            var cciCrossedAbove = cciValue.HasValue && cciValue.Value > cciThreshold && isEntryArmed;
+
             // ---------- ENTRY ----------
-            if (cciAbove /*&& macdDarkGreen*/ && aboveEma20)
+            if (cciCrossedAbove /*&& macdDarkGreen*/ && aboveEma20)
             {
                 action = AlgoAction.Buy;
-                summary = "BUY: CCI>100 + MACD dark green + price above EMA20";
+                summary = $"BUY: CCI crossed above {cciThreshold:F0} + MACD dark green + price above EMA20";
+                _symbolCciEntryArmed.TryRemove(symbol.Symbol, out _);
             }
             else
             {
                 action = AlgoAction.Hold;
                 summary =
                     $"HOLD (flat): " +
-                    $"CCI={(cciAbove ? ">100" : "<=100")}, " +
+                    $"CCI={(cciAbove ? $">{cciThreshold:F0}" : $"<={cciThreshold:F0}")}, " +
+                    $"EntryArmed={(isEntryArmed ? "Yes" : "No")}, " +
                     // $"MACD={(macdDarkGreen ? "DarkGreen" : "NotDarkGreen")}, " +
                     $"EMA20={(aboveEma20 ? "Above" : "Below")}";
             }
@@ -137,11 +149,43 @@ public sealed class AlgoStrategy : IAlgoStrategy
                 var sellZoneMax = CciSettings.NormalizeSellZoneMax(cciSettings.SellZoneMax, sellZoneMin);
                 var zoneGap = CciSettings.NormalizeZoneGapInterval(cciSettings.ZoneGapInterval, sellZoneMin, sellZoneMax);
                 var candidateThreshold = CciSettings.CalculateTrailingSellThreshold(cciValue.Value, sellZoneMin, sellZoneMax, zoneGap);
+                double trailingSellThreshold;
+                if (_symbolSellCciThresholds.TryGetValue(symbol.Symbol, out var existingThreshold))
+                {
+                    trailingSellThreshold = _symbolSellCciThresholds.AddOrUpdate(
+                        symbol.Symbol,
+                        candidateThreshold,
+                        (_, currentThreshold) => Math.Max(currentThreshold, candidateThreshold));
+                }
+                else
+                {
+                    // Don't arm trailing exit until CCI first reaches the configured sell zone.
+                    // Prevents immediate stop-out for entries that start below sellZoneMin.
+                    if (cciValue.Value < sellZoneMin)
+                    {
+                        action = AlgoAction.Hold;
+                        summary = $"HOLD (in position): CCI {cciValue.Value:F2} below sell zone min {sellZoneMin}, trailing not armed yet";
 
-                var trailingSellThreshold = _symbolSellCciThresholds.AddOrUpdate(
-                    symbol.Symbol,
-                    candidateThreshold,
-                    (_, existingThreshold) => Math.Max(existingThreshold, candidateThreshold));
+                        var reasonsWithoutSummary = string.Join(" | ",
+                            results.Select(r => $"[{r.Action}] {r.Reason}"));
+
+                        return new AlgoResult(
+                            Symbol: symbol.Symbol,
+                            Action: action,
+                            Price: price,
+                            Reason: $"{summary} | {reasonsWithoutSummary}",
+                            Timestamp: DateTime.UtcNow,
+                            CciValue: cci?.CciValue,
+                            CciSignal: cci?.CciSignal,
+                            Macd: macd?.Macd,
+                            MacdSignal: macd?.MacdSignal,
+                            Ema20Value: ema?.Ema20Value,
+                            Ema20Signal: ema?.Ema20Signal
+                        );
+                    }
+
+                    trailingSellThreshold = _symbolSellCciThresholds.GetOrAdd(symbol.Symbol, candidateThreshold);
+                }
 
                 if (cciValue.Value < trailingSellThreshold)
                 {
@@ -197,6 +241,7 @@ public sealed class AlgoStrategy : IAlgoStrategy
     private void OnCciSettingsChanged(object? sender, CciSettings settings)
     {
         _symbolSellCciThresholds.Clear();
-        _logger.LogInformation("CCI settings changed. Cleared trailing sell thresholds for immediate realtime application.");
+        _symbolCciEntryArmed.Clear();
+        _logger.LogInformation("CCI settings changed. Cleared trailing sell thresholds and entry arm states for immediate realtime application.");
     }
 }

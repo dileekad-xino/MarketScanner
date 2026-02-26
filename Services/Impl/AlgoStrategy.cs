@@ -47,14 +47,17 @@ public sealed class AlgoStrategy : IAlgoStrategy
     {
         try
         {
-            var cciSettings = await _cciSettingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
+            // Fetch settings and run indicator computations concurrently.
+            var cciSettingsTask = _cciSettingsService.GetAsync(symbol.Symbol, ct);
+            var strategyTasks = _strategies
+                .Select(strategy => Task.Run(
+                    () => strategy.ExecuteAsync(symbol, hasOpenPosition, ct),
+                    ct))
+                .ToArray();
 
-            // =========================
-            // Run all indicators
-            // =========================
-
-            var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, hasOpenPosition, ct));
-            var results = await Task.WhenAll(tasks);
+            await Task.WhenAll(strategyTasks).ConfigureAwait(false);
+            var results = strategyTasks.Select(t => t.Result).ToArray();
+            var cciSettings = await cciSettingsTask.ConfigureAwait(false);
 
             return CombineResults(results, symbol, hasOpenPosition, cciSettings);
         }

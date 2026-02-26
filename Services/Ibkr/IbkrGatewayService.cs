@@ -668,23 +668,30 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogDebug("Skipping stock exchange tag filter for non-stock instrument={Instrument}", instrument);
         }
 
-        _logger.LogInformation("Starting scanner subscription reqId={RequestId} with filters: price ${MinPrice}-${MaxPrice}, product={Product}, locationCode={LocationCode}, exchange={Exchange}, volume >100k, topN={TopN}",
-    requestId, minPrice, maxPrice, product, locationCode, exchange, topN);
-        _client.reqScannerSubscription(requestId, scannerSubscription, scanOptions, filterOptions);
-        ScheduleScannerSilenceProbe(requestId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
-
         using var timeoutCts = new CancellationTokenSource(ScannerRequestTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         try
         {
+            _logger.LogInformation("Starting scanner subscription reqId={RequestId} with filters: price ${MinPrice}-${MaxPrice}, product={Product}, locationCode={LocationCode}, exchange={Exchange}, volume >100k, topN={TopN}",
+                requestId, minPrice, maxPrice, product, locationCode, exchange, topN);
+            _client.reqScannerSubscription(requestId, scannerSubscription, scanOptions, filterOptions);
+            ScheduleScannerSilenceProbe(requestId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
+
             var rows = await tcs.Task.WaitAsync(linkedCts.Token);
             _logger.LogInformation("Scanner returned {Count} rows", rows.Count);
 
             // Cancel previous market data subscriptions to avoid "Duplicate ticker id" errors
             foreach (var kvp in _idToSymbol.ToList())
             {
-                _client.cancelMktData(kvp.Key);
+                try
+                {
+                    _client.cancelMktData(kvp.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cancel market data tickerId={TickerId} during scanner reset", kvp.Key);
+                }
             }
             _idToSymbol.Clear();
             _marketState.Clear();
@@ -692,7 +699,14 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             // Cancel historical data requests
             foreach (var kvp in _histReqToSymbol.ToList())
             {
-                _client.cancelHistoricalData(kvp.Key);
+                try
+                {
+                    _client.cancelHistoricalData(kvp.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cancel historical request reqId={ReqId} during scanner reset", kvp.Key);
+                }
                 _historicalInFlight.TryRemove(kvp.Value, out _);
             }
             _histReqToSymbol.Clear();

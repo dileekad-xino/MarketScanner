@@ -190,6 +190,25 @@ public partial class WatchlistViewModel : ObservableObject, IDisposable
                 WatchlistItems.Add(rowVm);
             }
 
+            // Ensure existing watchlist symbols are subscribed for live ticks.
+            var symbolsToSubscribe = items
+                .Select(i => i.Symbol)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (symbolsToSubscribe.Count > 0)
+            {
+                try
+                {
+                    _ibkrService.SubscribeToSymbols(symbolsToSubscribe);
+                    _logger.LogInformation("Subscribed existing watchlist symbols for live data: {Count}", symbolsToSubscribe.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to subscribe existing watchlist symbols for live data");
+                }
+            }
+
             _logger.LogInformation("Loaded {Count} items into watchlist view. Market data will arrive via tick stream.", WatchlistItems.Count);
         }
         catch (Exception ex)

@@ -681,8 +681,13 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             var rows = await tcs.Task.WaitAsync(linkedCts.Token);
             _logger.LogInformation("Scanner returned {Count} rows", rows.Count);
 
-            // Cancel previous market data subscriptions to avoid "Duplicate ticker id" errors
-            foreach (var kvp in _idToSymbol.ToList())
+            // Cancel only scanner market data subscriptions (10000-19999) to avoid
+            // killing manual/watchlist subscriptions during scanner refresh.
+            var scannerSubscriptions = _idToSymbol
+                .Where(kvp => kvp.Key >= 10000 && kvp.Key < 20000)
+                .ToList();
+
+            foreach (var kvp in scannerSubscriptions)
             {
                 try
                 {
@@ -693,8 +698,23 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
                     _logger.LogDebug(ex, "Failed to cancel market data tickerId={TickerId} during scanner reset", kvp.Key);
                 }
             }
-            _idToSymbol.Clear();
-            _marketState.Clear();
+            foreach (var kvp in scannerSubscriptions)
+            {
+                _idToSymbol.TryRemove(kvp.Key, out _);
+            }
+
+            // Remove market state only if the symbol no longer has any active subscription.
+            var removedSymbols = scannerSubscriptions
+                .Select(kvp => kvp.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var symbol in removedSymbols)
+            {
+                var stillSubscribed = _idToSymbol.Values.Any(s => string.Equals(s, symbol, StringComparison.OrdinalIgnoreCase));
+                if (!stillSubscribed)
+                {
+                    _marketState.TryRemove(symbol, out _);
+                }
+            }
 
             // Cancel historical data requests
             foreach (var kvp in _histReqToSymbol.ToList())

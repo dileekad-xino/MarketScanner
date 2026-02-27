@@ -668,31 +668,65 @@ public sealed class IbkrGatewayService : EWrapper, IScanner, IMarketDataService,
             _logger.LogDebug("Skipping stock exchange tag filter for non-stock instrument={Instrument}", instrument);
         }
 
-        _logger.LogInformation("Starting scanner subscription reqId={RequestId} with filters: price ${MinPrice}-${MaxPrice}, product={Product}, locationCode={LocationCode}, exchange={Exchange}, volume >100k, topN={TopN}",
-    requestId, minPrice, maxPrice, product, locationCode, exchange, topN);
-        _client.reqScannerSubscription(requestId, scannerSubscription, scanOptions, filterOptions);
-        ScheduleScannerSilenceProbe(requestId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
-
         using var timeoutCts = new CancellationTokenSource(ScannerRequestTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         try
         {
+            _logger.LogInformation("Starting scanner subscription reqId={RequestId} with filters: price ${MinPrice}-${MaxPrice}, product={Product}, locationCode={LocationCode}, exchange={Exchange}, volume >100k, topN={TopN}",
+                requestId, minPrice, maxPrice, product, locationCode, exchange, topN);
+            _client.reqScannerSubscription(requestId, scannerSubscription, scanOptions, filterOptions);
+            ScheduleScannerSilenceProbe(requestId, instrument, locationCode, exchange, minPrice, maxPrice, minVol, topN);
+
             var rows = await tcs.Task.WaitAsync(linkedCts.Token);
             _logger.LogInformation("Scanner returned {Count} rows", rows.Count);
 
-            // Cancel previous market data subscriptions to avoid "Duplicate ticker id" errors
-            foreach (var kvp in _idToSymbol.ToList())
+            // Cancel only scanner market data subscriptions (10000-19999) to avoid
+            // killing manual/watchlist subscriptions during scanner refresh.
+            var scannerSubscriptions = _idToSymbol
+                .Where(kvp => kvp.Key >= 10000 && kvp.Key < 20000)
+                .ToList();
+
+            foreach (var kvp in scannerSubscriptions)
             {
-                _client.cancelMktData(kvp.Key);
+                try
+                {
+                    _client.cancelMktData(kvp.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cancel market data tickerId={TickerId} during scanner reset", kvp.Key);
+                }
             }
-            _idToSymbol.Clear();
-            _marketState.Clear();
+            foreach (var kvp in scannerSubscriptions)
+            {
+                _idToSymbol.TryRemove(kvp.Key, out _);
+            }
+
+            // Remove market state only if the symbol no longer has any active subscription.
+            var removedSymbols = scannerSubscriptions
+                .Select(kvp => kvp.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var symbol in removedSymbols)
+            {
+                var stillSubscribed = _idToSymbol.Values.Any(s => string.Equals(s, symbol, StringComparison.OrdinalIgnoreCase));
+                if (!stillSubscribed)
+                {
+                    _marketState.TryRemove(symbol, out _);
+                }
+            }
 
             // Cancel historical data requests
             foreach (var kvp in _histReqToSymbol.ToList())
             {
-                _client.cancelHistoricalData(kvp.Key);
+                try
+                {
+                    _client.cancelHistoricalData(kvp.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cancel historical request reqId={ReqId} during scanner reset", kvp.Key);
+                }
                 _historicalInFlight.TryRemove(kvp.Value, out _);
             }
             _histReqToSymbol.Clear();

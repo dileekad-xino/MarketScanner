@@ -21,8 +21,6 @@ public sealed class AlgoStrategy : IAlgoStrategy
     private readonly ILogger<AlgoStrategy> _logger;
     private readonly ConcurrentDictionary<string, double> _symbolSellCciThresholds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _symbolCciEntryArmed = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, double> _symbolLastSellCciLevel = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, double> _symbolPreviousFlatCci = new(StringComparer.OrdinalIgnoreCase);
 
     public string Name => "Composite Algorithm";
     public string Description =>
@@ -47,14 +45,17 @@ public sealed class AlgoStrategy : IAlgoStrategy
     {
         try
         {
-            var cciSettings = await _cciSettingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
+            // Fetch settings and run indicator computations concurrently.
+            var cciSettingsTask = _cciSettingsService.GetAsync(symbol.Symbol, ct);
+            var strategyTasks = _strategies
+                .Select(strategy => Task.Run(
+                    () => strategy.ExecuteAsync(symbol, hasOpenPosition, ct),
+                    ct))
+                .ToArray();
 
-            // =========================
-            // Run all indicators
-            // =========================
-
-            var tasks = _strategies.Select(s => s.ExecuteAsync(symbol, hasOpenPosition, ct));
-            var results = await Task.WhenAll(tasks);
+            await Task.WhenAll(strategyTasks).ConfigureAwait(false);
+            var results = strategyTasks.Select(t => t.Result).ToArray();
+            var cciSettings = await cciSettingsTask.ConfigureAwait(false);
 
             return CombineResults(results, symbol, hasOpenPosition, cciSettings);
         }
@@ -111,10 +112,6 @@ public sealed class AlgoStrategy : IAlgoStrategy
 
         if (!hasOpenPosition)
         {
-            _symbolPreviousFlatCci.TryGetValue(symbol.Symbol, out var previousFlatCci);
-            var hasPreviousFlatCci = _symbolPreviousFlatCci.ContainsKey(symbol.Symbol);
-            var hasLastSellLevel = _symbolLastSellCciLevel.TryGetValue(symbol.Symbol, out var lastSellLevel);
-
             if (cciValue.HasValue && cciValue.Value <= cciThreshold)
             {
                 _symbolCciEntryArmed[symbol.Symbol] = 0;
@@ -122,20 +119,12 @@ public sealed class AlgoStrategy : IAlgoStrategy
 
             var isEntryArmed = _symbolCciEntryArmed.ContainsKey(symbol.Symbol);
             var cciCrossedAbove = cciValue.HasValue && cciValue.Value > cciThreshold && isEntryArmed;
-            var crossedAboveLastSell =
-                hasLastSellLevel &&
-                hasPreviousFlatCci &&
-                cciValue.HasValue &&
-                previousFlatCci < lastSellLevel &&
-                cciValue.Value >= lastSellLevel;
 
             // ---------- ENTRY ----------
-            if ((crossedAboveLastSell || cciCrossedAbove) /*&& macdDarkGreen*/ && aboveEma20)
+            if (cciCrossedAbove /*&& macdDarkGreen*/ && aboveEma20)
             {
                 action = AlgoAction.Buy;
-                summary = crossedAboveLastSell
-                    ? $"BUY: CCI crossed back above last sell level {lastSellLevel:F0} + price above EMA20"
-                    : $"BUY: CCI crossed above {cciThreshold:F0} + MACD dark green + price above EMA20";
+                summary = $"BUY: CCI crossed above {cciThreshold:F0} + MACD dark green + price above EMA20";
                 _symbolCciEntryArmed.TryRemove(symbol.Symbol, out _);
             }
             else
@@ -145,20 +134,12 @@ public sealed class AlgoStrategy : IAlgoStrategy
                     $"HOLD (flat): " +
                     $"CCI={(cciAbove ? $">{cciThreshold:F0}" : $"<={cciThreshold:F0}")}, " +
                     $"EntryArmed={(isEntryArmed ? "Yes" : "No")}, " +
-                    $"LastSellLevel={(hasLastSellLevel ? lastSellLevel.ToString("F0") : "N/A")}, " +
                     // $"MACD={(macdDarkGreen ? "DarkGreen" : "NotDarkGreen")}, " +
                     $"EMA20={(aboveEma20 ? "Above" : "Below")}";
-            }
-
-            if (cciValue.HasValue)
-            {
-                _symbolPreviousFlatCci[symbol.Symbol] = cciValue.Value;
             }
         }
         else
         {
-            _symbolPreviousFlatCci.TryRemove(symbol.Symbol, out _);
-
             // ---------- EXIT ----------
             if (!cciValue.HasValue)
             {
@@ -213,7 +194,6 @@ public sealed class AlgoStrategy : IAlgoStrategy
                 {
                     action = AlgoAction.Sell;
                     summary = $"SELL: CCI {cciValue.Value:F2} dropped below trailing zone {trailingSellThreshold:F0} (min={sellZoneMin}, max={sellZoneMax}, gap={zoneGap})";
-                    _symbolLastSellCciLevel[symbol.Symbol] = trailingSellThreshold;
                     _symbolSellCciThresholds.TryRemove(symbol.Symbol, out _);
                 }
                 else
@@ -265,8 +245,6 @@ public sealed class AlgoStrategy : IAlgoStrategy
     {
         _symbolSellCciThresholds.Clear();
         _symbolCciEntryArmed.Clear();
-        _symbolLastSellCciLevel.Clear();
-        _symbolPreviousFlatCci.Clear();
         _logger.LogInformation("CCI settings changed. Cleared trailing sell thresholds and entry states for immediate realtime application.");
     }
 }

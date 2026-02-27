@@ -184,13 +184,17 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     private View BuildCciTab()
     {
+        var normalizedSellZoneMin = CciSettings.NormalizeSellZoneMin(_cciWorking.SellZoneMin, _cciWorking.SellZoneMax);
+        var normalizedSellZoneMax = CciSettings.NormalizeSellZoneMax(_cciWorking.SellZoneMax, normalizedSellZoneMin);
+        var normalizedZoneGap = CciSettings.NormalizeZoneGapInterval(_cciWorking.ZoneGapInterval, normalizedSellZoneMin, normalizedSellZoneMax);
+
         _cciPeriodEntry = CreateNumericEntry(_cciWorking.Period.ToString(CultureInfo.InvariantCulture));
         _cciOversoldEntry = CreateNumericEntry(_cciWorking.Oversold.ToString("0.##", CultureInfo.InvariantCulture));
         _cciOverboughtEntry = CreateNumericEntry(_cciWorking.Overbought.ToString("0.##", CultureInfo.InvariantCulture));
         _cciDaysEntry = CreateNumericEntry(_cciWorking.HistoricalDays.ToString(CultureInfo.InvariantCulture));
-        _cciSellZoneMinEntry = CreateNumericEntry(_cciWorking.SellZoneMin.ToString(CultureInfo.InvariantCulture));
-        _cciSellZoneMaxEntry = CreateNumericEntry(_cciWorking.SellZoneMax.ToString(CultureInfo.InvariantCulture));
-        _cciZoneGapEntry = CreateNumericEntry(_cciWorking.ZoneGapInterval.ToString(CultureInfo.InvariantCulture));
+        _cciSellZoneMinEntry = CreateNumericEntry(normalizedSellZoneMin.ToString(CultureInfo.InvariantCulture));
+        _cciSellZoneMaxEntry = CreateNumericEntry(normalizedSellZoneMax.ToString(CultureInfo.InvariantCulture));
+        _cciZoneGapEntry = CreateNumericEntry(normalizedZoneGap.ToString(CultureInfo.InvariantCulture));
 
         return new ScrollView
         {

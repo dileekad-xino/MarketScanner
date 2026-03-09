@@ -11,11 +11,11 @@ public class CciState
     public string Interval { get; set; } = string.Empty;
 
     // Committed state (candle-close, matches TradingView long-run)
-    public double CommittedSma { get; set; }  // Simple Moving Average of Typical Price
-    public double CommittedMeanDeviation { get; set; }  // The Mean Deviation
-    public double CommittedLastTypicalPrice { get; set; }  // Last Typical Price (H+L+C)/3
+    public double CommittedSma { get; set; }
+    public double CommittedMeanDeviation { get; set; }
+    public double CommittedLastTypicalPrice { get; set; }
     public DateTime CommittedLastTimestamp { get; set; }
-    
+
     // Historical typical prices for SMA and mean deviation calculation
     public List<double> CommittedTypicalPrices { get; set; } = new();
 
@@ -28,12 +28,13 @@ public class CciState
     // Previous preview value (for crossover detection if needed)
     public double? PreviousCci { get; set; }
 
-    // Previous committed CCI value (for crossover detection on candle close)
+    // Previous committed values used for derivatives
     public double? PreviousCommittedCci { get; set; }
+    public double? PreviousCommittedCci2 { get; set; }
 
-    // Entry/exit CCI values for momentum crossover strategy
-    public double? EntryCciValue { get; set; }  // CCI value when BUY signal was generated (cross above +100)
-    public double? ExitCciValue { get; set; }   // CCI value when SELL signal was generated (cross below +100)
+    // Entry/exit CCI values for diagnostics
+    public double? EntryCciValue { get; set; }
+    public double? ExitCciValue { get; set; }
 
     public int Period { get; set; }
 
@@ -42,7 +43,7 @@ public class CciState
     {
         get
         {
-            if (CommittedMeanDeviation == 0) return 0.0;  // Avoid division by zero
+            if (CommittedMeanDeviation == 0) return 0.0;
             return (CommittedLastTypicalPrice - CommittedSma) / (0.015 * CommittedMeanDeviation);
         }
     }
@@ -58,4 +59,3 @@ public class CciState
         }
     }
 }
-

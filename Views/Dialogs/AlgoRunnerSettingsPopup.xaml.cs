@@ -24,12 +24,14 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     // CCI tab fields
     private Entry? _cciPeriodEntry;
-    private Entry? _cciOversoldEntry;
-    private Entry? _cciOverboughtEntry;
+    private Entry? _atrPeriodEntry;
+    private Entry? _entryThresholdEntry;
+    private Entry? _entryMinDeltaEntry;
+    private Entry? _impulseAtrMultiplierEntry;
+    private Entry? _trailingAtrMultiplierEntry;
+    private Entry? _trailingArmAtrMultiplierEntry;
+    private Switch? _requireRisingEma20Switch;
     private Entry? _cciDaysEntry;
-    private Entry? _cciSellZoneMinEntry;
-    private Entry? _cciSellZoneMaxEntry;
-    private Entry? _cciZoneGapEntry;
 
     public AlgoRunnerSettingsPopup(string symbol, RsiSettings rsiSettings, CciSettings cciSettings)
     {
@@ -184,17 +186,15 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     private View BuildCciTab()
     {
-        var normalizedSellZoneMin = CciSettings.NormalizeSellZoneMin(_cciWorking.SellZoneMin, _cciWorking.SellZoneMax);
-        var normalizedSellZoneMax = CciSettings.NormalizeSellZoneMax(_cciWorking.SellZoneMax, normalizedSellZoneMin);
-        var normalizedZoneGap = CciSettings.NormalizeZoneGapInterval(_cciWorking.ZoneGapInterval, normalizedSellZoneMin, normalizedSellZoneMax);
-
-        _cciPeriodEntry = CreateNumericEntry(_cciWorking.Period.ToString(CultureInfo.InvariantCulture));
-        _cciOversoldEntry = CreateNumericEntry(_cciWorking.Oversold.ToString("0.##", CultureInfo.InvariantCulture));
-        _cciOverboughtEntry = CreateNumericEntry(_cciWorking.Overbought.ToString("0.##", CultureInfo.InvariantCulture));
+        _cciPeriodEntry = CreateNumericEntry(CciSettings.NormalizePeriod(_cciWorking.Period).ToString(CultureInfo.InvariantCulture));
+        _atrPeriodEntry = CreateNumericEntry(CciSettings.NormalizeAtrPeriod(_cciWorking.AtrPeriod).ToString(CultureInfo.InvariantCulture));
+        _entryThresholdEntry = CreateNumericEntry(CciSettings.NormalizeEntryThreshold(_cciWorking.EntryThreshold).ToString("0.##", CultureInfo.InvariantCulture));
+        _entryMinDeltaEntry = CreateNumericEntry(CciSettings.NormalizeEntryMinDelta(_cciWorking.EntryMinDelta).ToString("0.##", CultureInfo.InvariantCulture));
+        _impulseAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeImpulseAtrMultiplier(_cciWorking.ImpulseAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _trailingAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeTrailingAtrMultiplier(_cciWorking.TrailingAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _trailingArmAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeTrailingArmAtrMultiplier(_cciWorking.TrailingArmAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _requireRisingEma20Switch = new Switch { IsToggled = _cciWorking.RequireRisingEma20, HorizontalOptions = LayoutOptions.Start };
         _cciDaysEntry = CreateNumericEntry(_cciWorking.HistoricalDays.ToString(CultureInfo.InvariantCulture));
-        _cciSellZoneMinEntry = CreateNumericEntry(normalizedSellZoneMin.ToString(CultureInfo.InvariantCulture));
-        _cciSellZoneMaxEntry = CreateNumericEntry(normalizedSellZoneMax.ToString(CultureInfo.InvariantCulture));
-        _cciZoneGapEntry = CreateNumericEntry(normalizedZoneGap.ToString(CultureInfo.InvariantCulture));
 
         return new ScrollView
         {
@@ -203,16 +203,18 @@ public partial class AlgoRunnerSettingsPopup : Popup
                 Spacing = 12,
                 Children =
                 {
-                    CreateTwoColumnRow("Length", _cciPeriodEntry),
-                    CreateTwoColumnRow("Oversold", _cciOversoldEntry),
-                    CreateTwoColumnRow("Overbought", _cciOverboughtEntry),
+                    CreateTwoColumnRow("CCI Period", _cciPeriodEntry),
+                    CreateTwoColumnRow("ATR Period", _atrPeriodEntry),
+                    CreateTwoColumnRow("Entry Threshold", _entryThresholdEntry),
+                    CreateTwoColumnRow("Entry Min Delta", _entryMinDeltaEntry),
+                    CreateTwoColumnRow("Impulse ATR Mult", _impulseAtrMultiplierEntry),
+                    CreateTwoColumnRow("Trailing ATR Mult", _trailingAtrMultiplierEntry),
+                    CreateTwoColumnRow("Trail Arm ATR Mult", _trailingArmAtrMultiplierEntry),
+                    CreateTwoColumnRow("Require Rising EMA20", _requireRisingEma20Switch),
                     CreateTwoColumnRow("Historical Days", _cciDaysEntry),
-                    CreateTwoColumnRow("Sell Zone Min", _cciSellZoneMinEntry),
-                    CreateTwoColumnRow("Sell Zone Max", _cciSellZoneMaxEntry),
-                    CreateTwoColumnRow("Zone Gap Interval", _cciZoneGapEntry),
                     new Label
                     {
-                        Text = "Gap must evenly divide (Sell Zone Max - Sell Zone Min).",
+                        Text = "Hybrid momentum entry with ATR impulse and ATR trailing protection.",
                         TextColor = Color.FromArgb("#B0B0B0"),
                         FontSize = 12
                     }
@@ -274,49 +276,46 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     private string? ValidateAndApplyCciTab()
     {
-        if (_cciPeriodEntry == null || _cciOversoldEntry == null || _cciOverboughtEntry == null || _cciDaysEntry == null ||
-            _cciSellZoneMinEntry == null || _cciSellZoneMaxEntry == null || _cciZoneGapEntry == null)
+        if (_cciPeriodEntry == null || _atrPeriodEntry == null || _entryThresholdEntry == null || _entryMinDeltaEntry == null ||
+            _impulseAtrMultiplierEntry == null || _trailingAtrMultiplierEntry == null || _trailingArmAtrMultiplierEntry == null ||
+            _requireRisingEma20Switch == null || _cciDaysEntry == null)
         {
             return "CCI tab is not initialized.";
         }
 
         if (!int.TryParse(_cciPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var period) || period < 2 || period > 200)
-            return "CCI length must be between 2 and 200.";
+            return "CCI period must be between 2 and 200.";
 
-        if (!double.TryParse(_cciOversoldEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var oversold) || oversold < -400 || oversold >= 0)
-            return "CCI oversold must be between -400 and 0.";
+        if (!int.TryParse(_atrPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var atrPeriod) || atrPeriod < 2 || atrPeriod > 200)
+            return "ATR period must be between 2 and 200.";
 
-        if (!double.TryParse(_cciOverboughtEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var overbought) || overbought <= 0 || overbought > 400)
-            return "CCI overbought must be between 0 and 400.";
+        if (!double.TryParse(_entryThresholdEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryThreshold) || entryThreshold <= 0 || entryThreshold > 400)
+            return "Entry threshold must be between 0 and 400.";
 
-        if (overbought <= oversold)
-            return "CCI overbought must be greater than oversold.";
+        if (!double.TryParse(_entryMinDeltaEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryMinDelta) || entryMinDelta < 0 || entryMinDelta > 200)
+            return "Entry min delta must be between 0 and 200.";
+
+        if (!double.TryParse(_impulseAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var impulseAtrMultiplier) || impulseAtrMultiplier <= 0 || impulseAtrMultiplier > 20)
+            return "Impulse ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_trailingAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingAtrMultiplier) || trailingAtrMultiplier <= 0 || trailingAtrMultiplier > 20)
+            return "Trailing ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_trailingArmAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingArmAtrMultiplier) || trailingArmAtrMultiplier <= 0 || trailingArmAtrMultiplier > 50)
+            return "Trail arm ATR multiplier must be between 0 and 50.";
 
         if (!int.TryParse(_cciDaysEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) || days < 1 || days > 60)
             return "CCI historical days must be between 1 and 60.";
 
-        if (!int.TryParse(_cciSellZoneMinEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sellZoneMin) ||
-            !CciSettings.IsValidSellZoneMin(sellZoneMin))
-            return "Sell zone min must be greater than 0.";
-
-        if (!int.TryParse(_cciSellZoneMaxEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sellZoneMax) ||
-            !CciSettings.IsValidSellZoneMax(sellZoneMax))
-            return "Sell zone max must be greater than 0.";
-
-        if (!CciSettings.IsValidSellZoneBounds(sellZoneMin, sellZoneMax))
-            return "Sell zone max must be greater than sell zone min.";
-
-        if (!int.TryParse(_cciZoneGapEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var gap) ||
-            !CciSettings.IsValidZoneGapInterval(gap, sellZoneMin, sellZoneMax))
-            return $"Zone gap must evenly divide {CciSettings.GetSellZoneRange(sellZoneMin, sellZoneMax)} (max - min).";
-
         _cciWorking.Period = period;
-        _cciWorking.Oversold = oversold;
-        _cciWorking.Overbought = overbought;
+        _cciWorking.AtrPeriod = atrPeriod;
+        _cciWorking.EntryThreshold = entryThreshold;
+        _cciWorking.EntryMinDelta = entryMinDelta;
+        _cciWorking.ImpulseAtrMultiplier = impulseAtrMultiplier;
+        _cciWorking.TrailingAtrMultiplier = trailingAtrMultiplier;
+        _cciWorking.TrailingArmAtrMultiplier = trailingArmAtrMultiplier;
+        _cciWorking.RequireRisingEma20 = _requireRisingEma20Switch.IsToggled;
         _cciWorking.HistoricalDays = days;
-        _cciWorking.SellZoneMin = sellZoneMin;
-        _cciWorking.SellZoneMax = sellZoneMax;
-        _cciWorking.ZoneGapInterval = gap;
         return null;
     }
 

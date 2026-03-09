@@ -17,15 +17,15 @@ public partial class CciSettingsPopup : Popup
 
     private void LoadFields(CciSettings settings)
     {
-        PeriodEntry.Text = settings.Period.ToString(CultureInfo.InvariantCulture);
-        OversoldEntry.Text = settings.Oversold.ToString("0.##", CultureInfo.InvariantCulture);
-        OverboughtEntry.Text = settings.Overbought.ToString("0.##", CultureInfo.InvariantCulture);
-        DaysEntry.Text = settings.HistoricalDays.ToString(CultureInfo.InvariantCulture);
-        var sellZoneMin = CciSettings.NormalizeSellZoneMin(settings.SellZoneMin, settings.SellZoneMax);
-        var sellZoneMax = CciSettings.NormalizeSellZoneMax(settings.SellZoneMax, sellZoneMin);
-        SellZoneMinEntry.Text = sellZoneMin.ToString(CultureInfo.InvariantCulture);
-        SellZoneMaxEntry.Text = sellZoneMax.ToString(CultureInfo.InvariantCulture);
-        ZoneGapIntervalEntry.Text = CciSettings.NormalizeZoneGapInterval(settings.ZoneGapInterval, sellZoneMin, sellZoneMax).ToString(CultureInfo.InvariantCulture);
+        PeriodEntry.Text = CciSettings.NormalizePeriod(settings.Period).ToString(CultureInfo.InvariantCulture);
+        AtrPeriodEntry.Text = CciSettings.NormalizeAtrPeriod(settings.AtrPeriod).ToString(CultureInfo.InvariantCulture);
+        EntryThresholdEntry.Text = CciSettings.NormalizeEntryThreshold(settings.EntryThreshold).ToString("0.##", CultureInfo.InvariantCulture);
+        EntryMinDeltaEntry.Text = CciSettings.NormalizeEntryMinDelta(settings.EntryMinDelta).ToString("0.##", CultureInfo.InvariantCulture);
+        ImpulseAtrMultiplierEntry.Text = CciSettings.NormalizeImpulseAtrMultiplier(settings.ImpulseAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture);
+        TrailingAtrMultiplierEntry.Text = CciSettings.NormalizeTrailingAtrMultiplier(settings.TrailingAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture);
+        TrailingArmAtrMultiplierEntry.Text = CciSettings.NormalizeTrailingArmAtrMultiplier(settings.TrailingArmAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture);
+        RequireRisingEma20Switch.IsToggled = settings.RequireRisingEma20;
+        DaysEntry.Text = (settings.HistoricalDays is >= 1 and <= 60 ? settings.HistoricalDays : 2).ToString(CultureInfo.InvariantCulture);
         ErrorLabel.IsVisible = false;
     }
 
@@ -59,25 +59,43 @@ public partial class CciSettingsPopup : Popup
 
         if (!int.TryParse(PeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var period) || period < 2 || period > 200)
         {
-            error = "Length must be between 2 and 200.";
+            error = "CCI period must be between 2 and 200.";
             return false;
         }
 
-        if (!double.TryParse(OversoldEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var oversold) || oversold < -400 || oversold >= 0)
+        if (!int.TryParse(AtrPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var atrPeriod) || atrPeriod < 2 || atrPeriod > 200)
         {
-            error = "Oversold must be between -400 and 0.";
+            error = "ATR period must be between 2 and 200.";
             return false;
         }
 
-        if (!double.TryParse(OverboughtEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var overbought) || overbought <= 0 || overbought > 400)
+        if (!double.TryParse(EntryThresholdEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryThreshold) || entryThreshold <= 0 || entryThreshold > 400)
         {
-            error = "Overbought must be between 0 and 400.";
+            error = "Entry threshold must be between 0 and 400.";
             return false;
         }
 
-        if (overbought <= oversold)
+        if (!double.TryParse(EntryMinDeltaEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryMinDelta) || entryMinDelta < 0 || entryMinDelta > 200)
         {
-            error = "Overbought must be greater than oversold.";
+            error = "Entry min delta must be between 0 and 200.";
+            return false;
+        }
+
+        if (!double.TryParse(ImpulseAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var impulseAtrMultiplier) || impulseAtrMultiplier <= 0 || impulseAtrMultiplier > 20)
+        {
+            error = "Impulse ATR multiplier must be between 0 and 20.";
+            return false;
+        }
+
+        if (!double.TryParse(TrailingAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingAtrMultiplier) || trailingAtrMultiplier <= 0 || trailingAtrMultiplier > 20)
+        {
+            error = "Trailing ATR multiplier must be between 0 and 20.";
+            return false;
+        }
+
+        if (!double.TryParse(TrailingArmAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingArmAtrMultiplier) || trailingArmAtrMultiplier <= 0 || trailingArmAtrMultiplier > 50)
+        {
+            error = "Trail arm ATR multiplier must be between 0 and 50.";
             return false;
         }
 
@@ -87,41 +105,15 @@ public partial class CciSettingsPopup : Popup
             return false;
         }
 
-        if (!int.TryParse(SellZoneMinEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sellZoneMin) ||
-            !CciSettings.IsValidSellZoneMin(sellZoneMin))
-        {
-            error = "Sell zone min must be greater than 0.";
-            return false;
-        }
-
-        if (!int.TryParse(SellZoneMaxEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sellZoneMax) ||
-            !CciSettings.IsValidSellZoneMax(sellZoneMax))
-        {
-            error = "Sell zone max must be greater than 0.";
-            return false;
-        }
-
-        if (!CciSettings.IsValidSellZoneBounds(sellZoneMin, sellZoneMax))
-        {
-            error = "Sell zone max must be greater than sell zone min.";
-            return false;
-        }
-
-        if (!int.TryParse(ZoneGapIntervalEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var zoneGapInterval) ||
-            !CciSettings.IsValidZoneGapInterval(zoneGapInterval, sellZoneMin, sellZoneMax))
-        {
-            var range = CciSettings.GetSellZoneRange(sellZoneMin, sellZoneMax);
-            error = $"Zone gap must evenly divide {range} (Sell Zone Max - Sell Zone Min).";
-            return false;
-        }
-
         settings.Period = period;
-        settings.Oversold = oversold;
-        settings.Overbought = overbought;
+        settings.AtrPeriod = atrPeriod;
+        settings.EntryThreshold = entryThreshold;
+        settings.EntryMinDelta = entryMinDelta;
+        settings.ImpulseAtrMultiplier = impulseAtrMultiplier;
+        settings.TrailingAtrMultiplier = trailingAtrMultiplier;
+        settings.TrailingArmAtrMultiplier = trailingArmAtrMultiplier;
+        settings.RequireRisingEma20 = RequireRisingEma20Switch.IsToggled;
         settings.HistoricalDays = days;
-        settings.SellZoneMin = sellZoneMin;
-        settings.SellZoneMax = sellZoneMax;
-        settings.ZoneGapInterval = zoneGapInterval;
         return true;
     }
 }

@@ -3,23 +3,11 @@ using MarketScanner.Models;
 using MarketScanner.Utilities;
 using MarketScanner.ViewModels;
 using Microsoft.Extensions.Logging;
-using System.Linq;
 
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
 /// Pure EMA-20 indicator (stateless).
-///
-/// Responsibilities:
-/// - Calculate EMA-20
-/// - Report price position relative to EMA-20
-///
-/// Non-responsibilities:
-/// - NO Buy / Sell decisions
-/// - NO position awareness
-/// - NO execution logic
-///
-/// Trade execution is handled exclusively by AlgoStrategy.
 /// </summary>
 public sealed class Ema20AlgoStrategy : IAlgoStrategy
 {
@@ -31,7 +19,7 @@ public sealed class Ema20AlgoStrategy : IAlgoStrategy
     private readonly EmaEngine _emaEngine;
 
     public string Name => "EMA-20 Indicator";
-    public string Description => "Pure EMA-20 trend indicator (above / below EMA-20).";
+    public string Description => "Pure EMA-20 trend indicator with current/previous values.";
 
     public Ema20AlgoStrategy(
         ICandlestickStorage storage,
@@ -54,10 +42,6 @@ public sealed class Ema20AlgoStrategy : IAlgoStrategy
         {
             var interval = GetIntervalString(_config.IntervalSeconds);
 
-            // =========================
-            // Initialize engine once
-            // =========================
-
             if (!_emaEngine.TryGetState(symbol.Symbol, interval, Period, out _))
             {
                 var candles = _candlestickStorage
@@ -73,35 +57,34 @@ public sealed class Ema20AlgoStrategy : IAlgoStrategy
                 _emaEngine.Initialize(symbol.Symbol, interval, candles, Period);
             }
 
-            // =========================
-            // Get EMA-20 value
-            // =========================
-
-            var ema20 = _emaEngine.GetEma(symbol.Symbol, interval, Period);
+            var (ema20, previousEma20) = _emaEngine.GetEmaWithPrevious(symbol.Symbol, interval, Period);
             if (!ema20.HasValue)
             {
                 return Neutral(symbol, "EMA-20 unavailable");
             }
 
-            var price = (double)symbol.LastPrice;
+            var price = symbol.LastPrice;
             var emaValue = ema20.Value;
+            var emaSignal = price > emaValue ? "ABOVE_EMA20" : "BELOW_EMA20";
 
-            string emaSignal =
-                price > emaValue
-                    ? "ABOVE_EMA20"
-                    : "BELOW_EMA20";
+            var recentCandles = _candlestickStorage
+                .GetCandlesticks(symbol.Symbol, interval, 2)
+                .OrderBy(c => c.Timestamp)
+                .ToList();
 
-            // =========================
-            // PURE indicator result
-            // =========================
+            double? previousClose = recentCandles.Count >= 2
+                ? (double)recentCandles[^2].Close
+                : null;
 
             return new AlgoResult(
                 Symbol: symbol.Symbol,
-                Action: AlgoAction.Hold, // <-- always HOLD
-                Price: symbol.LastPrice,
-                Reason: $"Price {price:F2} {(price > emaValue ? ">" : "<=")} EMA-20 {emaValue:F2}",
+                Action: AlgoAction.Hold,
+                Price: price,
+                Reason: $"Price {price:F2} {(price > emaValue ? ">" : "<=")} EMA-20 {emaValue:F2} | prev EMA {Format(previousEma20)} | prev close {Format(previousClose)}",
                 Timestamp: DateTime.UtcNow,
                 Ema20Value: emaValue,
+                PreviousEma20Value: previousEma20,
+                PreviousClose: previousClose,
                 Ema20Signal: emaSignal
             );
         }
@@ -111,10 +94,6 @@ public sealed class Ema20AlgoStrategy : IAlgoStrategy
             return Neutral(symbol, $"EMA-20 error: {ex.Message}");
         }
     }
-
-    // =========================
-    // Helpers
-    // =========================
 
     private static AlgoResult Neutral(ScannerRowViewModel symbol, string reason) =>
         new(
@@ -128,4 +107,6 @@ public sealed class Ema20AlgoStrategy : IAlgoStrategy
 
     private static string GetIntervalString(int s) =>
         TimeframeMap.ToIntervalKey(s);
+
+    private static string Format(double? value) => value.HasValue ? value.Value.ToString("F2") : "n/a";
 }

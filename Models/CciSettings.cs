@@ -1,118 +1,74 @@
 namespace MarketScanner.Models;
 
 /// <summary>
-/// Persisted CCI configuration used by the CCI algorithm and settings dialog.
+/// Persisted CCI/ATR momentum configuration used by indicator algorithms and settings dialogs.
 /// </summary>
 public class CciSettings
 {
-    public const int DefaultSellZoneMin = 100;
-    public const int DefaultSellZoneMax = 400;
-    public const int DefaultZoneGapInterval = 20;
+    public const int DefaultPeriod = 14;
+    public const int DefaultAtrPeriod = 14;
+    public const double DefaultEntryThreshold = 100.0;
+    public const double DefaultEntryMinDelta = 8.0;
+    public const double DefaultImpulseAtrMultiplier = 0.5;
+    public const double DefaultTrailingAtrMultiplier = 1.7;
+    public const double DefaultTrailingArmAtrMultiplier = 2.5;
+    public const bool DefaultRequireRisingEma20 = true;
 
-    public int Period { get; set; } = 14;  // Default for 1m timeframe
-    public double Overbought { get; set; } = 100.0;  // Standard overbought level
-    public double Oversold { get; set; } = -100.0;  // Standard oversold level
+    public int Period { get; set; } = DefaultPeriod;
+    public int AtrPeriod { get; set; } = DefaultAtrPeriod;
     public int HistoricalDays { get; set; } = 2;
-    public int SellZoneMin { get; set; } = DefaultSellZoneMin;
-    public int SellZoneMax { get; set; } = DefaultSellZoneMax;
-    public int ZoneGapInterval { get; set; } = DefaultZoneGapInterval;
 
-    public static int GetSellZoneRange(int sellZoneMin, int sellZoneMax) =>
-        sellZoneMax - sellZoneMin;
+    public double EntryThreshold { get; set; } = DefaultEntryThreshold;
+    public double EntryMinDelta { get; set; } = DefaultEntryMinDelta;
+    public double ImpulseAtrMultiplier { get; set; } = DefaultImpulseAtrMultiplier;
+    public double TrailingAtrMultiplier { get; set; } = DefaultTrailingAtrMultiplier;
+    public double TrailingArmAtrMultiplier { get; set; } = DefaultTrailingArmAtrMultiplier;
+    public bool RequireRisingEma20 { get; set; } = DefaultRequireRisingEma20;
 
-    public static bool IsValidSellZoneMin(int sellZoneMin) =>
-        sellZoneMin > 0;
-
-    public static bool IsValidSellZoneMax(int sellZoneMax) =>
-        sellZoneMax > 0;
-
-    public static bool IsValidSellZoneBounds(int sellZoneMin, int sellZoneMax) =>
-        IsValidSellZoneMin(sellZoneMin) &&
-        IsValidSellZoneMax(sellZoneMax) &&
-        sellZoneMax > sellZoneMin;
-
-    public static int NormalizeSellZoneMin(int sellZoneMin, int sellZoneMax)
+    // Backward compatibility for existing persisted JSON that still uses Overbought.
+    public double Overbought
     {
-        var min = IsValidSellZoneMin(sellZoneMin) ? sellZoneMin : DefaultSellZoneMin;
-        var max = IsValidSellZoneMax(sellZoneMax) ? sellZoneMax : DefaultSellZoneMax;
-        if (max <= min)
-            return Math.Max(1, max - 1);
-        return min;
+        get => EntryThreshold;
+        set => EntryThreshold = value;
     }
 
-    public static int NormalizeSellZoneMax(int sellZoneMax, int sellZoneMin)
-    {
-        var min = IsValidSellZoneMin(sellZoneMin) ? sellZoneMin : DefaultSellZoneMin;
-        var max = IsValidSellZoneMax(sellZoneMax) ? sellZoneMax : DefaultSellZoneMax;
-        if (max <= min)
-            return min + 1;
-        return max;
-    }
+    public static int NormalizePeriod(int period) => period is >= 2 and <= 200 ? period : DefaultPeriod;
 
-    public static bool IsValidZoneGapInterval(int gap, int sellZoneMin, int sellZoneMax)
-    {
-        var min = NormalizeSellZoneMin(sellZoneMin, sellZoneMax);
-        var max = NormalizeSellZoneMax(sellZoneMax, min);
-        var range = GetSellZoneRange(min, max);
-        return gap > 0 && range > 0 && range % gap == 0;
-    }
+    public static int NormalizeAtrPeriod(int atrPeriod) => atrPeriod is >= 2 and <= 200 ? atrPeriod : DefaultAtrPeriod;
 
-    public static int NormalizeZoneGapInterval(int gap, int sellZoneMin, int sellZoneMax)
-    {
-        var min = NormalizeSellZoneMin(sellZoneMin, sellZoneMax);
-        var max = NormalizeSellZoneMax(sellZoneMax, min);
-        if (IsValidZoneGapInterval(gap, min, max))
-            return gap;
+    public static double NormalizeEntryThreshold(double value) => value is > 0 and <= 400 ? value : DefaultEntryThreshold;
 
-        var range = GetSellZoneRange(min, max);
-        if (range <= 0)
-            return 1;
+    public static double NormalizeEntryMinDelta(double value) => value is >= 0 and <= 200 ? value : DefaultEntryMinDelta;
 
-        if (range % DefaultZoneGapInterval == 0)
-            return DefaultZoneGapInterval;
+    public static double NormalizeImpulseAtrMultiplier(double value) => value is > 0 and <= 20 ? value : DefaultImpulseAtrMultiplier;
 
-        for (var candidate = Math.Min(DefaultZoneGapInterval, range); candidate >= 1; candidate--)
-        {
-            if (range % candidate == 0)
-                return candidate;
-        }
+    public static double NormalizeTrailingAtrMultiplier(double value) => value is > 0 and <= 20 ? value : DefaultTrailingAtrMultiplier;
 
-        return 1;
-    }
-
-    public static double CalculateTrailingSellThreshold(double cciValue, int sellZoneMin, int sellZoneMax, int zoneGapInterval)
-    {
-        var min = NormalizeSellZoneMin(sellZoneMin, sellZoneMax);
-        var max = NormalizeSellZoneMax(sellZoneMax, min);
-        var gap = NormalizeZoneGapInterval(zoneGapInterval, min, max);
-        if (cciValue <= min)
-            return min;
-
-        var clampedCci = Math.Min(cciValue, max);
-        var steps = Math.Floor((clampedCci - min) / gap);
-        return min + (steps * gap);
-    }
+    public static double NormalizeTrailingArmAtrMultiplier(double value) => value is > 0 and <= 50 ? value : DefaultTrailingArmAtrMultiplier;
 
     public static CciSettings CreateDefaults() => new()
     {
-        Period = 14,
-        Overbought = 100.0,
-        Oversold = -100.0,
+        Period = DefaultPeriod,
+        AtrPeriod = DefaultAtrPeriod,
         HistoricalDays = 2,
-        SellZoneMin = DefaultSellZoneMin,
-        SellZoneMax = DefaultSellZoneMax,
-        ZoneGapInterval = DefaultZoneGapInterval
+        EntryThreshold = DefaultEntryThreshold,
+        EntryMinDelta = DefaultEntryMinDelta,
+        ImpulseAtrMultiplier = DefaultImpulseAtrMultiplier,
+        TrailingAtrMultiplier = DefaultTrailingAtrMultiplier,
+        TrailingArmAtrMultiplier = DefaultTrailingArmAtrMultiplier,
+        RequireRisingEma20 = DefaultRequireRisingEma20
     };
 
     public CciSettings Clone() => new()
     {
         Period = Period,
-        Overbought = Overbought,
-        Oversold = Oversold,
+        AtrPeriod = AtrPeriod,
         HistoricalDays = HistoricalDays,
-        SellZoneMin = SellZoneMin,
-        SellZoneMax = SellZoneMax,
-        ZoneGapInterval = ZoneGapInterval
+        EntryThreshold = EntryThreshold,
+        EntryMinDelta = EntryMinDelta,
+        ImpulseAtrMultiplier = ImpulseAtrMultiplier,
+        TrailingAtrMultiplier = TrailingAtrMultiplier,
+        TrailingArmAtrMultiplier = TrailingArmAtrMultiplier,
+        RequireRisingEma20 = RequireRisingEma20
     };
 }
-

@@ -15,8 +15,10 @@ public class CciSignalToColorConverter : IValueConverter
         {
             "BULLISH MOMENTUM" => Color.FromArgb("#00c853"),
             "BULLISH ENTRY" => Color.FromArgb("#4caf50"),
+            "ABOVE_ENTRY_THRESHOLD" => Color.FromArgb("#4caf50"),
             "OVERSOLD SCALP" => Color.FromArgb("#4caf50"),
             "BEARISH MOMENTUM" => Color.FromArgb("#d50000"),
+            "BELOW_ENTRY_THRESHOLD" => Color.FromArgb("#d50000"),
             "TAKE PROFIT" => Color.FromArgb("#ff5252"),
             "EXIT WEAKNESS" => Color.FromArgb("#ff5252"),
             "NEUTRAL" => Color.FromArgb("#e0e0e0"),

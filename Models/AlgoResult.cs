@@ -37,6 +37,13 @@ public sealed record AlgoResult(
     string? CciSignal = null,
     double? Ema20Value = null,
     string? Ema20Signal = null,
-    string? MacdSignal = null
+    string? MacdSignal = null,
+    double? PreviousCciValue = null,
+    double? PreviousCciValue2 = null,
+    double? CciDelta = null,
+    double? CciDeltaPrevious = null,
+    double? CciAcceleration = null,
+    double? AtrValue = null,
+    double? PreviousEma20Value = null,
+    double? PreviousClose = null
 );
-

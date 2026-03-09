@@ -7,18 +7,8 @@ using Microsoft.Extensions.Logging;
 namespace MarketScanner.Services.Impl;
 
 /// <summary>
-/// Pure CCI momentum indicator (stateless).
-/// 
-/// Responsibilities:
-/// - Calculate CCI
-/// - Indicate whether momentum is ABOVE or BELOW threshold
-/// 
-/// Non-responsibilities:
-/// - NO position tracking
-/// - NO BUY / SELL decisions
-/// - NO holding logic
-/// 
-/// Trade execution is handled exclusively by AlgoStrategy.
+/// Pure CCI indicator strategy (stateless from a trade-decision perspective).
+/// Produces CCI derivatives for the central decision engine.
 /// </summary>
 public sealed class CciAlgoStrategy : IAlgoStrategy
 {
@@ -29,7 +19,7 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
     private readonly ILogger<CciAlgoStrategy> _logger;
 
     public string Name => "CCI Indicator";
-    public string Description => "Pure CCI momentum indicator. Reports ABOVE / BELOW threshold only.";
+    public string Description => "Pure CCI indicator with derivative data (current/prev/acceleration).";
 
     public CciAlgoStrategy(
         ICandlestickStorage candlestickStorage,
@@ -54,12 +44,8 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
         {
             var settings = await _settingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
             var interval = GetIntervalString(_config.IntervalSeconds);
-            var cciPeriod = settings.Period > 1 ? settings.Period : 20;
-            var threshold = settings.Overbought;
-
-            // =========================
-            // Initialize engine once
-            // =========================
+            var cciPeriod = CciSettings.NormalizePeriod(settings.Period);
+            var threshold = CciSettings.NormalizeEntryThreshold(settings.EntryThreshold);
 
             if (!_cciEngine.TryGetState(symbol.Symbol, interval, out _))
             {
@@ -76,33 +62,43 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
                 _cciEngine.Initialize(symbol.Symbol, interval, candles, cciPeriod);
             }
 
-            // =========================
-            // Get CCI value
-            // =========================
-
-            var (currentCci, _) = _cciEngine.GetCciWithPrevious(symbol.Symbol, interval);
+            var (currentCci, previousCci, previousCci2) = _cciEngine.GetCciWithHistory(symbol.Symbol, interval);
 
             if (!currentCci.HasValue)
             {
                 return Neutral(symbol, "CCI unavailable");
             }
 
-            bool isAbove = currentCci.Value >= threshold;
+            double? d1 = null;
+            double? d2 = null;
+            double? acceleration = null;
 
-            // =========================
-            // PURE indicator result
-            // =========================
+            if (previousCci.HasValue)
+            {
+                d1 = currentCci.Value - previousCci.Value;
+            }
+
+            if (previousCci.HasValue && previousCci2.HasValue)
+            {
+                d2 = previousCci.Value - previousCci2.Value;
+                acceleration = d1 - d2;
+            }
+
+            bool isAbove = currentCci.Value > threshold;
 
             return new AlgoResult(
                 Symbol: symbol.Symbol,
-                Action: AlgoAction.Hold, // <-- always HOLD
+                Action: AlgoAction.Hold,
                 Price: symbol.LastPrice,
-                Reason: isAbove
-                    ? $"CCI ABOVE +{threshold:F0}: {currentCci.Value:F2}"
-                    : $"CCI BELOW +{threshold:F0}: {currentCci.Value:F2}",
+                Reason: $"CCI {currentCci.Value:F2} ({(isAbove ? ">" : "<=")} {threshold:F0}) | prev {Format(previousCci)} | prev2 {Format(previousCci2)} | d1 {Format(d1)} | d2 {Format(d2)} | acc {Format(acceleration)}",
                 Timestamp: DateTime.UtcNow,
                 CciValue: currentCci.Value,
-                CciSignal: isAbove ? "ABOVE_THRESHOLD" : "BELOW_THRESHOLD"
+                CciSignal: isAbove ? "ABOVE_ENTRY_THRESHOLD" : "BELOW_ENTRY_THRESHOLD",
+                PreviousCciValue: previousCci,
+                PreviousCciValue2: previousCci2,
+                CciDelta: d1,
+                CciDeltaPrevious: d2,
+                CciAcceleration: acceleration
             );
         }
         catch (Exception ex)
@@ -111,10 +107,6 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
             return Neutral(symbol, $"CCI error: {ex.Message}");
         }
     }
-
-    // =========================
-    // Helpers
-    // =========================
 
     private static AlgoResult Neutral(ScannerRowViewModel symbol, string reason) =>
         new(
@@ -130,4 +122,5 @@ public sealed class CciAlgoStrategy : IAlgoStrategy
     private static string GetIntervalString(int intervalSeconds) =>
         TimeframeMap.ToIntervalKey(intervalSeconds);
 
+    private static string Format(double? value) => value.HasValue ? value.Value.ToString("F2") : "n/a";
 }

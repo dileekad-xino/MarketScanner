@@ -13,7 +13,7 @@ public sealed class AtrAlgoStrategy : IAlgoStrategy
 {
     private readonly ICandlestickStorage _candlestickStorage;
     private readonly CandlestickConfig _config;
-    private readonly ICciSettingsService _settingsService;
+    private readonly IAtrSettingsService _settingsService;
     private readonly AtrEngine _atrEngine;
     private readonly ILogger<AtrAlgoStrategy> _logger;
 
@@ -23,7 +23,7 @@ public sealed class AtrAlgoStrategy : IAlgoStrategy
     public AtrAlgoStrategy(
         ICandlestickStorage candlestickStorage,
         CandlestickConfig config,
-        ICciSettingsService settingsService,
+        IAtrSettingsService settingsService,
         AtrEngine atrEngine,
         ILogger<AtrAlgoStrategy> logger)
     {
@@ -40,7 +40,7 @@ public sealed class AtrAlgoStrategy : IAlgoStrategy
         {
             var settings = await _settingsService.GetAsync(symbol.Symbol, ct).ConfigureAwait(false);
             var interval = TimeframeMap.ToIntervalKey(_config.IntervalSeconds);
-            var period = CciSettings.NormalizeAtrPeriod(settings.AtrPeriod);
+            var period = AtrSettings.NormalizeAtrPeriod(settings.AtrPeriod);
 
             var candles = _candlestickStorage
                 .GetCandlesticks(symbol.Symbol, interval, period + 200)

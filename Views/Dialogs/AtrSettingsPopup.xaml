@@ -2,7 +2,7 @@
 <toolkit:Popup xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
                xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
                xmlns:toolkit="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
-               x:Class="MarketScanner.Views.Dialogs.CciSettingsPopup"
+               x:Class="MarketScanner.Views.Dialogs.AtrSettingsPopup"
                Color="#B3000000">
        <toolkit:Popup.Resources>
               <Style x:Key="PopupSecondaryActionButtonStyle"
@@ -38,7 +38,7 @@
               <Grid RowDefinitions="Auto,Auto,Auto,Auto"
                     RowSpacing="16"
                     MinimumHeightRequest="420">
-                     <Label Text="CCI Entry Settings"
+                     <Label Text="ATR Settings"
                             FontSize="20"
                             FontAttributes="Bold"
                             TextColor="{StaticResource OnSurfaceDark}"/>
@@ -54,28 +54,38 @@
 
                             <VerticalStackLayout Spacing="12">
                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                                          <Label Text="CCI Period" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
-                                          <Entry x:Name="PeriodEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                          <Label Text="ATR Period" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="AtrPeriodEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
                                    </Grid>
 
                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                                          <Label Text="Entry Threshold" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
-                                          <Entry x:Name="EntryThresholdEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                          <Label Text="Impulse ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="ImpulseAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
                                    </Grid>
 
                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                                          <Label Text="Entry Min Delta" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
-                                          <Entry x:Name="EntryMinDeltaEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                          <Label Text="Initial Stop ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="InitialStopAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
                                    </Grid>
 
                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                                          <Label Text="Require Rising EMA20" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
-                                          <Switch x:Name="RequireRisingEma20Switch" Grid.Column="1" HorizontalOptions="Start"/>
+                                          <Label Text="Profit Lock Arm ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="ProfitLockArmAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
                                    </Grid>
 
                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                                          <Label Text="Historical Days" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
-                                          <Entry x:Name="DaysEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                          <Label Text="Profit Lock Stop ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="ProfitLockStopAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                   </Grid>
+
+                                   <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                                          <Label Text="Trailing Arm ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="TrailingArmAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
+                                   </Grid>
+
+                                   <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                                          <Label Text="Trailing ATR Mult" TextColor="{StaticResource OnSurfaceDark}" VerticalOptions="Center"/>
+                                          <Entry x:Name="TrailingAtrMultiplierEntry" Grid.Column="1" Keyboard="Numeric" Style="{StaticResource FilterEntryStyle}"/>
                                    </Grid>
                             </VerticalStackLayout>
                      </Border>

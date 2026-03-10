@@ -10,6 +10,7 @@ public partial class AlgoRunnerSettingsPopup : Popup
     private string _selectedTabKey = string.Empty;
     private RsiSettings _rsiWorking;
     private CciSettings _cciWorking;
+    private AtrSettings _atrWorking;
 
     // RSI tab fields
     private Entry? _rsiPeriodEntry;
@@ -24,20 +25,26 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     // CCI tab fields
     private Entry? _cciPeriodEntry;
-    private Entry? _atrPeriodEntry;
     private Entry? _entryThresholdEntry;
     private Entry? _entryMinDeltaEntry;
-    private Entry? _impulseAtrMultiplierEntry;
-    private Entry? _trailingAtrMultiplierEntry;
-    private Entry? _trailingArmAtrMultiplierEntry;
     private Switch? _requireRisingEma20Switch;
     private Entry? _cciDaysEntry;
 
-    public AlgoRunnerSettingsPopup(string symbol, RsiSettings rsiSettings, CciSettings cciSettings)
+    // ATR tab fields
+    private Entry? _atrPeriodEntry;
+    private Entry? _impulseAtrMultiplierEntry;
+    private Entry? _initialStopAtrMultiplierEntry;
+    private Entry? _profitLockArmAtrMultiplierEntry;
+    private Entry? _profitLockStopAtrMultiplierEntry;
+    private Entry? _trailingArmAtrMultiplierEntry;
+    private Entry? _trailingAtrMultiplierEntry;
+
+    public AlgoRunnerSettingsPopup(string symbol, RsiSettings rsiSettings, CciSettings cciSettings, AtrSettings atrSettings)
     {
         InitializeComponent();
         _rsiWorking = rsiSettings?.Clone() ?? RsiSettings.CreateDefaults();
         _cciWorking = cciSettings?.Clone() ?? CciSettings.CreateDefaults();
+        _atrWorking = atrSettings?.Clone() ?? AtrSettings.CreateDefaults();
         TitleLabel.Text = $"Algo Runner Settings - {symbol}";
 
         RegisterTab(new SettingsTabDefinition(
@@ -53,6 +60,13 @@ public partial class AlgoRunnerSettingsPopup : Popup
             BuildCciTab,
             ValidateAndApplyCciTab,
             ResetCciDefaults));
+
+        RegisterTab(new SettingsTabDefinition(
+            "atr",
+            "ATR Settings",
+            BuildAtrTab,
+            ValidateAndApplyAtrTab,
+            ResetAtrDefaults));
 
         RenderTabHeaders();
         SwitchToTab("rsi");
@@ -143,7 +157,7 @@ public partial class AlgoRunnerSettingsPopup : Popup
             }
         }
 
-        Close(new AlgoRunnerSettingsResult(_rsiWorking.Clone(), _cciWorking.Clone()));
+        Close(new AlgoRunnerSettingsResult(_rsiWorking.Clone(), _cciWorking.Clone(), _atrWorking.Clone()));
     }
 
     private View BuildRsiTab()
@@ -187,12 +201,8 @@ public partial class AlgoRunnerSettingsPopup : Popup
     private View BuildCciTab()
     {
         _cciPeriodEntry = CreateNumericEntry(CciSettings.NormalizePeriod(_cciWorking.Period).ToString(CultureInfo.InvariantCulture));
-        _atrPeriodEntry = CreateNumericEntry(CciSettings.NormalizeAtrPeriod(_cciWorking.AtrPeriod).ToString(CultureInfo.InvariantCulture));
         _entryThresholdEntry = CreateNumericEntry(CciSettings.NormalizeEntryThreshold(_cciWorking.EntryThreshold).ToString("0.##", CultureInfo.InvariantCulture));
         _entryMinDeltaEntry = CreateNumericEntry(CciSettings.NormalizeEntryMinDelta(_cciWorking.EntryMinDelta).ToString("0.##", CultureInfo.InvariantCulture));
-        _impulseAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeImpulseAtrMultiplier(_cciWorking.ImpulseAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
-        _trailingAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeTrailingAtrMultiplier(_cciWorking.TrailingAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
-        _trailingArmAtrMultiplierEntry = CreateNumericEntry(CciSettings.NormalizeTrailingArmAtrMultiplier(_cciWorking.TrailingArmAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
         _requireRisingEma20Switch = new Switch { IsToggled = _cciWorking.RequireRisingEma20, HorizontalOptions = LayoutOptions.Start };
         _cciDaysEntry = CreateNumericEntry(_cciWorking.HistoricalDays.ToString(CultureInfo.InvariantCulture));
 
@@ -204,17 +214,42 @@ public partial class AlgoRunnerSettingsPopup : Popup
                 Children =
                 {
                     CreateTwoColumnRow("CCI Period", _cciPeriodEntry),
-                    CreateTwoColumnRow("ATR Period", _atrPeriodEntry),
                     CreateTwoColumnRow("Entry Threshold", _entryThresholdEntry),
                     CreateTwoColumnRow("Entry Min Delta", _entryMinDeltaEntry),
-                    CreateTwoColumnRow("Impulse ATR Mult", _impulseAtrMultiplierEntry),
-                    CreateTwoColumnRow("Trailing ATR Mult", _trailingAtrMultiplierEntry),
-                    CreateTwoColumnRow("Trail Arm ATR Mult", _trailingArmAtrMultiplierEntry),
                     CreateTwoColumnRow("Require Rising EMA20", _requireRisingEma20Switch),
-                    CreateTwoColumnRow("Historical Days", _cciDaysEntry),
+                    CreateTwoColumnRow("Historical Days", _cciDaysEntry)
+                }
+            }
+        };
+    }
+
+    private View BuildAtrTab()
+    {
+        _atrPeriodEntry = CreateNumericEntry(AtrSettings.NormalizeAtrPeriod(_atrWorking.AtrPeriod).ToString(CultureInfo.InvariantCulture));
+        _impulseAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeImpulseAtrMultiplier(_atrWorking.ImpulseAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _initialStopAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeInitialStopAtrMultiplier(_atrWorking.InitialStopAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _profitLockArmAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeProfitLockArmAtrMultiplier(_atrWorking.ProfitLockArmAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _profitLockStopAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeProfitLockStopAtrMultiplier(_atrWorking.ProfitLockStopAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _trailingArmAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeTrailingArmAtrMultiplier(_atrWorking.TrailingArmAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+        _trailingAtrMultiplierEntry = CreateNumericEntry(AtrSettings.NormalizeTrailingAtrMultiplier(_atrWorking.TrailingAtrMultiplier).ToString("0.##", CultureInfo.InvariantCulture));
+
+        return new ScrollView
+        {
+            Content = new VerticalStackLayout
+            {
+                Spacing = 12,
+                Children =
+                {
+                    CreateTwoColumnRow("ATR Period", _atrPeriodEntry),
+                    CreateTwoColumnRow("Impulse ATR Mult", _impulseAtrMultiplierEntry),
+                    CreateTwoColumnRow("Initial Stop ATR Mult", _initialStopAtrMultiplierEntry),
+                    CreateTwoColumnRow("Profit Lock Arm ATR Mult", _profitLockArmAtrMultiplierEntry),
+                    CreateTwoColumnRow("Profit Lock Stop ATR Mult", _profitLockStopAtrMultiplierEntry),
+                    CreateTwoColumnRow("Trailing Arm ATR Mult", _trailingArmAtrMultiplierEntry),
+                    CreateTwoColumnRow("Trailing ATR Mult", _trailingAtrMultiplierEntry),
                     new Label
                     {
-                        Text = "Hybrid momentum entry with ATR impulse and ATR trailing protection.",
+                        Text = "3-stage stops use Entry ATR frozen at BUY: initial, profit lock, then full trailing (armed by highest price progress).",
                         TextColor = Color.FromArgb("#B0B0B0"),
                         FontSize = 12
                     }
@@ -276,18 +311,11 @@ public partial class AlgoRunnerSettingsPopup : Popup
 
     private string? ValidateAndApplyCciTab()
     {
-        if (_cciPeriodEntry == null || _atrPeriodEntry == null || _entryThresholdEntry == null || _entryMinDeltaEntry == null ||
-            _impulseAtrMultiplierEntry == null || _trailingAtrMultiplierEntry == null || _trailingArmAtrMultiplierEntry == null ||
-            _requireRisingEma20Switch == null || _cciDaysEntry == null)
-        {
+        if (_cciPeriodEntry == null || _entryThresholdEntry == null || _entryMinDeltaEntry == null || _requireRisingEma20Switch == null || _cciDaysEntry == null)
             return "CCI tab is not initialized.";
-        }
 
         if (!int.TryParse(_cciPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var period) || period < 2 || period > 200)
             return "CCI period must be between 2 and 200.";
-
-        if (!int.TryParse(_atrPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var atrPeriod) || atrPeriod < 2 || atrPeriod > 200)
-            return "ATR period must be between 2 and 200.";
 
         if (!double.TryParse(_entryThresholdEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryThreshold) || entryThreshold <= 0 || entryThreshold > 400)
             return "Entry threshold must be between 0 and 400.";
@@ -295,27 +323,51 @@ public partial class AlgoRunnerSettingsPopup : Popup
         if (!double.TryParse(_entryMinDeltaEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var entryMinDelta) || entryMinDelta < 0 || entryMinDelta > 200)
             return "Entry min delta must be between 0 and 200.";
 
-        if (!double.TryParse(_impulseAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var impulseAtrMultiplier) || impulseAtrMultiplier <= 0 || impulseAtrMultiplier > 20)
-            return "Impulse ATR multiplier must be between 0 and 20.";
-
-        if (!double.TryParse(_trailingAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingAtrMultiplier) || trailingAtrMultiplier <= 0 || trailingAtrMultiplier > 20)
-            return "Trailing ATR multiplier must be between 0 and 20.";
-
-        if (!double.TryParse(_trailingArmAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingArmAtrMultiplier) || trailingArmAtrMultiplier <= 0 || trailingArmAtrMultiplier > 50)
-            return "Trail arm ATR multiplier must be between 0 and 50.";
-
         if (!int.TryParse(_cciDaysEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) || days < 1 || days > 60)
             return "CCI historical days must be between 1 and 60.";
 
         _cciWorking.Period = period;
-        _cciWorking.AtrPeriod = atrPeriod;
         _cciWorking.EntryThreshold = entryThreshold;
         _cciWorking.EntryMinDelta = entryMinDelta;
-        _cciWorking.ImpulseAtrMultiplier = impulseAtrMultiplier;
-        _cciWorking.TrailingAtrMultiplier = trailingAtrMultiplier;
-        _cciWorking.TrailingArmAtrMultiplier = trailingArmAtrMultiplier;
         _cciWorking.RequireRisingEma20 = _requireRisingEma20Switch.IsToggled;
         _cciWorking.HistoricalDays = days;
+        return null;
+    }
+
+    private string? ValidateAndApplyAtrTab()
+    {
+        if (_atrPeriodEntry == null || _impulseAtrMultiplierEntry == null || _initialStopAtrMultiplierEntry == null ||
+            _profitLockArmAtrMultiplierEntry == null || _profitLockStopAtrMultiplierEntry == null || _trailingArmAtrMultiplierEntry == null || _trailingAtrMultiplierEntry == null)
+            return "ATR tab is not initialized.";
+
+        if (!int.TryParse(_atrPeriodEntry.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var atrPeriod) || atrPeriod < 2 || atrPeriod > 200)
+            return "ATR period must be between 2 and 200.";
+
+        if (!double.TryParse(_impulseAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var impulseAtrMultiplier) || impulseAtrMultiplier <= 0 || impulseAtrMultiplier > 20)
+            return "Impulse ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_initialStopAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var initialStopAtrMultiplier) || initialStopAtrMultiplier <= 0 || initialStopAtrMultiplier > 20)
+            return "Initial stop ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_profitLockArmAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var profitLockArmAtrMultiplier) || profitLockArmAtrMultiplier <= 0 || profitLockArmAtrMultiplier > 20)
+            return "Profit-lock arm ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_profitLockStopAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var profitLockStopAtrMultiplier) || profitLockStopAtrMultiplier < 0 || profitLockStopAtrMultiplier > 20)
+            return "Profit-lock stop ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_trailingArmAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingArmAtrMultiplier) || trailingArmAtrMultiplier <= 0 || trailingArmAtrMultiplier > 20)
+            return "Trailing arm ATR multiplier must be between 0 and 20.";
+
+        if (!double.TryParse(_trailingAtrMultiplierEntry.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var trailingAtrMultiplier) || trailingAtrMultiplier <= 0 || trailingAtrMultiplier > 20)
+            return "Trailing ATR multiplier must be between 0 and 20.";
+
+        _atrWorking.AtrPeriod = atrPeriod;
+        _atrWorking.ImpulseAtrMultiplier = impulseAtrMultiplier;
+        _atrWorking.InitialStopAtrMultiplier = initialStopAtrMultiplier;
+        _atrWorking.ProfitLockArmAtrMultiplier = profitLockArmAtrMultiplier;
+        _atrWorking.ProfitLockStopAtrMultiplier = profitLockStopAtrMultiplier;
+        _atrWorking.TrailingArmAtrMultiplier = trailingArmAtrMultiplier;
+        _atrWorking.TrailingAtrMultiplier = trailingAtrMultiplier;
         return null;
     }
 
@@ -327,6 +379,11 @@ public partial class AlgoRunnerSettingsPopup : Popup
     private void ResetCciDefaults()
     {
         _cciWorking = CciSettings.CreateDefaults();
+    }
+
+    private void ResetAtrDefaults()
+    {
+        _atrWorking = AtrSettings.CreateDefaults();
     }
 
     private void UpdateTrailingStopUnitLabel()

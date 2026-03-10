@@ -67,13 +67,9 @@ public sealed class CciSettingsService : ICciSettingsService
     private void NormalizeCurrent()
     {
         _current.Period = CciSettings.NormalizePeriod(_current.Period);
-        _current.AtrPeriod = CciSettings.NormalizeAtrPeriod(_current.AtrPeriod);
         _current.HistoricalDays = _current.HistoricalDays is >= 1 and <= 60 ? _current.HistoricalDays : 2;
         _current.EntryThreshold = CciSettings.NormalizeEntryThreshold(_current.EntryThreshold);
         _current.EntryMinDelta = CciSettings.NormalizeEntryMinDelta(_current.EntryMinDelta);
-        _current.ImpulseAtrMultiplier = CciSettings.NormalizeImpulseAtrMultiplier(_current.ImpulseAtrMultiplier);
-        _current.TrailingAtrMultiplier = CciSettings.NormalizeTrailingAtrMultiplier(_current.TrailingAtrMultiplier);
-        _current.TrailingArmAtrMultiplier = CciSettings.NormalizeTrailingArmAtrMultiplier(_current.TrailingArmAtrMultiplier);
     }
 
     private static string BuildPreferencesKey(string? symbol)

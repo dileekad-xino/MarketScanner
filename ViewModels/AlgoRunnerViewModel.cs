@@ -353,7 +353,8 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             var rsiSettingsService = serviceProvider.GetService<IRsiSettingsService>();
             var cciSettingsService = serviceProvider.GetService<ICciSettingsService>();
-            if (rsiSettingsService == null || cciSettingsService == null)
+            var atrSettingsService = serviceProvider.GetService<IAtrSettingsService>();
+            if (rsiSettingsService == null || cciSettingsService == null || atrSettingsService == null)
             {
                 ErrorMessage = "Required settings services are unavailable.";
                 return;
@@ -361,13 +362,15 @@ public partial class AlgoRunnerViewModel : ObservableObject
 
             var rsiSettings = await rsiSettingsService.GetAsync();
             var cciSettings = await cciSettingsService.GetAsync(SelectedSymbol.Symbol);
+            var atrSettings = await atrSettingsService.GetAsync(SelectedSymbol.Symbol);
 
-            var popup = new AlgoRunnerSettingsPopup(SelectedSymbol.Symbol, rsiSettings, cciSettings);
+            var popup = new AlgoRunnerSettingsPopup(SelectedSymbol.Symbol, rsiSettings, cciSettings, atrSettings);
             var result = await page.ShowPopupAsync(popup);
             if (result is AlgoRunnerSettingsResult updated)
             {
                 await rsiSettingsService.SaveAsync(updated.RsiSettings);
                 await cciSettingsService.SaveAsync(updated.CciSettings, SelectedSymbol.Symbol);
+                await atrSettingsService.SaveAsync(updated.AtrSettings, SelectedSymbol.Symbol);
 
                 // Refresh indicator state immediately so running algos apply updated settings in realtime.
                 await InitializeRsiStateAsync();

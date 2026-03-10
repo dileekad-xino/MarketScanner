@@ -51,6 +51,7 @@ namespace MarketScanner
             builder.Services.AddSingleton<SettingsService>();
             builder.Services.AddSingleton<IRsiSettingsService, RsiSettingsService>();
             builder.Services.AddSingleton<ICciSettingsService, CciSettingsService>();
+            builder.Services.AddSingleton<IAtrSettingsService, AtrSettingsService>();
             builder.Services.AddSingleton<ColumnLayoutService>();
 
             // Position closure and confirmation dialog services
@@ -180,6 +181,7 @@ namespace MarketScanner
                 return new MarketScanner.Services.Impl.AlgoStrategy(
                     new MarketScanner.Services.IAlgoStrategy[] { rsiStrategy, macdStrategy, cciStrategy, ema20Strategy, atrStrategy },
                     sp.GetRequiredService<ICciSettingsService>(),
+                    sp.GetRequiredService<IAtrSettingsService>(),
                     sp.GetRequiredService<ICandlestickStorage>(),
                     sp.GetRequiredService<CandlestickConfig>(),
                     logger);
